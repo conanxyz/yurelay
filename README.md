@@ -133,4 +133,6 @@ npm run bundle:mac              # 构建本机 .app 与 .dmg
 
 Copyright © 2026 Glossa Contributors. 项目按 **GNU GPL v3.0 only（`GPL-3.0-only`）** 开源，完整条款见 [LICENSE](LICENSE)。
 
-感谢 [Bob](https://github.com/ripperhe/Bob)、[Easydict](https://github.com/tisfeng/Easydict) 带来的 macOS 翻译工具体验启发，也感谢 Tauri、Rust、Svelte 及相关开源社区。依赖、字体和服务商标志的许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+Glossa 的功能与交互设计参考了 [Easydict](https://github.com/tisfeng/Easydict) 和 [Bob](https://github.com/ripperhe/Bob)。开发过程中，也对照 Easydict 的划词、截图、OCR 与翻译服务接入实现进行了研究。感谢这些项目及其作者提供的思路与经验。
+
+感谢 Tauri、Rust、Svelte 及相关开源社区。依赖、字体和服务商标志的许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。

@@ -151,7 +151,11 @@ npm run bundle:mac
 Copyright © 2026 Glossa Contributors. Licensed under **GNU GPL v3.0 only
 (`GPL-3.0-only`)**; see [LICENSE](LICENSE).
 
-Thanks to [Bob](https://github.com/ripperhe/Bob) and
-[Easydict](https://github.com/tisfeng/Easydict) for inspiration in macOS translation
-workflows, and to the Tauri, Rust, Svelte and wider open-source communities.
+Glossa draws on the product and interaction design of
+[Easydict](https://github.com/tisfeng/Easydict) and [Bob](https://github.com/ripperhe/Bob).
+Easydict's implementations of text selection, screenshot capture, OCR and translation
+provider integrations were also studied during development. Thank you to these
+projects and their authors for sharing their ideas and experience.
+
+Thanks also to the Tauri, Rust, Svelte and wider open-source communities.
 See [third-party notices](THIRD_PARTY_NOTICES.md) for dependencies, fonts and provider marks.
