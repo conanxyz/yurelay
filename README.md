@@ -1,116 +1,136 @@
 <div align="center">
-  <img src="src/assets/glossa-logo.png" width="96" alt="Glossa logo" />
+  <img src="src/assets/glossa-logo.png" width="88" alt="Glossa" />
   <h1>Glossa</h1>
-  <p><strong>你的语言，你的节奏</strong><br />专为 macOS 打造的轻量级 LLM 划词 / 截图翻译与语境生词沉淀工具</p>
+  <p><strong>你的语言，你的节奏</strong><br />专为 macOS 打造的轻量级 LLM 划词 / 截图翻译与语境生词沉淀工具。</p>
 
-[![Release](https://img.shields.io/github/v/release/conanxyz/glossa?include_prereleases)](https://github.com/conanxyz/glossa/releases)
-[![CI](https://github.com/conanxyz/glossa/actions/workflows/ci.yml/badge.svg)](https://github.com/conanxyz/glossa/actions/workflows/ci.yml)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-222222?logo=apple)
 [![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)
-![Rust](https://img.shields.io/badge/Rust-2024-CE422B?logo=rust)
-![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)
 
-[English](README.en.md) · [安装](#安装与首次运行) · [开发](#本地开发) · [贡献](CONTRIBUTING.md)
+[English](README.en.md) · [下载安装](https://github.com/conanxyz/glossa/releases) · [参与贡献](CONTRIBUTING.md)
 </div>
 
-> 开发预览版。当前已完成本机 Apple Silicon 验证；Intel 构建由发布流水线提供，尚待真机验收。
-> 本仓库初始化阶段尚未发布首个 GitHub Release，徽章与下载链接将在仓库上传及发布后生效。
+读懂眼前的内容，也把值得记住的表达留下来。Glossa 将划词、截图翻译和语境生词本放在同一个轻量窗口里，让阅读与积累自然衔接。
 
-## 看一眼 Glossa
+![界面预览占位：翻译窗口、阅读视图、生词侧栏、服务与生词本设置](docs/images/preview.svg)
 
-![界面预览位置：翻译浮窗、阅读视图、生词侧栏、服务与生词本设置](docs/images/preview.svg)
+## ✨ 核心特性
 
-以上是明确标注的截图占位图。正式发布前将替换为合成样例截图，不使用私人原文或账号信息。
-当前生词候选使用可折叠的**左侧栏**，保持译文阅读位置；并非早期设计中的底部面板。
+### ⚡ 随手取词，边译边读
 
-## Why Glossa?
+选中文字或框选屏幕区域，用全局快捷键唤起 Glossa。截图文字在本机识别；你可以先检查、编辑原文，再按 `X` 或点击箭头开始翻译，译文随返回内容逐步显示。
 
-| 日常场景 | Glossa 的处理方式 |
-| --- | --- |
-| 阅读途中遇到陌生段落 | `Option+D` 取词、`Option+S` 截图并本地 OCR；先核对原文，再按 `X` 或点击箭头翻译 |
-| 网页、PDF 复制后标题和列表粘连 | 提示词引导模型还原段落，`markdown-it` + DOMPurify 展示安全的 Markdown；可切换纯文本 |
-| 翻译很快，生词整理很慢 | 接收译文即展示；两段协议将生词 JSON 与正文分离，不等生词解析才显示译文 |
-| 同一个词，在不同文章中意思不同 | 自动提炼 2–5 个候选，记录语境释义、原句和例句译文；重复收录合并为一词多境 |
-| 不想每次查词都消耗 Token | 选中原文中的词，使用 macOS `NLTagger` 词形还原和系统词典补录；支持本机朗读 |
-| 误选了助记词、私钥或 API Key | SensitiveGuard 在捕获文字进入界面与网络前做本地检测；显式放行仅作用于当前原文 |
+阅读模式保留标题、列表与代码块，并帮助还原 PDF、网页和更新日志中粘连的段落。需要原始文字时，一键切换纯文本，无需重新翻译。
 
-译文首字延迟取决于网络和模型，排版恢复也可能出错。SensitiveGuard 检测在本机完成，覆盖常见英文 BIP-39 助记词、EVM/BTC/Solana 私钥格式和 API Key；它可能误报或漏报，不能替代用户检查。
+### 📖 把生词留在语境里
 
-生词本支持 B2–C2、习语、短语和技术术语候选、笔记、掌握状态、搜索、CSV / Markdown / Anki TSV 导出。
-自动提炼可关闭；候选侧栏展开时保持译文阅读位置，同次任务中手动收起后不会被再次自动展开。
+翻译时可自动提炼 2–5 个值得学习的单词、短语或习语，附上当前语境中的含义。候选词在左侧栏展示，保持译文阅读位置；同一次任务中手动收起后，不会被再次自动展开。
 
-## 服务与隐私
+- **两种收录方式**：一键保存候选词，或直接划选原文中的单词，通过本机词形还原与系统词典补录，不消耗模型 Token。
+- **一词多境**：再次遇到同一个词时，累积不同文章中的原句、释义与出现频次。
+- **方便复习**：系统朗读、掌握状态、个人笔记，以及 **CSV / Markdown / Anki TSV** 导出。
 
-支持自定义 OpenAI 兼容服务、DeepSeek、MiniMax（中国 / 国际区）、Gemini、OpenAI、Claude、Qwen、智谱、SiliconFlow、OpenRouter、有道智云及 macOS 系统词典。
+### 🛡️ 敏感内容，先在本机检查
 
-- API Key 保存在系统 Keychain，不写入应用配置、历史 SQLite 或日志。
-- 智谱 `glm-4-flash-250414`、SiliconFlow 部分开源模型和 Gemini 免费层可作为入门选项，具体模型上下线、免费政策、额度与区域限制以服务商为准。远程服务仍需自己的有效账号。
-- OCR、语言识别、SensitiveGuard 和系统词典在本机执行。点击翻译后，原文会发送给你选择的服务商。
-- 历史记录与截图保存在本机，可设置保留期或关闭历史；生词本独立保存。系统词典依赖已安装并启用的词典。
-- 默认服务置顶，自定义服务置底；默认自定义服务仍置顶。服务页支持中文、英文及拼音搜索。
+SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，本地检测常见的英文 BIP-39 助记词、私钥与 API Key 格式。命中规则时隐藏明文并阻止发送，未放行的内容不写入历史。
 
-## 安装与首次运行
+服务密钥保存在 **macOS 系统钥匙串（Keychain）**。OCR 和系统词典查询在本机完成；远程翻译只发送给你选择的服务商。历史记录可设置保留期，也可关闭。
 
-1. 在 [GitHub Releases](https://github.com/conanxyz/glossa/releases) 中选择已发布版本：Apple Silicon（M 系列）使用 `aarch64`，Intel 使用 `x64` / `x86_64`。若尚无 Release，请先从源码构建。
-2. 下载 `.dmg`，将 `Glossa.app` 拖到“应用程序”。Release 同时提供 `.app.tar.gz` 和 SHA-256 校验文件。
-3. 打开 Glossa，在设置中填写服务、模型和密钥，并运行连接测试；离线系统词典无需密钥。
-4. 在「系统设置 → 隐私与安全性」为 Glossa 授予辅助功能和屏幕录制权限。新版 macOS 的辅助功能授权可能显示为“设备控制和数据访问”。
+检测可能误报或漏报，请在发送前检查原文。模型生成的译文、排版和释义也需要结合上下文判断。
 
-最低要求 **macOS 14**。项目原生桥接与 Tauri 配置都以 14 为下限，尚未支持 macOS 13。
+### 🔌 选择适合自己的服务
 
-### 未公证开发包
+无需账号即可使用 macOS 系统词典查词，也可以接入自己的模型服务。Glossa 预置智谱 `glm-4-flash-250414` 等模型候选，支持利用服务商提供的免费模型或免费层起步；具体费用、额度与可用性以各平台政策为准。
 
-当前使用 Ad-hoc 签名，尚未经过 Apple 公证。若提示“无法验证开发者”，优先使用「隐私与安全性 → 仍要打开」。
-若可信的官方开发包因隔离属性被提示“应用已损坏”，先核对 Release 的 SHA-256 与来源，再自行执行：
+| 服务 | 配置方式 |
+| :--- | :--- |
+| macOS 系统词典 | 无需密钥，使用本机已启用的词典；适合单词与短语查询 |
+| 智谱 AI、硅基流动、DeepSeek、通义千问 | API Key + 模型名称 |
+| Gemini、OpenAI、Claude | 对应平台的 API Key + 模型名称 |
+| MiniMax | 选择中国区或国际区，填写对应区域的 API Key |
+| OpenRouter | API Key + 模型 ID |
+| 有道智云 | 应用 ID + 应用密钥 |
+| 自定义服务 | OpenAI 兼容地址 + 模型名称，按服务要求填写密钥 |
+
+## 🚀 安装与首次配置
+
+### 1. 安装 Glossa
+
+前往 [Releases](https://github.com/conanxyz/glossa/releases)，下载适合芯片架构的 `.dmg`，将 Glossa 拖入“应用程序”：
+
+- **Apple Silicon（M 系列）**：选择 `aarch64`。
+- **Intel**：选择 `x64` / `x86_64`。
+
+需要 **macOS 14 或更新版本**。若 Releases 暂无安装包，可按文末说明从源码构建。
+
+<details>
+<summary>首次打开提示“无法验证开发者”或“应用已损坏”？</summary>
+
+未公证的开发包可能触发 macOS 提示。优先在「系统设置 → 隐私与安全性」选择“仍要打开”。
+
+如果确认下载自项目 Releases、校验文件一致，且问题由下载隔离属性引起，可执行：
 
 ```sh
 sudo xattr -rd com.apple.quarantine /Applications/Glossa.app
 ```
 
-这会移除该应用的下载隔离标记，不会让它获得 Apple 公证；不要用于来源不明或校验不符的文件。
-Ad-hoc 更新可能使原有 Keychain / 捕获权限关联失效，需要重新允许同一应用。
+此命令只移除该应用的隔离标记，不代表 Apple 公证；不要用于来源不明或校验不符的文件。
 
-## 本地开发
+</details>
 
-安装 Xcode Command Line Tools、Rust（rustup）和 Node.js 24 / npm、Python 3.11+；Rust 版本由 `rust-toolchain.toml` 固定。
-使用 npm 与已提交的 lockfile，避免混用包管理器产生不同依赖树。
+### 2. 开启捕获权限
+
+在「系统设置 → 隐私与安全性」中允许 Glossa 使用：
+
+- **辅助功能（Accessibility）**：读取其他应用中选中的文字。
+- **屏幕录制（Screen Recording）**：截取选区并识别文字。
+
+也可从 Glossa「设置 → 翻译与快捷键」检查状态并打开对应系统设置。新版 macOS 的辅助功能授权可能显示为“设备控制和数据访问”。
+
+### 3. 配置第一个服务
+
+点击菜单栏 Glossa 图标 → **设置… → 服务**。
+
+- **先试本地查词**：选择“系统词典”，设为默认，无需 API Key。
+- **开始段落翻译**：选择智谱或其他服务，填写自己的 API Key，选择模型，点击“测试连接”；成功后设为默认并保存。智谱可从预置的 `glm-4-flash-250414` 开始。
+
+远程服务需要有效账号、模型权限和可用额度。“测试连接”会发送固定示例文字，可能产生少量 API 费用。
+
+## ⌨️ 日常使用与快捷键
+
+| 操作 | 默认快捷键 / 方式 | 说明 |
+| :--- | :--- | :--- |
+| 划词取词 | `Option + D` | 在其他应用中选中文字后，捕获至 Glossa |
+| 截图 OCR | `Option + S` | 框选区域，在本机识别文字 |
+| 开始翻译 | `X` 或右侧箭头 | 检查原文后发起翻译；编辑文字时请点击箭头，`X` 会正常输入 |
+| 切换阅读 / 纯文本 | 译文区切换按钮 | 改变显示方式，不重复请求模型 |
+| 收录生词 | 候选词的添加按钮，或划选原文 | 保存语境，随时收起左侧栏继续阅读 |
+| 导出生词 | 设置 → 生词本 → 导出 | 选择 CSV、Markdown 或 Anki TSV |
+| 找回窗口 / 打开设置 | 菜单栏图标或 Dock | 切换其他应用不打断后台翻译 |
+
+取词和截图快捷键可在「设置 → 翻译与快捷键」中修改；发生快捷键冲突时，应用会给出提示。
+
+## 🛠️ 本地构建与贡献
+
+欢迎反馈问题、改善翻译体验或提交代码。开发流程与架构约束见 [贡献指南](CONTRIBUTING.md)；安全问题请按 [安全报告流程](SECURITY.md) 私下反馈。
+
+<details>
+<summary>展开开发与构建命令</summary>
+
+准备 Xcode Command Line Tools、Rust（rustup）、Node.js 24 和 Python 3.11+。项目会使用固定的 Rust 工具链。
 
 ```sh
-npm ci
-npx playwright install chromium
-npm run tauri -- dev
+npm ci                         # 安装锁定版本的依赖
+npx playwright install chromium # 安装浏览器测试环境
+npm run tauri -- dev            # 启动桌面开发模式
+./scripts/verify.sh             # 运行完整本地自检
+npm run bundle:mac              # 构建本机 .app 与 .dmg
 ```
 
-```sh
-./scripts/verify.sh          # 安全卫生、fmt、Clippy、Rust 测试、前端检查/构建及浏览器测试
-sh scripts/test-native.sh    # 本机词形还原、系统词典与合成图 OCR 检查
-npm run bundle:mac          # 为当前架构构建发布版 .app 与 .dmg
-sh scripts/build-app.sh     # 紧凑的本机调试 .app，输出至 artifacts/build.noindex
-```
+</details>
 
-验证缓存位于 `artifacts/verify.noindex`，不会进入 Git 或 Spotlight；可在验证结束后删除，不影响已安装应用和用户数据。
-`npm run dev` 只启动前端，不能独立执行原生捕获功能。
+## 📄 开源协议与致谢
 
-## 工程与发布
+Copyright © 2026 Glossa Contributors. 项目按 **GNU GPL v3.0 only（`GPL-3.0-only`）** 开源，完整条款见 [LICENSE](LICENSE)。
 
-```text
-src/                 Svelte 界面与交互
-src-tauri/           桌面窗口、IPC、快捷键与生命周期
-crates/core/         翻译流、SensitiveGuard、生词规则、SQLite
-crates/platform/     macOS 捕获、OCR、词典与 Keychain
-scripts/             一键自检、安全审计、构建与发布辅助
-```
-
-`main` 推送和 PR 在 `macos-latest` 运行完整自检。`v*` 标签或手动 Release 工作流在自检通过后，分别构建 Apple Silicon 和 Intel 安装包并上传至 **Draft Release**，由维护者验收后发布。无需手工上传安装包。
-自动化已配置，但只有推送至 GitHub 后才能验证托管运行结果；创建仓库后需把 `macOS verification` 设为分支保护的必需检查。
-
-请阅读 [贡献指南](CONTRIBUTING.md)、[AI 编码约束](AGENTS.md)、[安全报告流程](SECURITY.md) 和 [第三方声明](THIRD_PARTY_NOTICES.md)。
-本地只读参考目录 `Easydict/`、用户数据、密钥、测试截图与打包产物均不纳入版本控制。
-
-## License
-
-Copyright © 2026 Glossa Contributors.
-
-Glossa 项目代码按 **GNU General Public License v3.0 only (`GPL-3.0-only`)** 发布，完整条款见 [LICENSE](LICENSE)。
-第三方依赖、字体、词表及服务商标志保留各自许可证与商标权；详细来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+感谢 [Bob](https://github.com/ripperhe/Bob)、[Easydict](https://github.com/tisfeng/Easydict) 带来的 macOS 翻译工具体验启发，也感谢 Tauri、Rust、Svelte 及相关开源社区。依赖、字体和服务商标志的许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
