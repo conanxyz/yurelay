@@ -65,8 +65,11 @@ default. Apple certificate/notarization secret names are documented in the
 workflow; never commit signing material. Future notarization requires a Developer
 ID identity and must also override the current ad-hoc identity in Tauri config.
 
-After creating the GitHub repository, configure branch protection/rulesets to
-require `macOS verification` and reviews before merging main. Workflow YAML alone
+Configure branch protection to require a PR, a successful `macOS verification`
+check and resolved conversations before merging `main`, and to disallow force
+pushes and branch deletion. Maintainers may retain an administrator exception.
+Contributors and AI assistants use the PR flow unless a maintainer explicitly
+requests an administrative exception. Workflow YAML alone
 cannot enforce a merge block. Enable private vulnerability reporting and secret
 scanning if available. Dependabot updates are configured for review, not auto-merge.
 
