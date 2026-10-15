@@ -56,3 +56,30 @@ secrets.json
 *.dmg
 *.app.tar.gz
 *.dSYM/
+
+# Additional build, debug and editor artifacts
+dist-ssr/
+*.rs.bk
+*.pdb
+/src-tauri/WixTools/
+/playwright/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tar.gz
+*.sig
+*.cer
+.cursor/
+.claude/
+.windsurf/
+
+# Private AI process notes (kept locally, not part of the public source)
+/.ai-notes/
+/compact-vocabulary-prompt.md
+/glossa-mvp-plan.md
+/provider-audit-and-catalog.md
+/sensitive-vocabulary-services.md
+/translation-reading-drawer.md
+/vocabulary-left-sidebar.md
+/vocabulary-pipeline-hardening.md
