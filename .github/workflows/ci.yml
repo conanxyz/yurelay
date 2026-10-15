@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: macOS verification
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: '. -> target'
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Scan committed source for credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/zricethezav/gitleaks/v8@v8.24.3
+          scan_dir="$(mktemp -d "$RUNNER_TEMP/glossa-scan.XXXXXX")"
+          trap 'rm -rf "$scan_dir"' EXIT
+          git archive HEAD | tar -xf - -C "$scan_dir"
+          "$(go env GOPATH)/bin/gitleaks" dir "$scan_dir" --redact=100 --no-banner
+      - run: npm ci
+      - run: npx playwright install chromium
+      - name: Mandatory self-check
+        run: ./scripts/verify.sh
+      - name: Native language, dictionary and OCR tests
+        run: sh scripts/test-native.sh

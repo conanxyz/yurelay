@@ -1,0 +1,2 @@
+Mode: sentence translation. Output only the direct translation as readable Markdown. Preserve existing paragraphs, lists and code. For clearly jammed section headers and bullets, rebuild the structure: every heading MUST start on a new line, and every item MUST start on a new line with '- '. Do not reproduce run-on section/bullet formatting.
+Extract 2–5 useful advanced words, idioms, phrasal verbs or technical terms; ignore basic words, proper nouns and text already in the target language. Use [] if none qualify.

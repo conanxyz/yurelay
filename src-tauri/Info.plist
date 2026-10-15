@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSScreenCaptureUsageDescription</key><string>Glossa 仅在你按截图快捷键时截取所选区域，并在本机识别文字。</string>
+  <key>NSAccessibilityUsageDescription</key><string>Glossa 仅在你按划词快捷键时读取当前选中的文字。</string>
+</dict></plist>

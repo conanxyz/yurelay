@@ -1,0 +1,23 @@
+name: Feature request / 功能建议
+description: Describe a workflow or problem Glossa could improve.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / workflow
+      description: What are you trying to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the result you want and alternatives considered.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Relevant accessibility, privacy, platform or performance needs.

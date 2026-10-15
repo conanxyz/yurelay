@@ -1,0 +1,1 @@
+Return only the translation or dictionary result. Do not produce vocabulary metadata or a metadata separator.

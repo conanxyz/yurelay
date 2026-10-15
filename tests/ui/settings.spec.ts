@@ -1,0 +1,483 @@
+import { test, expect, type Page } from '@playwright/test';
+import { defaults } from '../../src/types';
+
+async function settingsFixture(page: Page, delayLoad = false, initialName = 'Custom service') {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1100, height: 820 });
+  await page.addInitScript((initial) => {
+    const w = window as any;
+    w.isTauri = true;
+    w.calls = [];
+    w.permissions = { accessibility: true, screen: true };
+    w.savedKeys=["default"];
+    w.vocabulary=[{id:'word-1',word:'resilient',phonetic:'/rɪˈzɪliənt/',pos:'adj.',dict_meaning:'able to recover quickly',note:'',difficulty:'B2',status:'learning',review_count:3,created_at:1792000000000,updated_at:1792000000000,contexts:[{id:'context-1',surface:'resilient',context_meaning:'坚韧的',context_sentence:'A resilient team adapts to change.',sentence_trans:'坚韧的团队能够适应变化。',created_at:1792000000000}]}];
+    w.settings = initial.settings;
+    w.settings.ui_language = 'en';
+    w.settings.profiles[0].name = initial.initialName;
+    w.settings.profiles[0].model = 'fixture-model';
+    w.settings.profiles[0].endpoint = 'https://fixture.example/v1';
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+    let callback = 0;
+    const callbacks: Record<number, Function> = {}, events: Record<string, number> = {};
+    w.emit = (name: string, payload: unknown) => callbacks[events[name]]?.({ event: name, payload });
+    w.closeSettings = (intent = 'close') => w.emit('settings-close-requested', { id: 1, intent });
+    w.records = Array.from({ length: 30 }, (_, index) => ({
+      id: `record-${index}`, revision: 1, attempt: 1, source: index % 2 ? 'screenshot' : 'selection',
+      status: 'completed', original_text: `Record ${index}: A complete source paragraph with enough words to wrap across the list.`,
+      edited_text: null, translation: `第 ${index} 条记录的译文。\n` + '这是完整内容。'.repeat(40),
+      profile: w.settings.profiles[0], target_language: 'zh-Hans', source_language: null,
+      detected_language: 'en', created_at: 1791954000000 - index * 1000000,
+      error: null, save_state: 'saved', has_image: false, past_attempts: [], timings: {},
+    }));
+    const config = () => ({ settings: structuredClone(w.settings), has_keys: [...w.savedKeys], credential_errors: {} });
+    w.__TAURI_INTERNALS__ = {
+      transformCallback: (fn: Function) => { callbacks[++callback] = fn; return callback; },
+      unregisterCallback: (id: number) => { delete callbacks[id]; },
+      invoke: async (cmd: string, args: any) => {
+        w.calls.push({ cmd, args });
+        if (cmd === 'plugin:event|listen') { events[args.event] = args.handler; return callback; }
+        if (cmd === 'bootstrap') {
+          if(initial.delayLoad)await new Promise<void>(resolve=>w.releaseBootstrap=resolve);
+          return { configuration: config(), permissions: structuredClone(w.permissions), shortcuts: { registered: true, error: null }, snapshot: { revision: 0, tasks: [] }, selected: null, notice: null };
+        }
+        if (cmd === 'save_configuration') {
+          if (w.failSave) throw 'Fixture save failed';
+          w.settings = structuredClone(args.settings);
+          for(const [id,value] of Object.entries(args.apiKeyUpdates??{})) {if(value===null)w.savedKeys=w.savedKeys.filter((key:string)=>key!==id);else if(!w.savedKeys.includes(id))w.savedKeys.push(id);}
+          return { configuration: config(), shortcuts: { registered: true, error: null } };
+        }
+        if (cmd === 'permissions') return structuredClone(w.permissions);
+        if(cmd==='vocabulary_list')return structuredClone(w.vocabulary);
+        if(cmd==='fetch_models')return [{id:'fixture/free-model:free',free:true},{id:'fixture/zero-input-paid-output',free:false},{id:'fixture/unknown',free:null}];
+        if(cmd==='vocabulary_update'){const item=w.vocabulary.find((i:any)=>i.id===args.id);if(args.note!==undefined)item.note=args.note;if(args.status)item.status=args.status;if(args.removeContext)item.contexts=item.contexts.filter((c:any)=>c.id!==args.removeContext);return structuredClone(item)}
+        if(cmd==='vocabulary_remove'){w.vocabulary=w.vocabulary.filter((i:any)=>i.id!==args.id);return null}
+        if(cmd==='vocabulary_export')return true;
+        if (cmd === 'search_history') return args.query==='no match'?[]:w.records.slice(args.offset, args.offset + 30);
+        if (cmd === 'history_detail') {
+          const record=w.records.find((r: any) => r.id === args.id);
+          if(w.delayDetail)await new Promise<void>(resolve=>w.releaseDetail=resolve);
+          return record;
+        }
+        if (cmd === 'begin_shortcut_recording') return 1;
+        if (cmd === 'end_shortcut_recording') return { registered: true, error: null };
+        return null;
+      },
+    };
+  }, { settings: structuredClone(defaults), delayLoad, initialName });
+  await page.goto('/?window=settings');
+  if(delayLoad){await expect.poll(()=>page.evaluate(()=>(window as any).calls.some((c:any)=>c.cmd==='settings_guard_ready'))).toBe(true);return;}
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Settings navigation')).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.some((c:any)=>c.cmd==='settings_guard_ready'))).toBe(true);
+}
+
+test('default source and target languages sit side by side and save together', async ({ page }) => {
+  await settingsFixture(page);
+  const source = page.getByLabel('Default source language', { exact: true });
+  const target = page.getByLabel('Default translation language', { exact: true });
+  await source.selectOption('en');
+  await target.selectOption('fr');
+  const [left,right] = await page.evaluate(()=>Array.from(document.querySelectorAll('.default-languages select')).map(el=>el.getBoundingClientRect().toJSON()));
+  expect(left!.x + left!.width).toBeLessThan(right!.x);
+  expect(left!.y).toBe(right!.y);
+  await expect(page.getByText('Review first. Translate when ready.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Language and display preferences save automatically across all windows.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Record a key combination, then save to apply it.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Shortcuts are registered. Save to apply changes.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Required to read selected text', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('click to record key', { exact: true })).toHaveCount(2);
+  expect(await page.evaluate(() => (window as any).calls.some((c: any) => c.cmd === 'save_preferences'))).toBe(false);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  expect(await page.evaluate(() => ({ source: (window as any).settings.source_language, target: (window as any).settings.target_language }))).toEqual({ source: 'en', target: 'fr' });
+  await page.screenshot({ path: 'test-results/settings-languages.png' });
+});
+
+test('shortcut buttons each occupy one row; keys stay horizontal and recording commits on release', async ({ page }) => {
+  await settingsFixture(page);
+  const selection = page.getByRole('button', { name: 'Record selection shortcut', exact: true });
+  const screenshot = page.getByRole('button', { name: 'Record screenshot shortcut', exact: true });
+  for (const width of [1100, 850, 620]) {
+    await page.setViewportSize({ width, height: 820 });
+    const [a,b] = await Promise.all([selection.boundingBox(), screenshot.boundingBox()]);
+    expect(a!.x).toBe(b!.x);
+    expect(a!.width).toBe(b!.width);
+    expect(a!.y + a!.height + 6).toBeLessThanOrEqual(b!.y);
+    const keys = await selection.locator('kbd').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().toJSON()));
+    expect(keys.length).toBeGreaterThan(1);
+    expect(keys[0].y).toBe(keys[1].y);
+    expect(keys[0].right).toBeLessThan(keys[1].x);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await selection.click();
+  await page.keyboard.down('Alt');
+  await page.keyboard.down('K');
+  expect(await page.evaluate(() => (window as any).calls.filter((c:any) => c.cmd === 'end_shortcut_recording').length)).toBe(0);
+  await page.keyboard.up('K');
+  await page.keyboard.up('Alt');
+  await expect(selection).toContainText('K');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).settings.selection_shortcut)).toBe('Alt+K');
+  await page.setViewportSize({ width: 1100, height: 820 });
+  await page.screenshot({ path: 'test-results/shortcuts-light.png' });
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('dark');
+  await page.getByRole('button', { name: 'Translation', exact: true }).click();
+  await page.screenshot({ path: 'test-results/shortcuts-dark.png' });
+});
+
+test('settings forms never render orphan chevron characters or redundant service chevrons', async ({ page }) => {
+  await settingsFixture(page);
+  for (const section of ['Services', 'Appearance']) {
+    await page.getByRole('button', { name: section, exact: true }).click();
+    const orphan = await page.locator('.pref-pane').evaluate(root => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const found: string[] = []; let node;
+      while (node = walker.nextNode()) if (node.textContent?.trim() === '>') found.push(node.parentElement!.tagName);
+      return found;
+    });
+    expect(orphan).toEqual([]);
+    if (section === 'Services') await expect(page.locator('.service-item > svg')).toHaveCount(0);
+  }
+});
+
+test('quitting while settings load does not wait for a load with no user edits', async ({ page }) => {
+  await settingsFixture(page,true);
+  await page.evaluate(()=>(window as any).closeSettings('quit'));
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='finish_settings_close').length)).toBe(1);
+  await expect(page.getByRole('dialog')).toBeHidden();
+});
+
+test('service types are always visible and reselecting custom never adds a duplicate', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByRole('button', { name: 'Services', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Add service', exact: true })).toHaveCount(0);
+  await expect(page.locator('.service-list').getByRole('button', { name: /DeepSeek/ })).toBeVisible();
+  await expect(page.locator('.service-list').getByRole('button', { name: /MiniMax/ })).toBeVisible();
+  await expect(page.locator('.service-list').getByRole('button', { name: /Custom service/ })).toHaveCount(1);
+  await page.locator('.service-list').getByRole('button', { name: /DeepSeek/ }).click();
+  await page.locator('.service-list').getByRole('button', { name: /Custom service/ }).click();
+  await page.locator('.service-list').getByRole('button', { name: /DeepSeek/ }).click();
+  await expect(page.locator('.service-list').getByRole('button', { name: /DeepSeek/ })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).settings.profiles.filter((p: any) => p.provider === 'custom').length)).toBe(1);
+  await page.screenshot({ path: 'test-results/settings-services.png' });
+});
+
+test('close and quit prompt for unsaved settings; failures retain the dialog and draft', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByLabel('Default translation language', { exact: true }).selectOption('fr');
+  await page.evaluate(() => (window as any).closeSettings());
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByLabel('Default translation language', { exact: true })).toHaveValue('fr');
+  await page.evaluate(() => { const w = window as any; w.failSave = true; w.closeSettings('quit'); });
+  await page.getByRole('button', { name: 'Save and quit', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveText('Fixture save failed');
+  expect(await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'finish_settings_close').length)).toBe(0);
+  await page.evaluate(() => { (window as any).failSave = false; });
+  await page.getByRole('button', { name: 'Save and quit', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'finish_settings_close').length)).toBe(1);
+  expect(await page.evaluate(() => (window as any).settings.target_language)).toBe('fr');
+});
+
+test('history scroll areas contain their content and never overlap retention', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.locator('.history-row').first().click();
+  await expect(page.getByLabel('Record details', { exact: true })).toContainText('第 0 条记录的译文');
+  for (const width of [1100, 850, 620]) {
+    await page.setViewportSize({ width, height: 820 });
+    const bounds = await page.evaluate(() => {
+      const workspace = document.querySelector('.history-workspace')!.getBoundingClientRect();
+      const list = document.querySelector('.history-list')!.getBoundingClientRect();
+      const detail = document.querySelector('.history-detail')!.getBoundingClientRect();
+      const retention = document.querySelector('.retention-section')?.getBoundingClientRect();
+      return { workspaceBottom: workspace.bottom, listBottom: list.bottom, detailBottom: detail.bottom, retentionTop: retention?.top, noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth };
+    });
+    expect(bounds.listBottom).toBeLessThanOrEqual(bounds.workspaceBottom + 1);
+    expect(bounds.detailBottom).toBeLessThanOrEqual(bounds.workspaceBottom + 1);
+    expect(bounds.retentionTop).toBeGreaterThanOrEqual(bounds.workspaceBottom);
+    expect(bounds.noHorizontalOverflow).toBe(true);
+  }
+  await page.setViewportSize({ width: 1100, height: 820 });
+  await page.locator('.settings-content').evaluate(el => el.scrollTop = 0);
+  await page.screenshot({ path: 'test-results/history-light.png' });
+  await page.locator('.history-list').evaluate(el => el.scrollTop = el.scrollHeight);
+  await page.locator('.history-detail').evaluate(el => el.scrollTop = el.scrollHeight);
+  await page.screenshot({ path: 'test-results/history-scroll-end.png' });
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('dark');
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.locator('.history-row').first().click();
+  await page.screenshot({ path: 'test-results/history-dark.png' });
+});
+
+test('clean close needs no prompt and discarding never saves the changed values', async ({ page }) => {
+  await settingsFixture(page);
+  await page.evaluate(()=>(window as any).closeSettings());
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='finish_settings_close').length)).toBe(1);
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await page.getByLabel('Default translation language',{exact:true}).selectOption('fr');
+  await page.evaluate(()=>(window as any).closeSettings());
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button',{name:'Don’t save',exact:true}).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration').length)).toBe(0);
+  await expect(page.getByLabel('Default translation language',{exact:true})).toHaveValue('zh-Hans');
+});
+
+test('filtering invalidates a pending detail so old content cannot return', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByRole('button',{name:'History',exact:true}).click();
+  await page.evaluate(()=>(window as any).delayDetail=true);
+  await page.locator('.history-row').first().click();
+  await expect.poll(()=>page.evaluate(()=>typeof (window as any).releaseDetail)).toBe('function');
+  await page.getByRole('searchbox').fill('no match');
+  await page.getByRole('button',{name:'Search',exact:true}).click();
+  await page.evaluate(()=>(window as any).releaseDetail());
+  await expect(page.getByLabel('Record details',{exact:true})).toContainText('Choose a record');
+  await expect(page.getByLabel('Record details',{exact:true})).not.toContainText('Record 0:');
+});
+
+
+test('permission badges refresh on return and while awaiting authorization, without replacing drafts', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByLabel('Default translation language', {exact:true}).selectOption('fr');
+  await page.evaluate(() => { const w=window as any; w.permissions={accessibility:false,screen:false}; window.dispatchEvent(new Event('focus')); });
+  await expect(page.locator('.permission-state')).toHaveText(['Not allowed','Not allowed']);
+  await page.evaluate(() => { const w=window as any; w.permissions.accessibility=true; window.dispatchEvent(new Event('focus')); });
+  await expect(page.locator('.permission-state')).toHaveText(['Allowed','Not allowed']);
+  await page.evaluate(() => { (window as any).permissions.screen=true; });
+  await expect(page.locator('.permission-state')).toHaveText(['Allowed','Allowed']);
+  await expect(page.getByLabel('Default translation language', {exact:true})).toHaveValue('fr');
+  const button=page.getByRole('button',{name:'Refresh status',exact:true});
+  const box=await button.boundingBox();
+  const text=await button.evaluate(el=>{const range=document.createRange();range.selectNodeContents(el);return range.getBoundingClientRect().toJSON();});
+  expect(text.left-box!.x).toBeGreaterThanOrEqual(10);
+  expect(box!.x+box!.width-text.right).toBeGreaterThanOrEqual(10);
+  await page.locator('.permission-core').screenshot({path:'test-results/permission-card.png'});
+});
+
+test('shortcut hint follows the action label and aligns at its lower edge', async ({ page }) => {
+  await settingsFixture(page);
+  const button=page.getByRole('button',{name:'Record selection shortcut',exact:true});
+  const operation=await button.locator('.shortcut-operation').boundingBox();
+  const hint=await button.locator('.recorder-action').boundingBox();
+  const caption=await button.locator('.shortcut-label').boundingBox();
+  const caps=await button.locator('.shortcut-keycaps').boundingBox();
+  expect(hint!.x).toBeLessThan(caps!.x);
+  expect(hint!.x).toBeLessThan(operation!.x+operation!.width);
+  expect(Math.abs(hint!.y+hint!.height-(caption!.y+caption!.height))).toBeLessThanOrEqual(4);
+});
+
+test('history controls share a baseline and statuses are tags with concise Chinese labels', async ({page}) => {
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.records[1].status='failed';});
+  await page.getByRole('button',{name:'History',exact:true}).click();
+  for(const width of [1100,850]){
+    await page.setViewportSize({width,height:820});
+    const boxes=await page.locator('.history-search-field,.history-tools select,.history-search-button').evaluateAll(elements=>elements.map(el=>el.getBoundingClientRect().toJSON()));
+    expect(new Set(boxes.map(box=>Math.round(box.top))).size).toBe(1);
+    expect(new Set(boxes.map(box=>Math.round(box.height))).size).toBe(1);
+  }
+  await expect(page.locator('.history-status.complete').first()).not.toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+  await page.getByRole('button',{name:'Appearance',exact:true}).click();
+  await page.getByRole('combobox',{name:'Display language',exact:true}).selectOption('zh');
+  await page.getByRole('button',{name:'历史记录',exact:true}).click();
+  await expect(page.locator('.history-status.complete').first()).toHaveText('完成');
+  await expect(page.locator('.history-status.failed').first()).toHaveText('失败');
+  await page.screenshot({path:'test-results/history-aligned-zh.png'});
+});
+
+
+test('service catalog configures models, a local dictionary and separate Youdao credentials', async ({page}) => {
+  await settingsFixture(page);
+  await page.getByRole('button',{name:'Services',exact:true}).click();
+  for(const name of ['Gemini','OpenAI','Claude','Qwen','Zhipu','SiliconFlow','OpenRouter','System dictionary','Youdao'])await expect(page.locator('.service-list').getByRole('button',{name:new RegExp(name)})).toHaveCount(1);
+  await page.locator('.service-list').getByRole('button',{name:/Gemini/}).click();
+  await page.getByRole('combobox',{name:'Model',exact:true}).fill('fixture-gemini');
+  await page.getByLabel('API Key',{exact:true}).fill('fixture-only-key');
+  await page.locator('.service-list').getByRole('button',{name:/System dictionary/}).click();
+  await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Test dictionary',exact:true})).toBeVisible();
+  await expect(page.locator('.service-list').getByRole('button',{name:/Custom service/}).locator('small')).toHaveText('Configured');
+  await expect(page.locator('.service-list').getByRole('button',{name:/Custom service/}).locator('.service-default-tag')).toHaveText('Default');
+  await page.getByRole('button',{name:'Use by default',exact:true}).click();
+  await expect(page.locator('.service-default-tag')).toHaveCount(1);
+  await expect(page.locator('.service-list').getByRole('button',{name:/System dictionary/}).locator('.service-default-tag')).toHaveText('Default');
+  await expect(page.locator('.service-list').getByRole('button',{name:/System dictionary/}).locator('small')).toHaveText('On this Mac');
+  await expect(page.locator('.service-list').getByRole('button',{name:/Custom service/}).locator('small')).toHaveText('Configured');
+  await expect(page.getByRole('button',{name:'Fetch models',exact:true})).toHaveCount(0);
+  await page.locator('.service-list').getByRole('button',{name:/Youdao/}).click();
+  await page.getByLabel('Application ID',{exact:true}).fill('fixture-app');
+  await page.getByLabel('Application secret',{exact:true}).fill('fixture-only-secret');
+  await expect(page.getByRole('combobox',{name:'Model',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Save changes',exact:true}).click();
+  const saved=await page.evaluate(()=>{const w=window as any;return {providers:w.settings.profiles.map((p:any)=>p.provider),id:w.settings.profiles.find((p:any)=>p.provider==='youdao').app_id,keyUpdates:w.calls.filter((c:any)=>c.cmd==='save_configuration').at(-1).args.apiKeyUpdates};});
+  expect(saved.providers).toEqual(['custom','gemini','system_dictionary','youdao']);expect(saved.id).toBe('fixture-app');expect(Object.values(saved.keyUpdates)).toContain('fixture-only-secret');
+  await page.locator('.service-list').getByRole('button',{name:/Gemini/}).click();
+  await expect(page.locator('.service-list').getByRole('button',{name:/Gemini/})).toHaveCount(1);
+  await page.screenshot({path:'test-results/services-catalog.png'});
+  await page.getByRole('button',{name:'Appearance',exact:true}).click();
+  await page.getByRole('combobox',{name:'Display language',exact:true}).selectOption('zh');
+  await page.getByRole('button',{name:'服务',exact:true}).click();
+  await page.getByRole('button',{name:'保存设置',exact:true}).click();
+  await page.screenshot({path:'test-results/services-catalog-zh.png'});
+});
+
+test('service search supports Chinese English and pinyin; panes align and prompt saves',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
+ await expect(page.getByText('Connect your own model services. Keys stay in the system keychain.',{exact:true})).toHaveCount(0);
+ const search=page.getByRole('textbox',{name:'Search providers'});
+ for(const query of ['智谱','zhipu','zp']){await search.fill(query);await expect(page.locator('.service-scroll .service-item')).toHaveCount(1);await expect(page.locator('.service-scroll')).toContainText('Zhipu')}
+ await page.locator('.service-scroll .service-item').click();
+ await expect(page.getByLabel('Model',{exact:true})).toHaveValue('glm-4-flash-250414');
+ await search.fill('');
+ const panes=await page.evaluate(()=>['.service-list','.service-editor-tray'].map(q=>document.querySelector(q)!.getBoundingClientRect().toJSON()));expect(panes[0].height).toBe(panes[1].height);expect(panes[0].y).toBe(panes[1].y);
+ await expect(page.locator('.provider-logo')).toHaveCount(13);
+ const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
+ await prompt.fill('Translate into {{target_lang}} with concise technical wording.');
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.provider==='zhipu').custom_prompt)).toContain('{{target_lang}}');
+ await page.getByRole('button',{name:'Use default',exact:true}).click();await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
+ await page.screenshot({path:'artifacts/previews/2026-10-15-services-prompts.png'});
+});
+
+test('provider logos load actual SVG artwork',async({page})=>{await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();const logo=page.locator('.brand-silhouette').first();await expect(logo.locator('svg path').first()).toHaveAttribute('d',/.+/);});
+
+
+test('vocabulary searches contexts, saves notes, manages mastery and exports all formats',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Vocabulary',exact:true}).click();
+ await page.getByRole('searchbox',{name:'Search vocabulary'}).fill('adapts');await expect(page.locator('.vocabulary-item')).toHaveCount(1);
+ await page.locator('.vocabulary-item').click();await expect(page.locator('.context-source mark')).toHaveText('resilient');
+ await page.getByRole('textbox',{name:'Personal note'}).fill('Recover after a difficult change.');
+ await expect.poll(()=>page.evaluate(()=>(window as any).vocabulary[0].note)).toBe('Recover after a difficult change.');
+ await page.getByRole('button',{name:'Mark as mastered'}).click();await expect(page.getByRole('button',{name:'Mark as learning'})).toBeVisible();
+ await page.getByLabel('Learning status',{exact:true}).selectOption('learning');await expect(page.locator('.vocabulary-item')).toHaveCount(0);await page.getByLabel('Learning status',{exact:true}).selectOption('all');
+ await page.getByRole('button',{name:'Pronounce word'}).click();expect(await page.evaluate(()=>(window as any).calls.some((c:any)=>c.cmd==='speak_word'&&c.args.word==='resilient'))).toBe(true);
+ await expect(page.getByLabel('Export format',{exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Export',exact:true}).click();await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Export vocabulary'})).not.toBeVisible();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_export').length)).toBe(0);
+ for(const [format,label] of [['csv','CSV Spreadsheets'],['markdown','Markdown Notes and documents'],['anki','Anki TSV Flashcards']]){
+  await page.getByRole('button',{name:'Export',exact:true}).click();await page.getByRole('dialog',{name:'Export vocabulary'}).getByRole('button',{name:label,exact:true}).click();
+  await expect(page.getByRole('status').filter({hasText:'Vocabulary exported'})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_export').at(-1).args.format)).toBe(format);
+ }
+ const panes=await page.evaluate(()=>['.vocabulary-list-tray','.vocabulary-detail-tray'].map(q=>document.querySelector(q)!.getBoundingClientRect().toJSON()));expect(panes[0].height).toBe(panes[1].height);
+ await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary.png'});
+ await page.getByRole('button',{name:'Delete context',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Delete',exact:true}).click();await expect(page.locator('.word-context')).toHaveCount(0);await page.getByRole('searchbox',{name:'Search vocabulary'}).fill('');
+ await page.getByRole('button',{name:'Delete word',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();await expect(page.locator('.vocabulary-item')).toHaveCount(1);
+ await page.getByRole('button',{name:'Delete word',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Delete',exact:true}).click();await expect(page.locator('.vocabulary-item')).toHaveCount(0);
+});
+
+test('service and vocabulary workspaces remain usable in narrow and dark windows',async({page})=>{
+ await settingsFixture(page);
+ for(const section of ['Services','Vocabulary']){
+  await page.getByRole('button',{name:section,exact:true}).click();if(section==='Vocabulary')await page.locator('.vocabulary-item').click();
+  for(const width of [1100,850,620]){await page.setViewportSize({width,height:820});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);}
+ }
+ await page.setViewportSize({width:1100,height:820});await page.evaluate(()=>document.documentElement.setAttribute('data-theme','dark'));
+ await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary-dark.png'});
+});
+
+
+test('free defaults, tier labels and live OpenRouter filtering retain exact model IDs',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
+ for(const [provider,model] of [['Gemini','gemini-2.5-flash-lite'],['SiliconFlow','Qwen/Qwen2.5-7B-Instruct'],['Zhipu','glm-4-flash-250414']]){
+  await page.locator('.service-list').getByRole('button',{name:new RegExp(provider)}).click();await expect(page.getByLabel('Model',{exact:true})).toHaveValue(model);
+ }
+ await expect(page.locator('.model-suggestions')).toContainText('glm-4.7-flash');await expect(page.locator('.model-suggestions')).toContainText('glm-4.6v-flash');
+ await page.locator('.service-list').getByRole('button',{name:/Gemini/}).click();await expect(page.locator('.model-catalog')).toContainText('Free tier');
+ await page.getByLabel('Model',{exact:true}).fill('my-existing-model');await page.locator('.service-list').getByRole('button',{name:/SiliconFlow/}).click();await page.locator('.service-list').getByRole('button',{name:/Gemini/}).click();await expect(page.getByLabel('Model',{exact:true})).toHaveValue('my-existing-model');
+ await page.locator('.service-list').getByRole('button',{name:/OpenRouter/}).click();await page.getByRole('button',{name:'Fetch models',exact:true}).click();
+ const list=page.locator('.model-suggestions');await expect(list.getByRole('button')).toHaveCount(1);await expect(list).toContainText('fixture/free-model:free');
+ await list.getByRole('button').click();await expect(page.getByLabel('Model',{exact:true})).toHaveValue('fixture/free-model:free');
+ await page.getByLabel('Show free models only',{exact:true}).uncheck();await expect(list.getByRole('button')).toHaveCount(3);await expect(list.getByRole('button',{name:/zero-input/})).toContainText('Paid');
+ await expect(page.getByLabel('Model',{exact:true})).toHaveValue('fixture/free-model:free');
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.provider==='openrouter').model)).toBe('fixture/free-model:free');
+ await page.screenshot({path:'artifacts/previews/2026-10-15-free-model-catalog.png'});
+});
+
+test('compact prompt preview switches local modes without changing settings',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
+ const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).toHaveValue(/Mode: sentence translation/);
+ await expect(prompt).not.toHaveValue(/Safety Fallback|context_sentence|sentence_trans|dict_meaning/);
+ await page.getByRole('button',{name:'Dictionary mode',exact:true}).click();await expect(prompt).toHaveValue(/Mode: dictionary lookup/);await expect(prompt).not.toHaveValue(/Mode: sentence translation/);
+ await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'Sentence mode',exact:true}).click();await expect(prompt).toHaveValue(/Mode: sentence translation/);
+ await prompt.fill('Keep domain terms precise.');await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.profiles[0].custom_prompt)).toBe('Keep domain terms precise.');
+ await page.getByRole('button',{name:'Use default',exact:true}).click();await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
+});
+
+
+test('automatic vocabulary switch saves and pure-translation preview has no metadata contract',async({page})=>{
+ await settingsFixture(page);const toggle=page.getByRole('checkbox',{name:/Automatically extract vocabulary/});await expect(toggle).toBeChecked();await toggle.uncheck();await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.auto_vocabulary)).toBe(false);
+ await page.getByRole('button',{name:'Services',exact:true}).click();const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).not.toHaveValue(/---VOCAB_JSON---|Extract 2|"meaning"/);await expect(prompt).toHaveValue(/Return only/);
+});
+
+
+test('compact settings keep workspace bottoms near footer at different window sizes',async({page})=>{
+ await settingsFixture(page);
+ await expect(page.getByText('Choose your target language and how you capture text.')).toHaveCount(0);
+ await expect(page.getByText('Skipped above 150 words or 800 characters')).toHaveCount(0);
+ await expect(page.getByRole('checkbox',{name:'Local sensitive-data protection',exact:true})).toBeChecked();
+ for(const [width,height] of [[1100,820],[850,650],[1400,1100]]){
+  await page.setViewportSize({width,height});
+  for(const [section,workspace] of [['Services','.service-workspace'],['Vocabulary','.vocabulary-workspace']]){
+   await page.getByRole('button',{name:section,exact:true}).click();
+   const result=await page.evaluate((selector)=>{
+    const box=document.querySelector(selector)!.getBoundingClientRect();
+    const footer=document.querySelector('.settings-actions')!.getBoundingClientRect();
+    return {gap:footer.top-box.bottom,height:box.height,overflow:document.documentElement.scrollWidth>innerWidth};
+   },workspace);
+   expect(result.gap).toBeGreaterThanOrEqual(8);expect(result.gap).toBeLessThanOrEqual(16);expect(result.height).toBeGreaterThan(250);expect(result.overflow).toBe(false);
+  }
+ }
+ await page.setViewportSize({width:1100,height:820});
+ await expect(page.getByText('Build your vocabulary through words and sentences, with every context in one place.')).toHaveCount(0);
+ const controls=await page.locator('.vocabulary-toolbar').evaluate(el=>Array.from(el.children).map(c=>c.getBoundingClientRect().height));
+ expect(Math.max(...controls)-Math.min(...controls)).toBeLessThanOrEqual(1);
+ await page.screenshot({path:'artifacts/previews/2026-10-15-compact-vocabulary-toolbar.png'});
+ await page.getByRole('button',{name:'Export',exact:true}).click();
+ await page.screenshot({path:'artifacts/previews/2026-10-15-export-format-dialog.png'});
+});
+
+
+test('history uses the same Markdown reader and plain text copy without requesting translation',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'History',exact:true}).click();
+ await page.evaluate(()=>{const w=window as any;w.records[0].translation='# History result\n\n- **Resilient** team\n- Second line';});
+ await page.locator('.history-row').first().click();await expect(page.locator('.history-detail .markdown-reading h1')).toHaveText('History result');
+ await page.getByRole('button',{name:'Plain text',exact:true}).click();await expect(page.locator('.history-detail .translation-prose')).toContainText('**Resilient**');
+ await page.getByRole('button',{name:'Copy translation',exact:true}).click();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toContain('• Resilient team');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='retry_task').length)).toBe(0);
+});
+
+test('default service moves first and personal names survive display localization', async ({page}) => {
+  await settingsFixture(page, false, '自定义模型');
+  await page.getByRole('button',{name:'Services',exact:true}).click();
+  await expect(page.locator('.service-item').first()).toContainText('Custom service');
+  await page.locator('.service-item').filter({hasText:'Zhipu'}).click();
+  await page.getByLabel('API Key',{exact:true}).fill('fixture-only-key');
+  await page.getByRole('button',{name:'Use by default',exact:true}).click();
+  await expect(page.locator('.service-item').first()).toContainText('Zhipu');
+  await expect(page.locator('.service-item').last()).toContainText('Custom service');
+  await page.locator('.service-item').last().click();
+  await expect(page.getByLabel('Service name',{exact:true})).toHaveValue('Custom service');
+  await page.getByLabel('Service name',{exact:true}).fill('我的代理');
+  await page.getByRole('button',{name:'Save changes',exact:true}).click();
+  await expect(page.getByLabel('Service name',{exact:true})).toHaveValue('我的代理');
+});
+
+test('native entrance animations respect changes to reduced motion', async ({page}) => {
+  await settingsFixture(page);
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  await page.getByRole('button',{name:'Services',exact:true}).click();
+  await page.getByRole('button',{name:'Translation',exact:true}).click();
+  await expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBeGreaterThan(0);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
+  await expect(page.getByLabel('Default translation language',{exact:true})).toBeVisible();
+});

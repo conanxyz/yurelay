@@ -1,0 +1,58 @@
+# Build outputs and dependency caches (at every workspace depth)
+target/
+node_modules/
+dist/
+build/
+.svelte-kit/
+.vite/
+coverage/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+/src-tauri/gen/
+
+# Local artifacts, reference repositories and scratch work
+/artifacts/
+/Easydict/
+/tmp/
+/temp/
+*.noindex/
+/test-results/
+/playwright-report/
+/blob-report/
+
+# macOS and editor state
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# Secrets, local settings, signing material and databases
+.env*
+*.local
+*.db
+*.db-*
+*.sqlite*
+*.log
+logs/
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+credentials.json
+secrets.json
+
+# Packaged applications and archives are Release assets, not source inputs
+*.app/
+*.dmg
+*.app.tar.gz
+*.dSYM/

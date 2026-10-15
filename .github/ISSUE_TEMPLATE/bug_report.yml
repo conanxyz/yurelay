@@ -1,0 +1,48 @@
+name: Bug report / 错误报告
+description: Report a reproducible problem using synthetic data.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not paste keys, seed phrases, private text, logs containing personal data, or account screenshots. Security vulnerabilities: see SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Glossa version / commit
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 14.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Chip architecture
+      options:
+        - Apple Silicon (M1 / M2 / M3 / M4 or later)
+        - Intel (x86_64)
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Translation provider and model
+      description: Use 'not applicable' if unrelated; omit API keys and private endpoint URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a short synthetic example, with expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Optional screenshots or error codes with private content removed.

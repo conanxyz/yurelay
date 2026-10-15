@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Glossa",
+  "version": "0.1.0",
+  "identifier": "com.autodict.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Glossa",
+        "width": 460,
+        "height": 300,
+        "minWidth": 360,
+        "minHeight": 220,
+        "visible": false,
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      },
+      {
+        "label": "settings",
+        "title": "Glossa \u8bbe\u7f6e",
+        "url": "index.html?window=settings",
+        "width": 1100,
+        "height": 800,
+        "minWidth": 620,
+        "minHeight": 540,
+        "visible": false,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' glossa-image: http://glossa-image.localhost data:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-",
+      "infoPlist": "Info.plist"
+    },
+    "license": "GPL-3.0-only",
+    "licenseFile": "../LICENSE",
+    "copyright": "Copyright (c) 2026 Glossa Contributors",
+    "resources": {
+      "../LICENSE": "licenses/LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../licenses/": "licenses/third-party/"
+    }
+  }
+}

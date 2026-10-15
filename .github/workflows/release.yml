@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag matching package.json, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+  bundle:
+    name: Bundle ${{ matrix.target }}
+    needs: checks
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # Avoid concurrent creation of the same draft release.
+      max-parallel: 1
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    env:
+      CARGO_INCREMENTAL: '0'
+      # Preserve host proc-macro symbols on macOS; the app remains ad-hoc signed.
+      CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: none
+      APPLE_SIGNING_IDENTITY: '-'
+      # For notarized releases, configure repository secrets and replace '-' above:
+      # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      # APPLE_ID: ${{ secrets.APPLE_ID }}
+      # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Validate release version
+        id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python3 scripts/release-version.py
+      - name: Install pinned Rust and architecture target
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup show active-toolchain
+          rustup target add "$RUST_TARGET"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: '. -> target'
+          key: release-${{ matrix.target }}
+      - run: npm ci
+      - name: Build and upload draft assets
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: Glossa ${{ steps.version.outputs.tag }}
+          releaseBody: |
+            macOS 14 or later. Choose aarch64 for Apple Silicon or x64 for Intel.
+            These builds use ad-hoc signing and are not Apple-notarized.
+            GPL-3.0-only. Source code is available at this release tag.
+            Review both architectures and their checksums before publishing this draft.
+          releaseDraft: true
+          prerelease: true
+          args: --target ${{ matrix.target }} --bundles app,dmg
+          tauriScript: npm run tauri
+      - name: Upload app archive and SHA-256 checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          ./scripts/release-assets.sh

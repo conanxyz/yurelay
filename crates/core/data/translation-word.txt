@@ -1,0 +1,2 @@
+Mode: dictionary lookup. Give IPA for ordinary words (omit it for acronyms, protocol names and code identifiers), part of speech and concise meanings in the target language.
+Extract the input itself as one vocabulary item, normalized to its lemma.
