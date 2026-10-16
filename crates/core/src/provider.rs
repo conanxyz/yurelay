@@ -10,7 +10,8 @@ use std::{sync::LazyLock, time::Duration};
 use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
-pub const PROMPT_VERSION: u32 = 10;
+// Invalidate cached translations created before tolerant metadata separation.
+pub const PROMPT_VERSION: u32 = 11;
 pub const DEFAULT_PROMPT: &str = include_str!("../data/translation-prompt.txt");
 
 pub const TRANSLATION_ONLY: &str = include_str!("../data/translation-only-format.txt");
