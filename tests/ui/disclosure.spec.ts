@@ -222,6 +222,121 @@ test('a failed second capture clears previous content; later captures select the
   }
 });
 
+test('screenshot generation announces progress until source text is ready without translating',async({page})=>{
+  await fixture(page,false);
+  await page.setViewportSize({width:680,height:700});
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.task={...w.task,id:'ocr-progress',source:'screenshot',status:'capturing',original_text:'',edited_text:null,translation:'',error:null,revision:2};
+    w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  const editor=page.getByRole('textbox',{name:'Source text'});
+  await expect(editor).toHaveAttribute('readonly','');
+  if(await page.locator('.source-processing').count()===0)await page.locator('.source-panel').screenshot({path:'artifacts/previews/screenshot-progress-before.png'});
+  await expect(page.getByRole('status')).toHaveText('Preparing screenshot…');
+  await expect(editor).toHaveAttribute('aria-busy','true');
+  await page.evaluate(()=>{
+    const w=window as any;Object.assign(w.task,{status:'recognizing',revision:3});
+    w.wire({type:'snapshot',snapshot:{revision:3,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(page.getByRole('status')).toHaveText('Recognizing screenshot text…');
+  await expect(editor).toHaveValue('');
+  await expect(editor).toHaveAttribute('placeholder','');
+  await expect(page.locator('.source-image')).toHaveCount(0);
+  await page.locator('.source-panel').screenshot({path:'artifacts/previews/screenshot-progress-after.png'});
+  await page.keyboard.press('x');
+  expect(await requests(page)).toBe(0);
+  await page.evaluate(()=>{
+    const w=window as any;Object.assign(w.task,{status:'ready',original_text:'Glossa screenshot OCR test.',revision:4});
+    w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(editor).toHaveValue('Glossa screenshot OCR test.');
+  await expect(editor).toHaveAttribute('aria-busy','false');
+  await expect(editor).not.toHaveAttribute('readonly');
+  await expect(page.locator('.source-processing')).toHaveCount(0);
+  await expect(page.locator('#translation-body')).toHaveCount(0);
+  expect(await requests(page)).toBe(0);
+});
+
+test('screenshot OCR failures remain visible while translation is collapsed without sending a request',async({page})=>{
+  await fixture(page,false);
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.task={...w.task,id:'ocr-failure',source:'screenshot',status:'recognizing',original_text:'',edited_text:null,translation:'',error:null,revision:2};
+    w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(page.getByLabel('Source language',{exact:true})).toBeDisabled();
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{status:'failed',error:'本地文字识别失败，请缩小选区后重试。',revision:3});
+    w.wire({type:'snapshot',snapshot:{revision:3,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  const toggle=page.locator('.disclosure-control');
+  await expect(toggle).toHaveAttribute('aria-expanded','false');
+  await expect(page.getByRole('alert')).toHaveText('Local text recognition failed. Try a smaller selection.');
+  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('');
+  expect(await requests(page)).toBe(0);
+  await toggle.click();
+  await expect(page.getByRole('alert')).toHaveCount(1);
+  await expect(page.getByRole('alert')).toBeVisible();
+  await toggle.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect(await requests(page)).toBe(0);
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{id:'next-capture',status:'ready',original_text:'Glossa screenshot OCR test.',error:null,revision:4});
+    w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('Glossa screenshot OCR test.');
+});
+
+test('screenshot progress respects reduced motion, localization and narrow dark layouts',async({page})=>{
+  await fixture(page,false);
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.settings.ui_language='zh';w.emit('configuration-changed',w.settings);
+    w.task={...w.task,id:'ocr-layout',source:'screenshot',status:'recognizing',original_text:'',edited_text:null,translation:'',error:null,revision:2};
+    w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(page.getByRole('status')).toHaveText('正在识别截图文字…');
+  const spinner=page.locator('.source-processing .translation-loader');
+  await expect(spinner).toHaveCSS('animation-name','translation-spin');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await expect(spinner).toHaveCSS('animation-name','none');
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>{const w=window as any;w.settings.theme=value;w.emit('configuration-changed',w.settings);},theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme',theme);
+    for(const width of [580,680,980]){
+      await page.setViewportSize({width,height:700});
+      await expect(page.getByRole('status')).toBeVisible();
+      const bounds=await page.evaluate(()=>{
+        const frame=document.querySelector('.source-editor-frame')!.getBoundingClientRect();
+        const progress=document.querySelector('.source-processing')!.getBoundingClientRect();
+        return {frame:frame.toJSON(),progress:progress.toJSON(),overflow:document.documentElement.scrollWidth>innerWidth};
+      });
+      expect(bounds.overflow).toBe(false);
+      expect(bounds.progress.left).toBeGreaterThanOrEqual(bounds.frame.left);
+      expect(bounds.progress.right).toBeLessThanOrEqual(bounds.frame.right);
+      expect(bounds.progress.top).toBeGreaterThanOrEqual(bounds.frame.top);
+      expect(bounds.progress.bottom).toBeLessThanOrEqual(bounds.frame.bottom);
+      await page.screenshot({path:`artifacts/previews/screenshot-progress-${theme}-${width}.png`});
+    }
+  }
+  await page.evaluate(()=>{const w=window as any;w.wire({type:'snapshot',snapshot:{revision:3,tasks:[]},selected:null,notice:null});});
+  await expect(page.locator('.source-processing')).toHaveCount(0);
+  await expect(page.getByRole('textbox',{name:'原文内容'})).toHaveAttribute('aria-busy','false');
+  expect(await requests(page)).toBe(0);
+  await page.evaluate(()=>{
+    const w=window as any;Object.assign(w.task,{sensitive:'API_SECRET',revision:4});
+    w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(page.locator('.sensitive-mask')).toBeVisible();
+  await expect(page.locator('.source-processing')).toHaveCount(0);
+  await expect(page.getByRole('textbox',{name:'原文内容'})).toHaveCount(0);
+});
+
 
 test('a snapshot without an explicit selection starts blank and history opens only on selection', async ({page}) => {
   await fixture(page);

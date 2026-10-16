@@ -97,6 +97,21 @@
       : settings.profiles.find((p) => p.id === settings.active_profile),
   );
   let localDictionary = $derived(service?.provider === "system_dictionary");
+  let sourceProcessing = $derived(
+    !!current &&
+      current.source === "screenshot" &&
+      !current.sensitive &&
+      ["capturing", "recognizing"].includes(current.status),
+  );
+  let captureFailure = $derived(
+    current?.source === "screenshot" &&
+      current.status === "failed" &&
+      !current.sensitive &&
+      !current.original_text.trim() &&
+      !draft.trim()
+      ? current.error
+      : null,
+  );
   let changed = $derived(
     !!current &&
       (service?.id !== current.profile.id ||
@@ -722,6 +737,9 @@
       {#if error}<p class="inline-feedback" role="alert">
           {errorText(error, locale)}
         </p>{/if}
+      {#if captureFailure}<p class="inline-feedback" role="alert">
+          {errorText(captureFailure, locale)}
+        </p>{/if}
       <div class="reading-sheet">
         <section class="source-panel" aria-label={t("原文", "Source")}>
           <div class="reading-caption">
@@ -790,19 +808,65 @@
                   alt={t("原始截图选区", "Original screenshot selection")}
                 />
               </details>{/if}
-            <textarea
-              class="source-editor"
-              aria-label={t("原文内容", "Source text")}
-              bind:value={draft}
-              readonly={!!current && active(current)}
-              onselect={captureSelection}
-              onmouseup={selectWordAtCaret}
-              oninput={clearSelection}
-              placeholder={t(
-                "选中文字或截取屏幕区域…",
-                "Select text or capture a screen region…",
-              )}
-              spellcheck="false"></textarea>
+            <div class="source-editor-frame">
+              <textarea
+                class="source-editor"
+                aria-label={t("原文内容", "Source text")}
+                aria-busy={sourceProcessing}
+                aria-describedby={sourceProcessing
+                  ? "source-processing-status"
+                  : undefined}
+                bind:value={draft}
+                readonly={!!current && active(current)}
+                onselect={captureSelection}
+                onmouseup={selectWordAtCaret}
+                oninput={clearSelection}
+                placeholder={sourceProcessing
+                  ? ""
+                  : t(
+                      "选中文字或截取屏幕区域…",
+                      "Select text or capture a screen region…",
+                    )}
+                spellcheck="false"></textarea>
+              {#if sourceProcessing}<div
+                  class="source-processing"
+                  id="source-processing-status"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <svg
+                    class="translation-loader"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      opacity=".2"
+                    />
+                    <path
+                      d="M12 3a9 9 0 0 1 9 9"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <span
+                    >{current?.status === "capturing"
+                      ? t("正在准备截图…", "Preparing screenshot…")
+                      : t(
+                          "正在识别截图文字…",
+                          "Recognizing screenshot text…",
+                        )}</span
+                  >
+                </div>{/if}
+            </div>
           {/if}
           {#if current?.image_error}<p class="inline-feedback">
               {errorText(current.image_error, locale)}
@@ -907,7 +971,10 @@
               ? t("释义", "Definition")
               : t("译文", "Translation")}
           >
-            {#if current?.error}<p class="inline-feedback" role="alert">
+            {#if current?.error && !captureFailure}<p
+                class="inline-feedback"
+                role="alert"
+              >
                 {errorText(current.error, locale)}
               </p>{/if}
             {#if current?.translation && !submitting}<TranslationContent
@@ -968,7 +1035,7 @@
                 >
               </div>{/if}
           </section>{/if}
-        <span class="sr-only" role="status"
+        <span class="sr-only" role="status" aria-hidden={sourceProcessing}
           >{current ? statusName(current.status, locale) : ""}</span
         >
       </div>
