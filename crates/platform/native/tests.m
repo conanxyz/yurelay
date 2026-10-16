@@ -1,6 +1,190 @@
-// Native smoke test: uses the exact OCR helper compiled into the application.
-// It only reads a synthetic in-memory fixture, never the screen or clipboard.
+// Native smoke tests use the exact helpers compiled into the application.
+// Clipboard cases use fake objects or a uniquely named synthetic pasteboard,
+// never the general clipboard; OCR uses an in-memory synthetic image.
 #import "macos.m"
+
+
+// NSPasteboard is a class cluster that refuses subclass allocation. This fake
+// implements only the read-only selectors consumed by the backup helper.
+@interface ADBackupTestPasteboard : NSObject
+@property(nonatomic, copy) NSArray<NSPasteboardItem *> *fixtureItems;
+@property(nonatomic) NSInteger fixtureCount;
+@property(nonatomic, readonly) NSInteger changeCount;
+@property(nonatomic, readonly, copy) NSArray<NSPasteboardItem *> *pasteboardItems;
+@end
+@implementation ADBackupTestPasteboard
+- (NSArray<NSPasteboardItem *> *)pasteboardItems { return self.fixtureItems; }
+- (NSInteger)changeCount { return self.fixtureCount; }
+@end
+
+@interface ADBackupTestItem : NSPasteboardItem
+@property(nonatomic, copy) NSArray<NSPasteboardType> *fixtureTypes;
+@property(nonatomic, copy) NSDictionary<NSPasteboardType, NSData *> *fixtureData;
+@property(nonatomic, copy) void (^onDataRead)(void);
+@end
+@implementation ADBackupTestItem
+- (NSArray<NSPasteboardType> *)types { return self.fixtureTypes; }
+- (NSData *)dataForType:(NSPasteboardType)type {
+    if (self.onDataRead) self.onDataRead();
+    return self.fixtureData[type];
+}
+@end
+
+static ADBackupTestItem *ADBackupFakeItem(NSArray<NSPasteboardType> *types,
+                                         NSDictionary<NSPasteboardType, NSData *> *data) {
+    ADBackupTestItem *item = [ADBackupTestItem new];
+    item.fixtureTypes = types;
+    item.fixtureData = data;
+    return item;
+}
+
+static ADBackupTestPasteboard *ADBackupFakeBoard(NSArray<NSPasteboardItem *> *items) {
+    ADBackupTestPasteboard *board = [ADBackupTestPasteboard new];
+    board.fixtureItems = items;
+    board.fixtureCount = 17;
+    return board;
+}
+
+static void ADBackupCheck(const char *name, BOOL passed, BOOL *allPassed) {
+    printf("Pasteboard backup %s passed=%s\n", name, passed ? "true" : "false");
+    if (!passed) *allPassed = NO;
+}
+
+static BOOL ADBackupMatches(NSArray<NSPasteboardItem *> *items,
+                            NSArray<NSDictionary<NSPasteboardType, NSData *> *> *expected) {
+    if (!items || items.count != expected.count) return NO;
+    for (NSUInteger i = 0; i < expected.count; i++) {
+        NSPasteboardItem *item = items[i];
+        NSDictionary<NSPasteboardType, NSData *> *formats = expected[i];
+        if (item.types.count != formats.count) return NO;
+        for (NSPasteboardType type in formats) {
+            NSData *actual = [item dataForType:type];
+            if (!actual || ![actual isEqualToData:formats[type]]) return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL ADTestPasteboardBackup(void) {
+    BOOL passed = YES;
+    NSString *error = @"stale fixture error";
+    ADBackupTestPasteboard *board = ADBackupFakeBoard(@[]);
+    NSArray<NSPasteboardItem *> *backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("empty-array", backup != nil && backup.count == 0 && error == nil, &passed);
+
+    board = ADBackupFakeBoard(nil);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("unavailable-items", backup == nil && [error isEqualToString:@"无法读取当前剪贴板，已保留原内容。请重试或使用截图翻译。"], &passed);
+
+    NSPasteboardType firstType = @"org.glossa.synthetic.first";
+    NSPasteboardType secondType = @"org.glossa.synthetic.second";
+    ADBackupTestItem *item = ADBackupFakeItem(@[firstType], @{});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("unreadable-format", backup == nil && [error isEqualToString:@"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"], &passed);
+
+    NSData *readableData = [@"Synthetic race fixture" dataUsingEncoding:NSUTF8StringEncoding];
+    __block BOOL staleFormatRead = NO;
+    item = ADBackupFakeItem(@[firstType], @{firstType: readableData});
+    item.onDataRead = ^{ staleFormatRead = YES; };
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount - 1, &error);
+    ADBackupCheck("stale-count-before-format-read", backup == nil && !staleFormatRead && [error isEqualToString:@"剪贴板或前台应用已改变，请重试。"], &passed);
+
+    item = ADBackupFakeItem(@[firstType], @{});
+    board = ADBackupFakeBoard(@[item]);
+    __weak ADBackupTestPasteboard *raceBoard = board;
+    item.onDataRead = ^{ raceBoard.fixtureCount++; };
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("change-during-nil-read", backup == nil && [error isEqualToString:@"剪贴板或前台应用已改变，请重试。"], &passed);
+
+    __block BOOL validFormatRead = NO;
+    item = ADBackupFakeItem(@[firstType], @{firstType: readableData});
+    board = ADBackupFakeBoard(@[item]);
+    __weak ADBackupTestPasteboard *validRaceBoard = board;
+    item.onDataRead = ^{ validFormatRead = YES; validRaceBoard.fixtureCount++; };
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("change-during-valid-read", backup == nil && validFormatRead && [error isEqualToString:@"剪贴板或前台应用已改变，请重试。"], &passed);
+
+    NSData *emptyData = [NSData data];
+    item = ADBackupFakeItem(@[firstType], @{firstType: emptyData});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("zero-byte-format", error == nil && ADBackupMatches(backup, @[@{firstType: emptyData}]), &passed);
+
+    const NSUInteger limit = 8 * 1024 * 1024;
+    NSString *sizeError = @"剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。";
+    NSData *oversized = [NSMutableData dataWithLength:limit + 1];
+    item = ADBackupFakeItem(@[firstType], @{firstType: oversized});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("over-eight-MiB", backup == nil && [error isEqualToString:sizeError], &passed);
+
+    NSData *halfPlusOne = [NSMutableData dataWithLength:limit / 2 + 1];
+    item = ADBackupFakeItem(@[firstType, secondType], @{firstType: halfPlusOne, secondType: halfPlusOne});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("formats-cumulative-size", backup == nil && [error isEqualToString:sizeError], &passed);
+
+    board = ADBackupFakeBoard(@[
+        ADBackupFakeItem(@[firstType], @{firstType: halfPlusOne}),
+        ADBackupFakeItem(@[secondType], @{secondType: halfPlusOne}),
+    ]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("items-cumulative-size", backup == nil && [error isEqualToString:sizeError], &passed);
+
+    __block BOOL promiseRead = NO;
+    NSPasteboardType promiseType = @"com.apple.pasteboard.promised-file-url";
+    item = ADBackupFakeItem(@[promiseType], @{promiseType: emptyData});
+    item.onDataRead = ^{ promiseRead = YES; };
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("promise-preserved-without-read", backup == nil && !promiseRead && [error isEqualToString:@"剪贴板含延迟数据，已保留剪贴板。请使用截图翻译。"], &passed);
+
+    NSData *exactLimit = [NSMutableData dataWithLength:limit];
+    item = ADBackupFakeItem(@[firstType], @{firstType: exactLimit});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("exactly-eight-MiB", error == nil && ADBackupMatches(backup, @[@{firstType: exactLimit}]), &passed);
+
+    // Exercise AppKit serialization and restoration only on a uniquely named board.
+    NSPasteboard *named = [NSPasteboard pasteboardWithUniqueName];
+    @try {
+        [named clearContents];
+        NSArray<NSPasteboardItem *> *emptyItems = named.pasteboardItems;
+        backup = ADBackupPasteboard(named, named.changeCount, &error);
+        printf("Pasteboard named-empty items_nil=%s count=%lu\n", emptyItems == nil ? "true" : "false", (unsigned long)emptyItems.count);
+        ADBackupCheck("named-empty-pasteboard", backup != nil && backup.count == 0 && error == nil, &passed);
+        const unsigned char syntheticBytes[] = {0x00, 0xff, 0x47, 0x6c};
+        NSArray<NSDictionary<NSPasteboardType, NSData *> *> *formats = @[
+            @{NSPasteboardTypeString: [@"Synthetic Glossa source" dataUsingEncoding:NSUTF8StringEncoding],
+              NSPasteboardTypeHTML: [@"<b>Synthetic Glossa source</b>" dataUsingEncoding:NSUTF8StringEncoding],
+              firstType: [NSData dataWithBytes:syntheticBytes length:sizeof(syntheticBytes)]},
+            @{NSPasteboardTypeString: [@"Second synthetic item" dataUsingEncoding:NSUTF8StringEncoding],
+              secondType: emptyData},
+        ];
+        NSMutableArray<NSPasteboardItem *> *source = [NSMutableArray new];
+        for (NSDictionary<NSPasteboardType, NSData *> *itemFormats in formats) {
+            NSPasteboardItem *sourceItem = [NSPasteboardItem new];
+            for (NSPasteboardType type in itemFormats) [sourceItem setData:itemFormats[type] forType:type];
+            [source addObject:sourceItem];
+        }
+        [named clearContents];
+        BOOL wrote = [named writeObjects:source];
+        NSInteger originalCount = named.changeCount;
+        backup = ADBackupPasteboard(named, originalCount, &error);
+        ADBackupCheck("named-multi-format-backup", wrote && error == nil && named.changeCount == originalCount && ADBackupMatches(backup, formats), &passed);
+        [named clearContents];
+        BOOL copied = [named setString:@"Synthetic selected text" forType:NSPasteboardTypeString];
+        ADBackupCheck("named-simulated-copy", copied && named.changeCount != originalCount && [[named stringForType:NSPasteboardTypeString] isEqualToString:@"Synthetic selected text"], &passed);
+        [named clearContents];
+        BOOL restored = backup != nil && [named writeObjects:backup];
+        ADBackupCheck("named-multi-format-restored", restored && ADBackupMatches(named.pasteboardItems, formats), &passed);
+    } @finally {
+        [named releaseGlobally];
+    }
+    return passed;
+}
 
 int main(void) {
     @autoreleasepool {
@@ -13,6 +197,7 @@ int main(void) {
             if(!passed)return 1;
         }
         [NSApplication sharedApplication];
+        if (!ADTestPasteboardBackup()) return 1;
         for (NSArray *fixture in @[@[@"这是用于检查本地语言检测的中文句子。", @"zh"], @[@"This is an English sentence used to verify local language detection.", @"en"], @[@"Bonjour, ceci est une phrase en français pour vérifier la détection de la langue.", @"fr"]]) {
             char code[32] = {0};
             size_t len = ad_detect_language([fixture[0] UTF8String], code, sizeof(code));

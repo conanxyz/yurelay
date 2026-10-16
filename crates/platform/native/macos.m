@@ -121,8 +121,41 @@ static void ADFinishSelection(ADSession *s, NSString *text, NSString *error) {
     [s end];
 }
 
-// Runs only on main. Snapshot all concrete pasteboard representations, bounded
-// to avoid blocking on large images or promises. Never restores over a new copy.
+static NSArray<NSPasteboardItem *> *ADBackupPasteboard(NSPasteboard *pb, NSInteger expectedCount, NSString **error) {
+    if (error) *error = nil;
+    NSString *const changedError = @"剪贴板或前台应用已改变，请重试。";
+    if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
+    NSArray<NSPasteboardItem *> *items = pb.pasteboardItems;
+    if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
+    // nil means retrieval failed. Only an actual empty array is an empty backup.
+    if (!items) { if (error) *error = @"无法读取当前剪贴板，已保留原内容。请重试或使用截图翻译。"; return nil; }
+    NSMutableArray<NSPasteboardItem *> *backup = [NSMutableArray new];
+    const NSUInteger limit = 8 * 1024 * 1024;
+    NSUInteger bytes = 0;
+    for (NSPasteboardItem *item in items) {
+        NSPasteboardItem *copy = [NSPasteboardItem new];
+        NSArray<NSPasteboardType> *types = item.types;
+        if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
+        for (NSPasteboardType type in types) {
+            if ([type.lowercaseString containsString:@"promise"]) { if (error) *error = @"剪贴板含延迟数据，已保留剪贴板。请使用截图翻译。"; return nil; }
+            NSData *data = [item dataForType:type];
+            // A pasteboard owner change makes old items stale, returning nil.
+            // Report that race before classifying a representation as unreadable.
+            if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
+            if (!data) { if (error) *error = @"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"; return nil; }
+            if (data.length > limit - bytes) { if (error) *error = @"剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。"; return nil; }
+            bytes += data.length;
+            if (![copy setData:data forType:type]) { if (error) *error = @"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"; return nil; }
+        }
+        [backup addObject:copy];
+    }
+    if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
+    return backup;
+}
+
+// Runs only on main. Snapshot all concrete representations with an aggregate size
+// limit; reject promised/unavailable data. Restoration uses the change-count and
+// input-monitoring guards below.
 static void ADCopyFallback(ADSession *s, pid_t pid, CFAbsoluteTime deadline) {
     if (!ADSameApp(pid)) { ADFinishSelection(s, nil, @"取词时前台应用已改变，请重新选择。") ; return; }
     NSEventModifierFlags held = NSEvent.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagShift);
@@ -133,19 +166,9 @@ static void ADCopyFallback(ADSession *s, pid_t pid, CFAbsoluteTime deadline) {
     }
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     NSInteger originalCount = pb.changeCount;
-    NSMutableArray<NSPasteboardItem *> *backup = [NSMutableArray new];
-    NSUInteger bytes = 0;
-    for (NSPasteboardItem *item in pb.pasteboardItems) {
-        NSPasteboardItem *copy = [NSPasteboardItem new];
-        for (NSPasteboardType type in item.types) {
-            if ([type.lowercaseString containsString:@"promise"]) { ADFinishSelection(s, nil, @"剪贴板含延迟数据，已保留剪贴板。请使用截图翻译。") ; return; }
-            NSData *data = [item dataForType:type];
-            bytes += data.length;
-            if (!data || bytes > 8 * 1024 * 1024) { ADFinishSelection(s, nil, @"当前剪贴板无法安全备份，请使用截图翻译。") ; return; }
-            [copy setData:data forType:type];
-        }
-        [backup addObject:copy];
-    }
+    NSString *backupError = nil;
+    NSArray<NSPasteboardItem *> *backup = ADBackupPasteboard(pb, originalCount, &backupError);
+    if (!backup) { ADFinishSelection(s, nil, backupError); return; }
     if (pb.changeCount != originalCount || !ADSameApp(pid)) { ADFinishSelection(s, nil, @"剪贴板或前台应用已改变，请重试。") ; return; }
     CGEventRef down = CGEventCreateKeyboardEvent(NULL, 8, true);
     CGEventRef up = CGEventCreateKeyboardEvent(NULL, 8, false);
