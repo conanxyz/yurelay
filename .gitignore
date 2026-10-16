@@ -83,3 +83,7 @@ pnpm-debug.log*
 /translation-reading-drawer.md
 /vocabulary-left-sidebar.md
 /vocabulary-pipeline-hardening.md
+
+# Development notes stay local; only shareable product/PR images are tracked.
+/docs/*
+!/docs/images/
