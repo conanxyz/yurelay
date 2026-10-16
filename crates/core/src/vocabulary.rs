@@ -382,7 +382,6 @@ impl StreamParser {
                 }
                 result
             })
-            .take(5)
             .collect();
         let notice =
             rejected.then(|| "部分生词无法可靠定位或格式无效，已忽略；译文已保留。".into());
@@ -392,6 +391,39 @@ impl StreamParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parser_keeps_all_valid_candidates_beyond_five() {
+        let words = [
+            "substance",
+            "clarity",
+            "discipline",
+            "meaningful",
+            "continuity",
+            "recognition",
+            "reflection",
+            "discomfort",
+        ];
+        let source = words.join(" ");
+        let metadata = words.map(|word| serde_json::json!({"word":word,"surface":word,"meaning":"合成释义","level":"C1"}));
+        let mut parser = StreamParser::default();
+        assert_eq!(
+            parser.push(&format!(
+                "译文{MARKER}{}",
+                serde_json::to_string(&metadata).unwrap()
+            )),
+            "译文"
+        );
+        let (_, candidates, notice) = parser.finish(&source, "译文");
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|item| item.word.as_str())
+                .collect::<Vec<_>>(),
+            words
+        );
+        assert!(notice.is_none());
+    }
+
     #[test]
     fn provider_formatted_markers_hide_metadata_at_every_chunk_boundary() {
         let source = "An offline provider is available.";

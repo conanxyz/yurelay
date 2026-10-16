@@ -111,6 +111,7 @@ Object.assign(errors, {
   "系统词典用于查询单词或短语，请缩短原文后重试。":
     "The system dictionary looks up words and phrases. Shorten the source and try again.",
   "系统词典查询失败。": "The system dictionary lookup failed.",
+  "查询的生词过长。": "A vocabulary lookup term is too long.",
   "此平台暂不支持系统词典。":
     "The system dictionary is not available on this platform.",
   "此服务不使用模型列表。": "This service does not use a model list.",

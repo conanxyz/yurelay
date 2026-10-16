@@ -7,6 +7,7 @@ async function fixture(page: Page, initiallySelected=true) {
     w.calls = [];w.words=[];
     w.speechVoices = [{locale:'en-GB',available:true},{locale:'en-US',available:true}];
     w.previewResults = {};w.deferredPreviewWords=[];w.previewResolvers=[];
+    w.lookupFailure='';w.deferLookup=false;w.lookupResolvers=[];
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     const callbacks: Record<number, Function> = {}, events: Record<string, number> = {};
     let callback = 0;
@@ -38,7 +39,13 @@ async function fixture(page: Page, initiallySelected=true) {
         if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: false, expanded: false };
         if (cmd === 'configuration_settings') return w.settings;
         if (cmd === 'permissions') return { accessibility: true, screen: true };
-        if(cmd==='vocabulary_list'||cmd==='vocabulary_lookup')return structuredClone(w.words);
+        if(cmd==='vocabulary_list')return structuredClone(w.words);
+        if(cmd==='vocabulary_lookup'){
+          if(w.deferLookup)return new Promise((resolve,reject)=>w.lookupResolvers.push({words:args.words,resolve,reject}));
+          if(w.lookupFailure)throw w.lookupFailure;
+          const keys=new Set(args.words.map((word:string)=>word.trim().toLowerCase()));
+          return structuredClone(w.words.filter((item:any)=>keys.has(item.word.toLowerCase())));
+        }
         if(cmd==='speech_voices')return structuredClone(w.speechVoices);
         if(cmd==='vocabulary_preview'){
           const word=args.sourceText.slice(args.selectionStart,args.selectionEnd).trim();
@@ -291,6 +298,30 @@ test('screenshot OCR failures remain visible while translation is collapsed with
   await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('Glossa screenshot OCR test.');
 });
 
+test('OCR loading keeps the keyboard focus ring visibly painted',async({page})=>{
+  await fixture(page,false);
+  await page.setViewportSize({width:680,height:700});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.task={...w.task,id:'ocr-focus',source:'screenshot',status:'recognizing',original_text:'',edited_text:null,translation:'',error:null,revision:2};
+    w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await expect(page.locator('.source-processing')).toBeVisible();
+  const frame=(await page.locator('.source-editor-frame').boundingBox())!;
+  const clip={x:frame.x,y:frame.y+12,width:2,height:frame.height-24};
+  const unfocused=await page.screenshot({clip});
+  const editor=page.getByRole('textbox',{name:'Source text'});
+  for(let index=0;index<8 && !await editor.evaluate(el=>el===document.activeElement);index++)await page.keyboard.press('Tab');
+  await expect(editor).toBeFocused();
+  expect(await editor.evaluate(el=>el.matches(':focus-visible'))).toBe(true);
+  const focused=await page.screenshot({clip});
+  await page.locator('.source-panel').screenshot({path:'artifacts/previews/ocr-keyboard-focus.png'});
+  expect(focused.equals(unfocused),'Tab focus must visibly change the source card border during OCR').toBe(false);
+  await page.keyboard.press('Tab');
+  expect((await page.screenshot({clip})).equals(unfocused)).toBe(true);
+});
+
 test('screenshot progress respects reduced motion, localization and narrow dark layouts',async({page})=>{
   await fixture(page,false);
   await page.emulateMedia({reducedMotion:'no-preference'});
@@ -541,6 +572,46 @@ test('source selections preview at the top of the sidebar, deduplicate and save 
   await card.getByRole('button',{name:'Add',exact:true}).click();
   await expect(card.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
   expect(await page.evaluate(()=>(window as any).words.map((word:any)=>word.word))).toEqual(['change']);
+});
+
+test('sidebar lookup supports more than five words and clears only current lookup failures',async({page})=>{
+  await fixture(page);
+  await page.setViewportSize({width:980,height:800});
+  await page.evaluate(()=>{
+    const w=window as any;
+    const words=['substance','clarity','discipline','meaningful','continuity','recognition','reflection','discomfort','audience'];
+    const source=words.join(' ')+'.';
+    const candidate=(word:string)=>({word,surface:word,phonetic:'',pos:'n.',dict_meaning:'Synthetic local definition',context_meaning:'',context_sentence:source,sentence_trans:'',difficulty:''});
+    w.words=words.slice(0,8).map(word=>({...candidate(word),id:'saved-'+word,status:'learning',review_count:1,contexts:[{...candidate(word),id:'context-'+word}]}));
+    Object.assign(w.task,{status:'completed',original_text:source,translation:'Synthetic translation.',vocabulary:words.slice(0,5).map(candidate),revision:2});
+    w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
+  });
+  await page.locator('.disclosure-control').click();
+  await expect(vocabularyCards(page)).toHaveCount(5);
+  await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toHaveCount(5);
+  await page.evaluate(()=>{(window as any).lookupFailure='Synthetic lookup failure';});
+  await selectSourceWord(page,'recognition');
+  await expect(page.locator('.drawer-error')).toHaveText('Synthetic lookup failure');
+  await page.evaluate(()=>{(window as any).lookupFailure='';});
+  await selectSourceWord(page,'reflection');
+  await expect(vocabularyCards(page)).toHaveCount(7);
+  await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toHaveCount(7);
+  await expect(page.locator('.drawer-error')).toHaveCount(0);
+  await page.evaluate(()=>{(window as any).deferLookup=true;});
+  await selectSourceWord(page,'discomfort');
+  await expect.poll(()=>page.evaluate(()=>(window as any).lookupResolvers.length)).toBe(1);
+  await page.evaluate(()=>{(window as any).deferLookup=false;});
+  await selectSourceWord(page,'audience');
+  await expect(vocabularyCards(page)).toHaveCount(9);
+  await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toHaveCount(8);
+  await page.evaluate(()=>{(window as any).lookupResolvers[0].reject('Stale lookup failure');});
+  await expect(page.locator('.drawer-error')).toHaveCount(0);
+  const last=page.locator('.vocabulary-side-card[data-word="audience"]');
+  await last.getByRole('button',{name:'Add',exact:true}).click();
+  await expect(last.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
+  expect(new Set(await cardWords(page)).size).toBe(9);
+  expect(await requests(page)).toBe(0);
+  await page.screenshot({path:'artifacts/previews/vocabulary-without-count-cap.png'});
 });
 
 test('a newer source selection or task ignores a delayed preview from the previous selection',async({page})=>{

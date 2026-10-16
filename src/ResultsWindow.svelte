@@ -32,6 +32,7 @@
   import TranslationContent from "./TranslationContent.svelte";
   import { translationPlainText } from "./reading";
   import Icon from "./Icons.svelte";
+  import LoadingSpinner from "./LoadingSpinner.svelte";
   import { serviceName } from "./services";
   import { imageEntrance, panelEntrance } from "./motion";
   let settings = $state<Settings>(structuredClone(defaults));
@@ -834,29 +835,7 @@
                   role="status"
                   aria-live="polite"
                 >
-                  <svg
-                    class="translation-loader"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="9"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      opacity=".2"
-                    />
-                    <path
-                      d="M12 3a9 9 0 0 1 9 9"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                    />
-                  </svg>
+                  <LoadingSpinner size={20} />
                   <span
                     >{current?.status === "capturing"
                       ? t("正在准备截图…", "Preparing screenshot…")
@@ -921,27 +900,7 @@
                   aria-label={t("停止翻译", "Stop translation")}
                   aria-describedby="translation-stop-tip"
                   onclick={() => action("stop_task", { id: current.id })}
-                  ><svg
-                    class="translation-loader"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden="true"
-                    ><circle
-                      cx="12"
-                      cy="12"
-                      r="9"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      opacity=".2"
-                    /><path
-                      d="M12 3a9 9 0 0 1 9 9"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                    /></svg
-                  ></button
+                  ><LoadingSpinner /></button
                 ><span
                   class="progress-tooltip"
                   id="translation-stop-tip"
