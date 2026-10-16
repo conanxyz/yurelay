@@ -722,6 +722,40 @@ pub async fn vocabulary_collect(
     Ok(item)
 }
 #[tauri::command]
+pub async fn vocabulary_preview(
+    app: AppHandle,
+    source_text: String,
+    selection_start: usize,
+    selection_end: usize,
+    task_id: Option<String>,
+    attempt: Option<u32>,
+) -> Result<glossa_core::vocabulary::selection::Preview, String> {
+    use glossa_core::vocabulary::selection::{DictionaryEntry, Selection};
+    let selection = Selection::new(&source_text, selection_start, selection_end)?;
+    let word = selection.surface.clone();
+    let entry = tokio::task::spawn_blocking(move || {
+        let lemma = glossa_platform::lemma(&word);
+        let details = glossa_platform::lookup_dictionary_details(&lemma).unwrap_or(
+            glossa_platform::DictionaryDetails {
+                definition: String::new(),
+                phonetic: None,
+            },
+        );
+        DictionaryEntry {
+            lemma,
+            definition: details.definition,
+            phonetic: details.phonetic.unwrap_or_default(),
+            pos: String::new(),
+        }
+    })
+    .await
+    .map_err(|_| "本地词形解析失败。")?;
+    let engine = state::engine(&app).await?;
+    let task = task_id.as_deref().and_then(|id| engine.book.get(id));
+    selection.preview(entry, task.as_ref().zip(attempt))
+}
+
+#[tauri::command]
 pub async fn vocabulary_manual(
     app: AppHandle,
     source_text: String,
@@ -730,53 +764,18 @@ pub async fn vocabulary_manual(
     task_id: Option<String>,
     attempt: Option<u32>,
 ) -> Result<glossa_core::vocabulary::VocabularyItem, String> {
-    if source_text.chars().count() > glossa_core::MAX_INPUT_CHARACTERS {
-        return Err("原文过长。".into());
-    }
-    let (word, sentence) = glossa_core::vocabulary::context::selected_sentence(
-        &source_text,
+    let preview = vocabulary_preview(
+        app.clone(),
+        source_text,
         selection_start,
         selection_end,
+        task_id,
+        attempt,
     )
-    .ok_or("请在原文中选择单词或短语。")?;
-    if word.chars().count() > 128 || word.split_whitespace().count() > 3 || sentence.len() > 16000 {
-        return Err("请在原文中选择单词或短语。".into());
-    }
-    let engine = state::engine(&app).await?;
-    let sentence_trans = task_id
-        .as_deref()
-        .zip(attempt)
-        .and_then(|(id, attempt)| {
-            engine
-                .book
-                .get(id)
-                .map(|task| task.sentence_translation(attempt, &source_text, &sentence))
-        })
-        .unwrap_or_default();
-    let surface = word.clone();
-    if glossa_core::sensitive::detect(&sentence).is_some() {
-        return Err("原句包含疑似敏感内容，未保存。".into());
-    }
-    let (lemma, meaning) = tokio::task::spawn_blocking(move || {
-        let lemma = glossa_platform::lemma(&word);
-        let meaning = glossa_platform::lookup_dictionary(&lemma).unwrap_or_default();
-        (lemma, meaning.chars().take(1800).collect::<String>())
-    })
-    .await
-    .map_err(|_| "本地词形解析失败。")?;
-    vocabulary_collect(
-        app,
-        glossa_core::vocabulary::Candidate {
-            word: lemma,
-            surface,
-            dict_meaning: meaning,
-            context_sentence: sentence,
-            sentence_trans,
-            ..Default::default()
-        },
-    )
-    .await
+    .await?;
+    vocabulary_collect(app, preview.candidate).await
 }
+
 #[tauri::command]
 pub async fn vocabulary_update(
     app: AppHandle,
@@ -822,35 +821,23 @@ pub async fn vocabulary_export(app: AppHandle, format: String) -> Result<bool, S
     }
 }
 #[tauri::command]
-pub async fn speak_word(word: String) -> Result<(), String> {
-    if word.trim().is_empty()
-        || word.chars().count() > 128
-        || glossa_core::sensitive::detect(&word).is_some()
-    {
+pub async fn speech_voices() -> Result<Vec<glossa_platform::SpeechVoice>, String> {
+    tokio::task::spawn_blocking(glossa_platform::speech_voices)
+        .await
+        .map_err(|_| "无法读取系统朗读声音。".into())
+}
+
+#[tauri::command]
+pub async fn speak_word(
+    word: String,
+    locale: Option<String>,
+    slow: Option<bool>,
+) -> Result<(), String> {
+    if glossa_core::sensitive::detect(&word).is_some() {
         return Err("朗读内容无效。".into());
     }
     tokio::task::spawn_blocking(move || {
-        use std::{
-            io::Write,
-            process::{Command, Stdio},
-        };
-        let mut child = Command::new("/usr/bin/say")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "无法启动系统朗读。")?;
-        child
-            .stdin
-            .take()
-            .ok_or("无法启动系统朗读。")?
-            .write_all(word.as_bytes())
-            .map_err(|_| "系统朗读失败。")?;
-        if child.wait().map_err(|_| "系统朗读失败。")?.success() {
-            Ok(())
-        } else {
-            Err("系统朗读失败。".into())
-        }
+        glossa_platform::speak_word(&word, locale.as_deref(), slow.unwrap_or(false))
     })
     .await
     .map_err(|_| "系统朗读失败。")?

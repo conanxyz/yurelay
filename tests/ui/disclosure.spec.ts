@@ -5,6 +5,8 @@ async function fixture(page: Page, initiallySelected=true) {
     const w = window as any;
     w.isTauri = true;
     w.calls = [];w.words=[];
+    w.speechVoices = [{locale:'en-GB',available:true},{locale:'en-US',available:true}];
+    w.previewResults = {};w.deferredPreviewWords=[];w.previewResolvers=[];
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     const callbacks: Record<number, Function> = {}, events: Record<string, number> = {};
     let callback = 0;
@@ -37,6 +39,13 @@ async function fixture(page: Page, initiallySelected=true) {
         if (cmd === 'configuration_settings') return w.settings;
         if (cmd === 'permissions') return { accessibility: true, screen: true };
         if(cmd==='vocabulary_list'||cmd==='vocabulary_lookup')return structuredClone(w.words);
+        if(cmd==='speech_voices')return structuredClone(w.speechVoices);
+        if(cmd==='vocabulary_preview'){
+          const word=args.sourceText.slice(args.selectionStart,args.selectionEnd).trim();
+          const result=w.previewResults[word] ?? {candidate:{word:word.toLowerCase(),surface:word,phonetic:'',pos:'n.',dict_meaning:'Synthetic local definition',context_meaning:'',context_sentence:args.sourceText,sentence_trans:'',difficulty:''},translation_highlights:[]};
+          if(w.deferredPreviewWords.includes(word))return new Promise(resolve=>w.previewResolvers.push({word,resolve}));
+          return structuredClone(result);
+        }
         if(cmd==='vocabulary_collect'){
           const c=args.candidate;let item=w.words.find((i:any)=>i.word===c.word);const norm=(s:string)=>s.trim().replace(/\s+/g,' ');
           if(!item){item={...c,id:'word-'+w.words.length,review_count:0,status:'learning',contexts:[]};w.words.push(item)}
@@ -270,16 +279,13 @@ test('sensitive snapshot shows only the mask; X cannot bypass explicit consent',
 });
 
 
-test('vocabulary cards collect once per context and source selection sends current task identity',async({page})=>{
+test('vocabulary cards collect once per context',async({page})=>{
  await fixture(page);await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{original_text:'A resilient team adapts to change.',status:'completed',translation:'坚韧的团队能够适应变化。',vocabulary:[{word:'resilient',surface:'resilient',phonetic:'/rɪˈzɪliənt/',pos:'adj.',dict_meaning:'坚韧',context_meaning:'坚韧的',context_sentence:'A resilient team adapts to change.',sentence_trans:'坚韧的团队能够适应变化。',difficulty:'B2'}],revision:2});w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null})});
  await page.locator('.disclosure-control').click();
  await page.setViewportSize({width:680,height:800});
  await page.getByRole('button',{name:'Add',exact:true}).click();await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
  await page.evaluate(()=>{const w=window as any;w.words[0].status='mastered';w.emit('vocabulary-changed',null)});await page.getByRole('button',{name:'Learn again',exact:true}).click();await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
  await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary-cards.png'});
- await page.getByRole('textbox',{name:'Source text'}).evaluate((el:HTMLTextAreaElement)=>{el.focus();el.setSelectionRange(12,16);el.dispatchEvent(new Event('select',{bubbles:true}))});
- await page.getByRole('button',{name:'Add to vocabulary',exact:true}).click();
- expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_manual').at(-1).args)).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1});
 });
 
 test('explicit sensitive consent expands the resulting translation without another request',async({page})=>{
@@ -360,4 +366,255 @@ test('a paused animation frame cannot leave completed translation blank',async({
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'completed',translation:'## Result\n- Visible even in a background window',revision:2});w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});
  await expect(page.locator('.markdown-reading h2')).toHaveText('Result',{timeout:1500});
  await expect(page.locator('.markdown-reading li')).toHaveText('Visible even in a background window');
+});
+
+
+const vocabularyCards = (page: Page) => page.locator('.vocabulary-side-card');
+const cardWords = (page: Page) => vocabularyCards(page).evaluateAll(cards => cards.map(card => card.getAttribute('data-word')));
+const previewRequests = (page: Page) => page.evaluate(() => (window as any).calls.filter((call: any) => call.cmd === 'vocabulary_preview'));
+
+async function selectionFixture(page: Page) {
+  await fixture(page);
+  await page.setViewportSize({width:680,height:800});
+  await page.evaluate(() => {
+    const w=window as any;
+    const candidate=(word:string,meaning:string,phonetic='')=>({word,surface:word,phonetic,pos:word==='resilient'?'adj.':'n.',dict_meaning:meaning,context_meaning:meaning,context_sentence:'A resilient team adapts to change.',sentence_trans:'坚韧的团队适应变化。',difficulty:'B2'});
+    Object.assign(w.task,{original_text:'A resilient team adapts to change.',status:'completed',translation:'坚韧的团队适应变化。',vocabulary:[candidate('resilient','坚韧的','/rɪˈzɪliənt/'),candidate('adapts','适应')],revision:2});
+    w.previewResults={
+      team:{candidate:candidate('team','团队','/tiːm/'),translation_highlights:[{start:3,end:5}]},
+      change:{candidate:candidate('change','变化','/tʃeɪndʒ/'),translation_highlights:[{start:7,end:9}]},
+      resilient:{candidate:candidate('resilient','坚韧的','/rɪˈzɪliənt/'),translation_highlights:[{start:0,end:3}]},
+    };
+    w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});
+  });
+  await page.locator('.disclosure-control').click();
+  await expect(vocabularyCards(page)).toHaveCount(2);
+}
+
+async function selectSourceWord(page: Page, word: string) {
+  await page.getByRole('textbox',{name:'Source text'}).evaluate((el:HTMLTextAreaElement,selectedWord:string) => {
+    const start=el.value.indexOf(selectedWord);
+    if(start<0)throw new Error('Synthetic selected word was not found');
+    el.focus();el.setSelectionRange(start,start+selectedWord.length);
+    el.dispatchEvent(new Event('select',{bubbles:true}));
+  },word);
+}
+
+test('source selections preview at the top of the sidebar, deduplicate and save only on Add',async({page})=>{
+  await selectionFixture(page);
+  const sourceBox=await page.getByRole('textbox',{name:'Source text'}).boundingBox();
+  await selectSourceWord(page,'team');
+  await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
+  await expect(page.getByRole('button',{name:'Add to vocabulary',exact:true})).toHaveCount(0);
+  await expect(page.locator('.word-selection-bubble')).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).words)).toEqual([]);
+  expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>['vocabulary_collect','vocabulary_manual'].includes(call.cmd)))).toEqual([]);
+  expect((await previewRequests(page))[0].args).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1});
+  await expect(vocabularyCards(page).first()).toHaveClass(/active/);
+  await selectSourceWord(page,'resilient');
+  await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
+  await expect(page.locator('.vocabulary-side-card[data-word="resilient"]')).toHaveClass(/active/);
+  await selectSourceWord(page,'team');
+  await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
+  expect((await previewRequests(page)).filter((call:any)=>call.args.selectionStart===12)).toHaveLength(1);
+  await selectSourceWord(page,'change');
+  await expect.poll(()=>cardWords(page)).toEqual(['change','team','resilient','adapts']);
+  const sourceAfter=await page.getByRole('textbox',{name:'Source text'}).boundingBox();
+  expect(sourceAfter!.x).toBe(sourceBox!.x);expect(sourceAfter!.y).toBe(sourceBox!.y);
+  expect(await requests(page)).toBe(0);
+  const card=page.locator('.vocabulary-side-card[data-word="change"]');
+  await card.getByRole('button',{name:'Add',exact:true}).click();
+  await expect(card.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
+  expect(await page.evaluate(()=>(window as any).words.map((word:any)=>word.word))).toEqual(['change']);
+});
+
+test('a newer source selection or task ignores a delayed preview from the previous selection',async({page})=>{
+  await selectionFixture(page);
+  await page.evaluate(()=>{(window as any).deferredPreviewWords=['team'];});
+  await selectSourceWord(page,'team');
+  await expect.poll(()=>previewRequests(page).then(calls=>calls.length)).toBe(1);
+  await selectSourceWord(page,'change');
+  await expect.poll(()=>cardWords(page)).toEqual(['change','resilient','adapts']);
+  await page.evaluate(()=>{const w=window as any;w.previewResolvers.find((pending:any)=>pending.word==='team').resolve(w.previewResults.team);});
+  await expect(page.locator('.vocabulary-side-card[data-word="team"]')).toHaveCount(0);
+  await expect(vocabularyCards(page).first()).toHaveAttribute('data-word','change');
+  await expect(page.locator('.translation-word-highlight')).toHaveText('变化');
+
+  // A pending preview is also scoped to the source task and its attempt.
+  await page.evaluate(()=>{const w=window as any;w.previewResolvers=[];w.deferredPreviewWords=['resilient'];});
+  await selectSourceWord(page,'resilient');
+  await expect.poll(()=>page.evaluate(()=>(window as any).previewResolvers.length)).toBe(1);
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{id:'second-task',attempt:1,original_text:'A new source.',translation:'新的原文。',vocabulary:[],revision:3});
+    w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:3},selected:w.task.id,notice:null});
+    w.previewResolvers[0].resolve(w.previewResults.resilient);
+  });
+  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('A new source.');
+  await expect(vocabularyCards(page)).toHaveCount(0);
+  await expect(page.locator('.translation-word-highlight')).toHaveCount(0);
+  expect(await requests(page)).toBe(0);
+});
+
+test('source meaning highlights work in Read and Plain text without changing copy or translating again',async({page})=>{
+  await selectionFixture(page);
+  const markdown='## Result\n\n坚韧的**团队**适应变化。';
+  await page.evaluate(translation=>{
+    const w=window as any;w.task.translation=translation;w.task.revision++;
+    const start=translation.indexOf('团队');w.previewResults.team.translation_highlights=[{start,end:start+2}];
+    const resilientStart=translation.indexOf('坚韧的');w.previewResults.resilient.translation_highlights=[{start:resilientStart,end:resilientStart+3}];
+    w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]});
+  },markdown);
+  await selectSourceWord(page,'team');
+  await expect(page.locator('.markdown-reading strong .translation-word-highlight')).toHaveText('团队');
+  await expect(page.locator('.translation-word-highlight')).toHaveCount(1);
+  await page.getByRole('button',{name:'Copy translation',exact:true}).click();
+  const copied=await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='copy_text').at(-1).args.text);
+  expect(copied).toContain('坚韧的团队适应变化。');expect(copied).not.toContain('<mark');
+  await page.getByRole('button',{name:'Copy Markdown',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='copy_text').at(-1).args.text)).toBe(markdown);
+  await page.getByRole('button',{name:'Plain text',exact:true}).click();
+  await expect(page.locator('.translation-word-highlight')).toHaveText('团队');
+  await expect(page.locator('.translation-prose')).toHaveText(markdown);
+  await selectSourceWord(page,'resilient');
+  await expect(page.locator('.translation-word-highlight')).toHaveText('坚韧的');
+  expect(await requests(page)).toBe(0);
+});
+
+test('sidebar pronunciation shows one trusted IPA and plays installed UK and US voices at both speeds',async({page})=>{
+  await selectionFixture(page);
+  const card=page.locator('.vocabulary-side-card[data-word="resilient"]');
+  await expect(card.locator('.vocabulary-ipa')).toHaveText('/rɪˈzɪliənt/');
+  for(const [accent,locale] of [['UK','en-GB'],['US','en-US']]){
+    for(const slow of [false,true]){
+      const label=slow?`Play resilient slowly (${accent})`:`Play resilient (${accent})`;
+      await card.getByRole('button',{name:label,exact:true}).click();
+      expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='speak_word').at(-1).args)).toEqual({word:'resilient',locale,slow});
+    }
+  }
+  expect(await requests(page)).toBe(0);
+});
+
+test('sidebar pronunciation disables an unavailable accent without claiming a second IPA',async({page})=>{
+  await fixture(page);
+  await page.evaluate(()=>{(window as any).speechVoices=[{locale:'en-GB',available:false},{locale:'en-US',available:true}];});
+  await page.setViewportSize({width:680,height:800});
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{status:'completed',translation:'坚韧的团队。',vocabulary:[{word:'resilient',surface:'resilient',phonetic:'/rɪˈzɪliənt/',pos:'adj.',dict_meaning:'坚韧的',context_meaning:'坚韧的',context_sentence:'A resilient team.',sentence_trans:'坚韧的团队。',difficulty:'B2'}],revision:2});
+    w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});
+  });
+  await page.locator('.disclosure-control').click();
+  const card=page.locator('.vocabulary-side-card[data-word="resilient"]');
+  await expect(card.locator('.vocabulary-ipa')).toHaveCount(1);
+  await expect(card.getByRole('button',{name:'Play resilient (UK)',exact:true})).toBeDisabled();
+  await expect(card.getByRole('button',{name:'Play resilient slowly (UK)',exact:true})).toBeDisabled();
+  await expect(card.getByRole('button',{name:'Play resilient (US)',exact:true})).toBeEnabled();
+  await card.getByRole('button',{name:'Play resilient (US)',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='speak_word').at(-1).args)).toEqual({word:'resilient',locale:'en-US',slow:false});
+});
+
+
+test('clicking inside a source word previews its complete token without changing the source',async({page})=>{
+  await selectionFixture(page);
+  const editor=page.getByRole('textbox',{name:'Source text'});
+  await editor.evaluate((el:HTMLTextAreaElement)=>{
+    el.focus();el.setSelectionRange(14,14);
+    el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
+  });
+  await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
+  await expect(editor).toHaveValue('A resilient team adapts to change.');
+  expect((await previewRequests(page))[0].args).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1});
+  expect(await requests(page)).toBe(0);
+});
+
+
+test('an explicit source selection opens an empty or collapsed rail and a new attempt clears its preview',async({page})=>{
+  await selectionFixture(page);
+  await page.evaluate(()=>{
+    const w=window as any;w.task.vocabulary=[];w.task.revision++;
+    w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]});
+  });
+  await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
+  await selectSourceWord(page,'team');
+  await expect.poll(()=>cardWords(page)).toEqual(['team']);
+  await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();
+  await expect(vocabularyCards(page)).toHaveCount(0);
+  await selectSourceWord(page,'change');
+  await expect.poll(()=>cardWords(page)).toEqual(['change','team']);
+  await page.evaluate(()=>{
+    const w=window as any;w.task.attempt++;w.task.revision++;
+    w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]});
+  });
+  await expect(vocabularyCards(page)).toHaveCount(0);
+  await expect(page.locator('.translation-word-highlight')).toHaveCount(0);
+  await selectSourceWord(page,'team');
+  await expect.poll(()=>cardWords(page)).toEqual(['team']);
+  expect((await previewRequests(page)).at(-1).args.attempt).toBe(2);
+  expect(await requests(page)).toBe(0);
+});
+
+
+test('selected word, pronunciation controls and meaning highlight remain readable at supported widths and in dark mode',async({page})=>{
+  await selectionFixture(page);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await selectSourceWord(page,'team');
+  for(const width of [580,680,980]){
+    await page.setViewportSize({width,height:800});
+    const card=page.locator('.vocabulary-side-card[data-word="team"]');
+    await expect(card).toBeVisible();
+    await expect(card.locator('.vocabulary-ipa')).toHaveText('/tiːm/');
+    await expect(card.getByRole('button',{name:'Play team (UK)',exact:true})).toBeVisible();
+    await expect(card.getByRole('button',{name:'Play team slowly (US)',exact:true})).toBeVisible();
+    await expect(page.locator('.translation-word-highlight')).toHaveText('团队');
+    await expect(page.locator('.translation-word-highlight')).toBeInViewport();
+    const layout=await page.evaluate(()=>{
+      const rail=document.querySelector('.vocabulary-sidebar')!,main=document.querySelector('.translation-main')!;
+      return {overflow:document.documentElement.scrollWidth>innerWidth,railOverflow:rail.scrollWidth>rail.clientWidth,railRight:rail.getBoundingClientRect().right,mainLeft:main.getBoundingClientRect().left};
+    });
+    expect(layout.overflow).toBe(false);expect(layout.railOverflow).toBe(false);expect(layout.railRight).toBeLessThanOrEqual(layout.mainLeft);
+    await page.screenshot({path:`artifacts/previews/2026-10-16-source-selection-${width}-light.png`});
+  }
+  await page.setViewportSize({width:680,height:800});
+  await page.evaluate(()=>{const w=window as any;w.settings.theme='dark';w.emit('configuration-changed',w.settings);});
+  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+  await expect(page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-ipa')).toBeVisible();
+  await expect(page.locator('.translation-word-highlight')).toBeVisible();
+  await page.screenshot({path:'artifacts/previews/2026-10-16-source-selection-680-dark.png'});
+  expect(await requests(page)).toBe(0);
+});
+
+
+test('late vocabulary metadata refreshes the selected meaning and highlight without reopening a collapsed sidebar',async({page})=>{
+  await selectionFixture(page);
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.task.id='metadata-task';w.task.vocabulary=[];w.task.vocabulary_state='extracting';
+    w.previewResults.team.candidate.context_meaning='';
+    w.previewResults.team.candidate.dict_meaning='A group of people';
+    w.previewResults.team.translation_highlights=[];
+    w.task.revision++;
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id,notice:null});
+  });
+  await selectSourceWord(page,'team');
+  await expect.poll(()=>cardWords(page)).toEqual(['team']);
+  await expect(page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-row-meaning')).toHaveText('A group of people');
+  await expect(page.locator('.translation-word-highlight')).toHaveCount(0);
+  await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.previewResults.team.candidate.context_meaning='团队';
+    w.previewResults.team.translation_highlights=[{start:3,end:5}];
+    w.task.vocabulary.push(structuredClone(w.previewResults.team.candidate));
+    w.task.vocabulary_state='complete';w.task.revision++;
+    w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]});
+  });
+  await expect.poll(()=>previewRequests(page).then(calls=>calls.length)).toBe(2);
+  await expect(page.locator('.translation-word-highlight')).toHaveText('团队');
+  await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
+  await expect(page.locator('.vocabulary-side-card[data-word="team"]')).toHaveCount(1);
+  await expect(page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-row-meaning')).toHaveText('团队');
+  expect(await requests(page)).toBe(0);
 });

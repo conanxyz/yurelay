@@ -522,3 +522,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .vocabulary-sidebar.collapsed .vocabulary-sidebar-heading {padding:4px 0;}
 .vocabulary-sidebar.collapsed .vocabulary-side-toggle {display:flex;flex-direction:column;gap:5px;margin:0;width:30px;height:46px;min-height:46px;}
 .vocabulary-side-toggle>span {font-size:10px;line-height:14px;color:var(--accent);font-variant-numeric:tabular-nums;}
+
+.vocabulary-side-card.active {border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+.vocabulary-row-meaning {display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.vocabulary-pronunciation {margin-top:6px;line-height:1.4;}
+.vocabulary-pronunciation .vocabulary-ipa {font-size:11px;}
+.vocabulary-speech {display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.vocabulary-speech-accent {display:flex;align-items:center;gap:2px;padding:2px 4px;border-radius:7px;background:var(--panel-tint);color:var(--muted);font-size:10px;}
+.vocabulary-speech-accent>span {padding:0 2px;}
+.vocabulary-speak {display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:26px;padding:3px;border:0;border-radius:4px;background:transparent;color:var(--accent);font-size:10px;}
+.vocabulary-speak:hover:not(:disabled) {background:var(--surface);}
+.vocabulary-speak:disabled {opacity:.4;}
+.translation-word-highlight {color:inherit;background:color-mix(in srgb,var(--accent) 23%,transparent);border-bottom:2px solid var(--accent);border-radius:2px;padding:0 .03em;}

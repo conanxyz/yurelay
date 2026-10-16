@@ -178,3 +178,10 @@ export type VocabularyItem = Pick<
   created_at: number;
   updated_at: number;
 };
+
+export type TranslationHighlight = { start: number; end: number };
+export type VocabularyPreview = {
+  candidate: VocabularyCandidate;
+  translation_highlights: TranslationHighlight[];
+};
+export type SpeechVoice = { locale: string; available: boolean };

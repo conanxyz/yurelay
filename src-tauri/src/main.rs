@@ -227,6 +227,8 @@ fn main() {
             commands::vocabulary_lookup,
             commands::vocabulary_collect,
             commands::vocabulary_manual,
+            commands::vocabulary_preview,
+            commands::speech_voices,
             commands::vocabulary_update,
             commands::vocabulary_remove,
             commands::vocabulary_export,

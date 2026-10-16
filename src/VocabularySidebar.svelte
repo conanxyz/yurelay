@@ -1,21 +1,26 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { invoke, isTauri } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import type { VocabularyCandidate, VocabularyItem } from "./types";
+  import type {
+    VocabularyCandidate,
+    VocabularyItem,
+    SpeechVoice,
+  } from "./types";
   import type { Locale } from "./locale";
   import Icon from "./Icons.svelte";
-  import { panelEntrance } from "./motion";
   let {
     candidates,
     locale,
     open,
     onToggle,
+    activeWord = "",
   }: {
     candidates: VocabularyCandidate[];
     locale: Locale;
     open: boolean;
     onToggle: () => void;
+    activeWord?: string;
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   const normalize = (text: string) => text.trim().replace(/\s+/gu, " ");
@@ -25,6 +30,45 @@
     error = $state("");
   let expanded = $state<string | null>(null);
   let toggleButton: HTMLButtonElement;
+  let scroller = $state<HTMLDivElement>();
+  let voices = $state<SpeechVoice[]>([]);
+  let speaking = $state<string | null>(null);
+  let firstWord = "";
+  const accents = [
+    { label: "UK", locale: "en-GB" },
+    { label: "US", locale: "en-US" },
+  ];
+  $effect(() => {
+    const first = candidates[0]?.word ?? "";
+    const shown = open;
+    untrack(() => {
+      if (shown && first !== firstWord) {
+        firstWord = first;
+        tick().then(() => {
+          if (scroller) scroller.scrollTop = 0;
+        });
+      }
+    });
+  });
+  function voiceAvailable(locale: string) {
+    return voices.some((voice) => voice.locale === locale && voice.available);
+  }
+  async function speak(
+    candidate: VocabularyCandidate,
+    locale: string,
+    slow: boolean,
+  ) {
+    if (speaking || !voiceAvailable(locale)) return;
+    speaking = candidate.word;
+    error = "";
+    try {
+      await invoke("speak_word", { word: candidate.word, locale, slow });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      speaking = null;
+    }
+  }
   function toggleSide() {
     onToggle();
     tick().then(() => toggleButton?.focus({ preventScroll: true }));
@@ -56,6 +100,13 @@
     if (!isTauri()) return;
     let disposed = false;
     let off: () => void;
+    invoke<SpeechVoice[]>("speech_voices")
+      .then((result) => {
+        if (!disposed) voices = result ?? [];
+      })
+      .catch((e) => {
+        if (!disposed) error = String(e);
+      });
     listen("vocabulary-changed", refresh).then((f) => {
       if (disposed) f();
       else off = f;
@@ -145,10 +196,14 @@
         >{/if}
     </button>
   </header>
-  {#if open}<div class="vocabulary-sidebar-scroll" use:panelEntrance>
+  {#if open}<div class="vocabulary-sidebar-scroll" bind:this={scroller!}>
       {#if error}<p class="drawer-error" role="alert">{error}</p>{/if}
-      {#each candidates as candidate}
-        <article class="vocabulary-side-card">
+      {#each candidates as candidate (wordKey(candidate))}
+        <article
+          class="vocabulary-side-card"
+          data-word={candidate.word}
+          class:active={activeWord === wordKey(candidate)}
+        >
           <button
             class="vocabulary-row-summary"
             aria-label={t(
@@ -161,15 +216,57 @@
           >
             <strong>{candidate.word}</strong><span
               class="vocabulary-row-meaning"
-              >{candidate.context_meaning || candidate.dict_meaning}</span
+              >{candidate.context_meaning ||
+                candidate.dict_meaning ||
+                t("本地词典暂无释义", "No local definition available")}</span
             >
           </button>
+          {#if phonetic(candidate)}<div class="vocabulary-pronunciation">
+              <span
+                class="vocabulary-ipa"
+                aria-label={t("音标", "Pronunciation")}
+                >{phonetic(candidate)}</span
+              >
+            </div>{/if}
+          <div
+            class="vocabulary-speech"
+            aria-label={t("单词朗读", "Word pronunciation")}
+          >
+            {#each accents as accent}<div class="vocabulary-speech-accent">
+                <span>{accent.label}</span>
+                {#each [false, true] as slow}<button
+                    class="vocabulary-speak"
+                    aria-label={slow
+                      ? t(
+                          `慢速朗读 ${candidate.word}（${accent.label}）`,
+                          `Play ${candidate.word} slowly (${accent.label})`,
+                        )
+                      : t(
+                          `朗读 ${candidate.word}（${accent.label}）`,
+                          `Play ${candidate.word} (${accent.label})`,
+                        )}
+                    title={voiceAvailable(accent.locale)
+                      ? slow
+                        ? t("慢速朗读", "Slow pronunciation")
+                        : t("正常语速", "Normal pronunciation")
+                      : t(
+                          `请先安装 ${accent.label} 英语系统声音`,
+                          `Install a ${accent.label} English system voice first`,
+                        )}
+                    disabled={speaking !== null ||
+                      !voiceAvailable(accent.locale)}
+                    onclick={() => speak(candidate, accent.locale, slow)}
+                    >{#if slow}<span>{t("慢", "Slow")}</span>{:else}<Icon
+                        name="speaker"
+                        size={13}
+                      />{/if}</button
+                  >{/each}
+              </div>{/each}
+          </div>
           <div class="vocabulary-card-actions">
             <span class="vocabulary-card-meta"
               >{#if candidate.pos}<span class="vocabulary-pos"
                   >{candidate.pos}</span
-                >{/if}{#if phonetic(candidate)}<span class="vocabulary-ipa"
-                  >{phonetic(candidate)}</span
                 >{/if}</span
             >
             <button

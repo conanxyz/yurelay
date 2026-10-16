@@ -2,7 +2,13 @@
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { Locale } from "./locale";
-  import { externalLink, readingBlocks } from "./reading";
+  import {
+    externalLink,
+    readingBlocks,
+    highlightedReading,
+    highlightedText,
+    type TextHighlight,
+  } from "./reading";
   import Icon from "./Icons.svelte";
   let {
     text,
@@ -10,12 +16,14 @@
     identity = "",
     streaming = false,
     plain = false,
+    highlights = [],
   }: {
     text: string;
     locale: Locale;
     identity?: string;
     streaming?: boolean;
     plain?: boolean;
+    highlights?: TextHighlight[];
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   let mode = $state<"read" | "plain">("read");
@@ -23,6 +31,10 @@
     blocks = $state<string[]>([]),
     error = $state("");
   let content: HTMLDivElement;
+  const highlightedBlocks = $derived(
+    highlightedReading(blocks, shown, highlights),
+  );
+  const plainParts = $derived(highlightedText(shown, highlights));
   let renderedIdentity = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
   function selecting() {
@@ -159,7 +171,9 @@
     class:markdown-reading={!plain && mode === "read"}
     bind:this={content}
   >
-    {#if plain || mode === "plain"}{shown}{:else}{#each blocks as block, i (i)}<div
+    {#if plain || mode === "plain"}{#each plainParts as part}{#if part.highlighted}<mark
+            class="translation-word-highlight">{part.text}</mark
+          >{:else}{part.text}{/if}{/each}{:else}{#each highlightedBlocks as block, i (i)}<div
           class="reading-block"
         >
           {@html block}
