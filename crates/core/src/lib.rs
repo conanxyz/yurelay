@@ -4,6 +4,7 @@ pub const MAX_INPUT_CHARACTERS: usize = 50_000;
 
 pub mod config;
 pub mod engine;
+mod hex;
 pub mod provider;
 pub mod sse;
 pub mod storage;

@@ -201,7 +201,7 @@ pub(super) fn youdao_sign(app_id: &str, input: &str, salt: &str, time: &str, key
     for part in [app_id.trim(), &truncated, salt, time, key] {
         hash.update(part.as_bytes());
     }
-    format!("{:x}", hash.finalize())
+    crate::hex::lower(&hash.finalize())
 }
 
 #[cfg(test)]

@@ -231,7 +231,7 @@ pub fn cache_key(task: &Task) -> Option<String> {
         profile.temperature.to_bits(),
     ))
     .ok()?;
-    Some(format!("{:x}", Sha256::digest(bytes)))
+    Some(crate::hex::lower(&Sha256::digest(bytes)))
 }
 
 impl Database {
