@@ -256,6 +256,12 @@ Object.assign(errors, {
     "Screen capture failed. Check permissions and try again.",
   "当前剪贴板无法安全备份，请使用截图翻译。":
     "The clipboard cannot be backed up safely. Use screenshot translation.",
+  "无法读取当前剪贴板，已保留原内容。请重试或使用截图翻译。":
+    "The clipboard could not be read and was preserved. Try again or use screenshot translation.",
+  "剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。":
+    "Some clipboard formats could not be read. The clipboard was preserved. Use screenshot translation.",
+  "剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。":
+    "The clipboard exceeds the 8 MiB backup limit and was preserved. Use screenshot translation.",
   "截图编码失败。": "Screenshot encoding failed.",
   "无法发送复制快捷键，请使用截图。":
     "Could not send the copy shortcut. Use a screenshot.",
