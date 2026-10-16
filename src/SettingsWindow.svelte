@@ -321,13 +321,15 @@
     message = t("已还原未保存的修改", "Unsaved changes discarded");
   }
   let permissionSequence = 0;
+  let permissionRecoveryOpen = $state(false);
   async function refreshPermissions() {
     if (!isTauri()) return;
     const sequence = ++permissionSequence;
     const next = await invoke<typeof permissions>("permissions");
     if (sequence === permissionSequence) permissions = next;
   }
-  async function request(kind: string) {
+  async function request(kind: "accessibility" | "screen") {
+    if (!permissions[kind]) permissionRecoveryOpen = true;
     await run(async () => {
       await invoke("request_permission", { kind });
       await refreshPermissions();
@@ -696,6 +698,51 @@
                         >
                       </div>
                     </div>
+                    {#if !permissions.accessibility || !permissions.screen}
+                      <details
+                        class="permission-recovery"
+                        bind:open={permissionRecoveryOpen}
+                      >
+                        <summary
+                          >{t(
+                            "更新后仍未授权？",
+                            "Updated Glossa but still not allowed?",
+                          )}</summary
+                        >
+                        <p>
+                          {t(
+                            "如果系统列表里的 Glossa 已开启，但这里仍显示未授权，仅点“＋”可能仍保留旧记录。请在对应权限列表中重新添加：",
+                            "If Glossa is switched on in System Settings but still shows Not allowed here, Add (+) may leave the old entry unchanged. Re-add it in the affected permission list:",
+                          )}
+                        </p>
+                        <ol>
+                          <li>
+                            {t(
+                              "选中旧的 Glossa 条目，点击“−”移除。",
+                              "Select the old Glossa entry and click Remove (−).",
+                            )}
+                          </li>
+                          <li>
+                            {t(
+                              "点击“＋”，重新添加当前正在使用的 Glossa.app（通常在“应用程序”中）。",
+                              "Click Add (＋) and select the current Glossa.app, usually in Applications.",
+                            )}
+                          </li>
+                          <li>
+                            {t(
+                              "开启授权；若系统提示，选择“退出并重新打开”。",
+                              "Enable access and follow Quit & Reopen if macOS prompts you.",
+                            )}
+                          </li>
+                          <li>
+                            {t(
+                              "回到 Glossa，点击“刷新状态”确认结果。",
+                              "Return to Glossa and click Refresh status to confirm.",
+                            )}
+                          </li>
+                        </ol>
+                      </details>
+                    {/if}
                     <button
                       class="permission-refresh"
                       onclick={() =>
@@ -870,7 +917,8 @@
                           <label
                             >{t("服务名称", "Service name")}<input
                               value={serviceName(profile, locale)}
-                              oninput={(event) => profile.name = event.currentTarget.value}
+                              oninput={(event) =>
+                                (profile.name = event.currentTarget.value)}
                               maxlength="80"
                             /></label
                           >
