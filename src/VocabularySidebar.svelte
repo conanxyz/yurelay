@@ -8,6 +8,7 @@
     SpeechVoice,
   } from "./types";
   import type { Locale } from "./locale";
+  import { errorText } from "./locale";
   import Icon from "./Icons.svelte";
   let {
     candidates,
@@ -28,6 +29,7 @@
   let items = $state<VocabularyItem[]>([]),
     busy = $state<string | null>(null),
     error = $state("");
+  let lookupError = $state("");
   let expanded = $state<string | null>(null);
   let toggleButton: HTMLButtonElement;
   let scroller = $state<HTMLDivElement>();
@@ -87,9 +89,12 @@
       const result = await invoke<VocabularyItem[]>("vocabulary_lookup", {
         words: candidates.map((c) => c.word),
       });
-      if (seq === sequence) items = result ?? [];
+      if (seq === sequence) {
+        items = result ?? [];
+        lookupError = "";
+      }
     } catch (e) {
-      error = String(e);
+      if (seq === sequence) lookupError = String(e);
     }
   }
   $effect(() => {
@@ -197,7 +202,9 @@
     </button>
   </header>
   {#if open}<div class="vocabulary-sidebar-scroll" bind:this={scroller!}>
-      {#if error}<p class="drawer-error" role="alert">{error}</p>{/if}
+      {#if error || lookupError}<p class="drawer-error" role="alert">
+          {errorText(error || lookupError, locale)}
+        </p>{/if}
       {#each candidates as candidate (wordKey(candidate))}
         <article
           class="vocabulary-side-card"

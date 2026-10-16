@@ -1,5 +1,6 @@
 use super::*;
 use crate::vocabulary::{Candidate, Context, VocabularyItem};
+use std::collections::HashSet;
 
 impl Storage {
     pub async fn vocabulary(&self) -> Result<Vec<VocabularyItem>, String> {
@@ -25,18 +26,25 @@ impl Storage {
         &self,
         words: Vec<String>,
     ) -> Result<Vec<VocabularyItem>, String> {
-        if words.len() > 5 || words.iter().any(|w| w.chars().count() > 128) {
-            return Err("查询的生词过多或过长。".into());
+        if words.iter().any(|w| w.chars().count() > 128) {
+            return Err("查询的生词过长。".into());
         }
         self.call(move |db| {
             let mut result = vec![];
+            let mut seen = HashSet::new();
+            // Reuse a single indexed lookup regardless of list length, without
+            // building an IN clause that can exceed SQLite's parameter limit.
+            let mut statement = db
+                .connection
+                .prepare("SELECT data FROM vocabulary WHERE word=?1")
+                .map_err(db_error)?;
             for word in words {
                 let key = crate::vocabulary::word_key(&word);
-                let data: Option<String> = db
-                    .connection
-                    .query_row("SELECT data FROM vocabulary WHERE word=?1", [key], |r| {
-                        r.get(0)
-                    })
+                if key.is_empty() || !seen.insert(key.clone()) {
+                    continue;
+                }
+                let data: Option<String> = statement
+                    .query_row([key], |r| r.get(0))
                     .optional()
                     .map_err(db_error)?;
                 if let Some(data) = data {
@@ -299,6 +307,49 @@ pub fn export(items: &[VocabularyItem], format: &str) -> Result<String, String> 
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn lookup_handles_unbounded_counts_and_returns_unique_matches_in_request_order() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = Storage::open(root.path().into(), system_clock())
+            .await
+            .unwrap();
+        let mut stored = vec![];
+        for index in 0..12 {
+            stored.push(
+                storage
+                    .collect_word(Candidate {
+                        word: format!("fixture{index}"),
+                        dict_meaning: "Synthetic definition".into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap(),
+            );
+        }
+        let mut words: Vec<_> = (0..1100).map(|i| format!("unknown{i}")).collect();
+        words.extend(
+            stored
+                .iter()
+                .rev()
+                .map(|item| format!("  {}  ", item.word.to_uppercase())),
+        );
+        words.extend(stored.iter().map(|item| item.word.clone()));
+        words.extend(["   ".into(), "x' OR 1=1 --".into()]);
+        let found = storage.vocabulary_lookup(words).await.unwrap();
+        assert_eq!(
+            found.iter().map(|item| &item.id).collect::<Vec<_>>(),
+            stored.iter().rev().map(|item| &item.id).collect::<Vec<_>>()
+        );
+        assert!(storage.vocabulary_lookup(vec![]).await.unwrap().is_empty());
+        assert_eq!(storage.vocabulary().await.unwrap().len(), 12);
+        assert!(
+            storage
+                .vocabulary_lookup(vec!["x".repeat(129)])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn legacy_lowercase_terms_merge_without_losing_notes_or_context_counts() {
         let root = tempfile::tempdir().unwrap();
         let storage = Storage::open(root.path().into(), system_clock())
@@ -478,7 +529,8 @@ mod tests {
             storage
                 .vocabulary_lookup(vec!["word".into(); 6])
                 .await
-                .is_err()
+                .unwrap()
+                .is_empty()
         );
     }
 }
