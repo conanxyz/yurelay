@@ -58,6 +58,11 @@ Add behavioral tests for new core logic. Use synthetic inputs and fake credentia
 For native changes also run `sh scripts/test-native.sh` and exercise affected macOS
 flows. Browser mocks do not verify TCC permissions, Keychain or capture APIs.
 
+Work on feature branches and submit PRs targeting `main`; require a successful
+`macOS verification` check before merging. Do not push directly to `main` or
+bypass the PR flow merely because the active account is an administrator. Use an
+administrator exception only when the maintainer explicitly requests that action.
+
 Before committing, run `python3 scripts/audit.py --staged` and inspect the staged
 file list. Do not push, create a remote repository, publish a release or message
 others without user authorization. Keep Git identity configuration repository-local.

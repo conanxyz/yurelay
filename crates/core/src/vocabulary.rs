@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::LazyLock};
 pub mod context;
 
 /// Space-delimited languages use words; unspaced CJK input uses a conservative
@@ -169,13 +169,76 @@ fn without_trailing_commas(raw: &str) -> String {
     output
 }
 
-/// Withholds only a possible delimiter prefix; JSON never reaches the display.
+// Some providers render the sentinel as a standalone Markdown label instead of
+// the requested delimiter. Only accept those aliases at a line boundary and
+// after an array begins; ordinary mentions of VOCAB_JSON remain visible.
+static MARKER_LABELS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut labels = Vec::new();
+    for separator in ["", "---\n", "---\r\n"] {
+        for heading in ["", "# ", "## ", "### ", "#### ", "##### ", "###### "] {
+            for wrapper in ["", "**", "__", "`"] {
+                for marker in [MARKER, "VOCAB_JSON"] {
+                    for suffix in ["", ":", "："] {
+                        labels.push(format!(
+                            "{separator}{heading}{wrapper}{marker}{wrapper}{suffix}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    labels
+});
+
+// (array start, could still become a metadata boundary).
+fn alternate_boundary(text: &str) -> (Option<usize>, bool) {
+    let trimmed = text.trim_start_matches([' ', '\t']);
+    if text.len() - trimmed.len() > 3 {
+        return (None, false);
+    }
+    let mut possible = false;
+    for label in MARKER_LABELS.iter() {
+        if label.starts_with(trimmed) {
+            possible = true;
+        }
+        if let Some(rest) = trimmed.strip_prefix(label) {
+            if !rest.is_empty()
+                && !rest.starts_with(char::is_whitespace)
+                && !label.ends_with([':', '：'])
+            {
+                continue;
+            }
+            let mut body = rest.trim_start();
+            // Fenced JSON is another common presentation of the same payload.
+            if body.len() < 7 && "```json".starts_with(body) {
+                possible = true;
+                continue;
+            }
+            if let Some(rest) = body.strip_prefix("```json") {
+                body = rest.trim_start();
+            } else if let Some(rest) = body.strip_prefix("```") {
+                body = rest.trim_start();
+            }
+            if body.starts_with('[') {
+                return (Some(text.len() - body.len()), false);
+            }
+            if body.is_empty() {
+                possible = true;
+            }
+        }
+    }
+    // Bound withholding even if a model produces unending whitespace.
+    (None, possible && text.len() <= 128)
+}
+
+/// Withholds only possible delimiter prefixes; metadata stays out of display.
 #[derive(Default)]
 pub struct StreamParser {
     pending: String,
     json: String,
     metadata: bool,
     overflow: bool,
+    mid_line: bool,
 }
 impl StreamParser {
     pub fn has_metadata(&self) -> bool {
@@ -192,9 +255,38 @@ impl StreamParser {
             return String::new();
         }
         self.pending.push_str(text);
-        if let Some(at) = self.pending.find(MARKER) {
+        let mut boundary = self.pending.find(MARKER).map(|at| {
+            let line = self.pending[..at].rfind('\n').map_or(0, |n| n + 1);
+            let prefix = &self.pending[line..at];
+            let start = if (line > 0 || !self.mid_line)
+                && prefix.len() <= 16
+                && prefix
+                    .chars()
+                    .all(|c| matches!(c, ' ' | '\t' | '#' | '*' | '_' | '`'))
+            {
+                line
+            } else {
+                at
+            };
+            (start, at + MARKER.len())
+        });
+        let mut withheld = None;
+        let starts = std::iter::once(0)
+            .filter(|_| !self.mid_line)
+            .chain(self.pending.match_indices('\n').map(|(at, _)| at + 1));
+        for start in starts {
+            let (array, possible) = alternate_boundary(&self.pending[start..]);
+            if let Some(array) = array {
+                if boundary.is_none_or(|(at, _)| start < at) {
+                    boundary = Some((start, start + array));
+                }
+            } else if possible {
+                withheld.get_or_insert(start);
+            }
+        }
+        if let Some((at, after)) = boundary {
             let visible = self.pending[..at].to_string();
-            self.json = self.pending[at + MARKER.len()..].to_string();
+            self.json = self.pending[after..].to_string();
             if self.json.len() > 64 * 1024 {
                 self.json.clear();
                 self.overflow = true;
@@ -207,8 +299,14 @@ impl StreamParser {
             .rev()
             .find(|&n| self.pending.ends_with(&MARKER[..n]))
             .unwrap_or(0);
-        let visible = self.pending[..self.pending.len() - keep].to_string();
-        self.pending.drain(..self.pending.len() - keep);
+        let cut = withheld
+            .unwrap_or(self.pending.len())
+            .min(self.pending.len() - keep);
+        let visible = self.pending[..cut].to_string();
+        if !visible.is_empty() {
+            self.mid_line = !visible.ends_with('\n');
+        }
+        self.pending.drain(..cut);
         visible
     }
     pub fn finish(
@@ -293,6 +391,72 @@ impl StreamParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn provider_formatted_markers_hide_metadata_at_every_chunk_boundary() {
+        let source = "An offline provider is available.";
+        let json = r#"[{"word":"offline","surface":"offline","meaning":"离线的","level":"B2"}]"#;
+        for label in [
+            "---\nVOCAB_JSON\n",
+            "VOCAB_JSON\n",
+            "## VOCAB_JSON\n",
+            "**VOCAB_JSON**:\n",
+            "`VOCAB_JSON`\n```json\n",
+            "---\r\nVOCAB_JSON\r\n",
+            "**---VOCAB_JSON---**\n",
+        ] {
+            let output = format!("提供离线服务。\n\n{label}{json}");
+            for split in output.char_indices().map(|(at, _)| at) {
+                let mut parser = StreamParser::default();
+                let mut visible = parser.push(&output[..split]);
+                visible += &parser.push(&output[split..]);
+                assert!(parser.has_metadata(), "{label:?} split={split}");
+                let (tail, items, notice) = parser.finish(source, &visible);
+                visible += &tail;
+                assert_eq!(visible, "提供离线服务。\n\n", "{label:?} split={split}");
+                assert_eq!(items.len(), 1);
+                assert!(notice.is_none());
+            }
+            let mut parser = StreamParser::default();
+            let visible = output
+                .chars()
+                .map(|c| parser.push(&c.to_string()))
+                .collect::<String>();
+            assert_eq!(visible, "提供离线服务。\n\n", "{label:?}");
+            assert_eq!(parser.finish(source, &visible).1.len(), 1);
+        }
+    }
+
+    #[test]
+    fn marker_mentions_in_prose_and_unconfirmed_labels_are_not_removed() {
+        for output in [
+            "Use VOCAB_JSON in code.",
+            "VOCAB_JSON is a label.\n[]",
+            "VOCAB_JSON[0]",
+            "## VOCAB_JSON\nThis explains the format.",
+            "---\nA normal section follows.",
+            "VOCAB_JSON",
+            "前缀VOCAB_JSON\n[]",
+        ] {
+            let mut parser = StreamParser::default();
+            let mut visible = output
+                .chars()
+                .map(|c| parser.push(&c.to_string()))
+                .collect::<String>();
+            let (tail, items, _) = parser.finish("source", &visible);
+            visible += &tail;
+            assert_eq!(visible, output);
+            assert!(items.is_empty());
+        }
+    }
+
+    #[test]
+    fn malformed_alternate_metadata_is_hidden_and_reports_a_notice() {
+        let mut parser = StreamParser::default();
+        assert_eq!(parser.push("译文\nVOCAB_JSON\n[not valid json]"), "译文\n");
+        let (tail, items, notice) = parser.finish("source", "译文");
+        assert!(tail.is_empty() && items.is_empty() && notice.is_some());
+    }
+
     #[test]
     fn terms_keep_display_case_and_never_keep_fabricated_phonetics() {
         for (word, surface, expected) in [
