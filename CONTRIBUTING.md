@@ -1,6 +1,6 @@
-# Contributing to Glossa
+# Contributing to Yurelay
 
-Glossa currently targets macOS 14+, with Rust 1.92.0, Node.js 24, Tauri 2 and
+Yurelay currently targets macOS 14+, with Rust 1.92.0, Node.js 24, Tauri 2 and
 Svelte 5. Tooling also requires Python 3.11+. Install Xcode Command Line Tools, rustup and npm before starting.
 
 ## Local workflow
@@ -28,6 +28,10 @@ cache after verification is safe. CI overrides the target directory for caching.
 
 Core business rules must not move into components or `commands.rs`. Preserve
 existing configuration, storage migrations, bundle ID and Keychain names.
+The displayed product and build packages use Yurelay/yurelay. Keep the legacy
+`com.autodict.desktop` bundle ID and `com.autodict.desktop.providers` Keychain
+service stable: they identify existing application data and credentials. Build
+scripts resolve paths from their own location, so the checkout may be renamed.
 At the vocabulary marker, finish displaying translation without waiting for
 metadata parsing. Never auto-expand vocabulary UI in a way that shifts reading text; preserve the left sidebar anchor and the user's manual collapse for the same attempt.
 

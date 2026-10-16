@@ -76,8 +76,8 @@ static BOOL ADTestPasteboardBackup(void) {
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
     ADBackupCheck("unavailable-items", backup == nil && [error isEqualToString:@"无法读取当前剪贴板，已保留原内容。请重试或使用截图翻译。"], &passed);
 
-    NSPasteboardType firstType = @"org.glossa.synthetic.first";
-    NSPasteboardType secondType = @"org.glossa.synthetic.second";
+    NSPasteboardType firstType = @"org.yurelay.synthetic.first";
+    NSPasteboardType secondType = @"org.yurelay.synthetic.second";
     ADBackupTestItem *item = ADBackupFakeItem(@[firstType], @{});
     board = ADBackupFakeBoard(@[item]);
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
@@ -157,8 +157,8 @@ static BOOL ADTestPasteboardBackup(void) {
         ADBackupCheck("named-empty-pasteboard", backup != nil && backup.count == 0 && error == nil, &passed);
         const unsigned char syntheticBytes[] = {0x00, 0xff, 0x47, 0x6c};
         NSArray<NSDictionary<NSPasteboardType, NSData *> *> *formats = @[
-            @{NSPasteboardTypeString: [@"Synthetic Glossa source" dataUsingEncoding:NSUTF8StringEncoding],
-              NSPasteboardTypeHTML: [@"<b>Synthetic Glossa source</b>" dataUsingEncoding:NSUTF8StringEncoding],
+            @{NSPasteboardTypeString: [@"Synthetic Yurelay source" dataUsingEncoding:NSUTF8StringEncoding],
+              NSPasteboardTypeHTML: [@"<b>Synthetic Yurelay source</b>" dataUsingEncoding:NSUTF8StringEncoding],
               firstType: [NSData dataWithBytes:syntheticBytes length:sizeof(syntheticBytes)]},
             @{NSPasteboardTypeString: [@"Second synthetic item" dataUsingEncoding:NSUTF8StringEncoding],
               secondType: emptyData},
@@ -224,7 +224,7 @@ int main(void) {
         size_t definitionLength = ad_dictionary_lookup("hello", definition, 1024 * 1024);
         printf("System dictionary available=%s bytes=%lu\n", definitionLength ? "true" : "false", (unsigned long)definitionLength);
         if (definitionLength >= 1024 * 1024 || (definitionLength && ![[NSString alloc] initWithBytes:definition length:definitionLength encoding:NSUTF8StringEncoding])) return 1;
-        if (ad_dictionary_lookup("glossa_zxqv_nonexistent_dictionary_fixture", definition, 1024 * 1024) != 0) return 1;
+        if (ad_dictionary_lookup("yurelay_zxqv_nonexistent_dictionary_fixture", definition, 1024 * 1024) != 0) return 1;
         free(definition);
         NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
             initWithBitmapDataPlanes:NULL pixelsWide:1200 pixelsHigh:260
@@ -235,7 +235,7 @@ int main(void) {
         NSGraphicsContext.currentContext = context;
         [NSColor.whiteColor set]; NSRectFill(NSMakeRect(0, 0, 1200, 260));
         NSDictionary *attributes = @{NSFontAttributeName: [NSFont systemFontOfSize:34], NSForegroundColorAttributeName: NSColor.blackColor};
-        [@"Glossa keeps translation tasks running." drawAtPoint:NSMakePoint(40, 150) withAttributes:attributes];
+        [@"Yurelay keeps translation tasks running." drawAtPoint:NSMakePoint(40, 150) withAttributes:attributes];
         [@"切换窗口后，翻译结果仍然保留。" drawAtPoint:NSMakePoint(40, 70) withAttributes:attributes];
         [NSGraphicsContext restoreGraphicsState];
 
@@ -246,7 +246,7 @@ int main(void) {
             NSError *error = nil;
             CFAbsoluteTime begin = CFAbsoluteTimeGetCurrent();
             NSString *text = ADOCRImage(fixture, &error);
-            BOOL passed = !error && [text containsString:@"Glossa"] && [text containsString:@"翻译结果"];
+            BOOL passed = !error && [text containsString:@"Yurelay"] && [text containsString:@"翻译结果"];
             printf("OCR run=%d passed=%s elapsed_ms=%.1f characters=%lu\n", run, passed ? "true" : "false", (CFAbsoluteTimeGetCurrent()-begin)*1000, (unsigned long)text.length);
             if (!passed) {
                 fprintf(stderr, "OCR failure domain=%s code=%ld description=%s text=%s\n", error.domain.UTF8String ?: "none", (long)error.code, error.localizedDescription.UTF8String ?: "none", text.UTF8String ?: "nil");

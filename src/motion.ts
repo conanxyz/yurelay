@@ -1,4 +1,4 @@
-// Native Web Animations keep Glossa free of restricted animation dependencies.
+// Native Web Animations keep Yurelay free of restricted animation dependencies.
 // Content is visible by default; animations never gate rendering or stream updates.
 function entrance(
   node: HTMLElement,

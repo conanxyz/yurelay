@@ -254,10 +254,10 @@ test('screenshot generation announces progress until source text is ready withou
   await page.keyboard.press('x');
   expect(await requests(page)).toBe(0);
   await page.evaluate(()=>{
-    const w=window as any;Object.assign(w.task,{status:'ready',original_text:'Glossa screenshot OCR test.',revision:4});
+    const w=window as any;Object.assign(w.task,{status:'ready',original_text:'Yurelay screenshot OCR test.',revision:4});
     w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
   });
-  await expect(editor).toHaveValue('Glossa screenshot OCR test.');
+  await expect(editor).toHaveValue('Yurelay screenshot OCR test.');
   await expect(editor).toHaveAttribute('aria-busy','false');
   await expect(editor).not.toHaveAttribute('readonly');
   await expect(page.locator('.source-processing')).toHaveCount(0);
@@ -291,11 +291,11 @@ test('screenshot OCR failures remain visible while translation is collapsed with
   expect(await requests(page)).toBe(0);
   await page.evaluate(()=>{
     const w=window as any;
-    Object.assign(w.task,{id:'next-capture',status:'ready',original_text:'Glossa screenshot OCR test.',error:null,revision:4});
+    Object.assign(w.task,{id:'next-capture',status:'ready',original_text:'Yurelay screenshot OCR test.',error:null,revision:4});
     w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
   });
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('Glossa screenshot OCR test.');
+  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('Yurelay screenshot OCR test.');
 });
 
 test('OCR loading keeps the keyboard focus ring visibly painted',async({page})=>{

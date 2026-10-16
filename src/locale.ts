@@ -90,8 +90,8 @@ const errors: Record<string, string> = {
     "The service configuration changed. Copy the source text to start a new translation.",
   "无法读取系统钥匙串，请解锁钥匙串或重新保存密钥。":
     "Unable to read the system keychain. Unlock it or save the key again.",
-  "请先在设置中开启 Glossa 的屏幕录制权限。":
-    "Enable Screen Recording for Glossa in Settings.",
+  "请先在设置中开启 Yurelay 的屏幕录制权限。":
+    "Enable Screen Recording for Yurelay in Settings.",
   "没有读取到选中文字，请重新选择或使用截图。":
     "No selected text was found. Select text again or capture a screenshot.",
   "本地文字识别失败，请缩小选区后重试。":
@@ -278,8 +278,8 @@ Object.assign(errors, {
   "正在读取选中文字，请稍候。": "Reading selected text. Please wait.",
   "该应用未提供选中文字。请使用截图翻译。":
     "This app did not provide selected text. Use screenshot translation.",
-  "请先在设置中开启 Glossa 的辅助功能权限。":
-    "Enable Accessibility permission for Glossa in Settings.",
+  "请先在设置中开启 Yurelay 的辅助功能权限。":
+    "Enable Accessibility permission for Yurelay in Settings.",
   "请在其他应用中选中文字，再按划词快捷键。":
     "Select text in another app, then press the selection shortcut.",
   "请松开快捷键后重试，或使用截图。":

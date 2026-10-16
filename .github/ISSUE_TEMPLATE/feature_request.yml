@@ -1,5 +1,5 @@
 name: Feature request / 功能建议
-description: Describe a workflow or problem Glossa could improve.
+description: Describe a workflow or problem Yurelay could improve.
 labels: [enhancement]
 body:
   - type: textarea

@@ -33,8 +33,8 @@ pub fn replace<T: Copy + PartialEq>(
 
 pub fn permission_required(message: &str) -> Option<&'static str> {
     match message {
-        "请先在设置中开启 Glossa 的屏幕录制权限。" => Some("screen"),
-        "请先在设置中开启 Glossa 的辅助功能权限。" => Some("accessibility"),
+        "请先在设置中开启 Yurelay 的屏幕录制权限。" => Some("screen"),
+        "请先在设置中开启 Yurelay 的辅助功能权限。" => Some("accessibility"),
         _ => None,
     }
 }
@@ -84,7 +84,7 @@ mod tests {
     }
     #[test]
     fn only_the_missing_permission_keeps_its_notice() {
-        let screen = "请先在设置中开启 Glossa 的屏幕录制权限。";
+        let screen = "请先在设置中开启 Yurelay 的屏幕录制权限。";
         assert!(!notice_is_relevant(screen, false, true));
         assert!(notice_is_relevant(screen, true, false));
         assert!(notice_is_relevant("connection failed", true, true));

@@ -80,7 +80,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ steps.version.outputs.tag }}
-          releaseName: Glossa ${{ steps.version.outputs.tag }}
+          releaseName: Yurelay ${{ steps.version.outputs.tag }}
           releaseBody: |
             macOS 14 or later. Choose aarch64 for Apple Silicon or x64 for Intel.
             These builds use ad-hoc signing and are not Apple-notarized.

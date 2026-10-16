@@ -77,7 +77,7 @@ pnpm-debug.log*
 # Private AI process notes (kept locally, not part of the public source)
 /.ai-notes/
 /compact-vocabulary-prompt.md
-/glossa-mvp-plan.md
+/*-mvp-plan.md
 /provider-audit-and-catalog.md
 /sensitive-vocabulary-services.md
 /translation-reading-drawer.md

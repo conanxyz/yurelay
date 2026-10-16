@@ -30,7 +30,7 @@ fn main() {
                     if event.state() == ShortcutState::Pressed {
                         // Freeze the source at key-down. Key release and queued
                         // AppKit work must not choose a different foreground app.
-                        let target = glossa_platform::selection_target();
+                        let target = yurelay_platform::selection_target();
                         state
                             .pressed_shortcuts
                             .lock()
@@ -59,36 +59,39 @@ fn main() {
                 })
                 .build(),
         )
-        .register_asynchronous_uri_scheme_protocol("glossa-image", |context, request, responder| {
-            let app = context.app_handle().clone();
-            let allowed = matches!(context.webview_label(), "main" | "settings");
-            let id = request.uri().path().trim_start_matches('/').to_string();
-            tauri::async_runtime::spawn(async move {
-                let data = if allowed && uuid::Uuid::parse_str(&id).is_ok() {
-                    match state::engine(&app).await {
-                        Ok(engine) => engine.image(&id).await.ok().flatten(),
-                        Err(_) => None,
+        .register_asynchronous_uri_scheme_protocol(
+            "yurelay-image",
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                let allowed = matches!(context.webview_label(), "main" | "settings");
+                let id = request.uri().path().trim_start_matches('/').to_string();
+                tauri::async_runtime::spawn(async move {
+                    let data = if allowed && uuid::Uuid::parse_str(&id).is_ok() {
+                        match state::engine(&app).await {
+                            Ok(engine) => engine.image(&id).await.ok().flatten(),
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let response = match data {
+                        Some(data) => tauri::http::Response::builder()
+                            .status(200)
+                            .header("Content-Type", "image/png")
+                            .header("Cache-Control", "no-store")
+                            .header("X-Content-Type-Options", "nosniff")
+                            .body(data.as_ref().clone()),
+                        None => tauri::http::Response::builder()
+                            .status(404)
+                            .header("Cache-Control", "no-store")
+                            .body(Vec::new()),
+                    };
+                    if let Ok(response) = response {
+                        responder.respond(response);
                     }
-                } else {
-                    None
-                };
-                let response = match data {
-                    Some(data) => tauri::http::Response::builder()
-                        .status(200)
-                        .header("Content-Type", "image/png")
-                        .header("Cache-Control", "no-store")
-                        .header("X-Content-Type-Options", "nosniff")
-                        .body(data.as_ref().clone()),
-                    None => tauri::http::Response::builder()
-                        .status(404)
-                        .header("Cache-Control", "no-store")
-                        .body(Vec::new()),
-                };
-                if let Ok(response) = response {
-                    responder.respond(response);
-                }
-            });
-        })
+                });
+            },
+        )
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             app.manage(AppState::new(root));
@@ -96,7 +99,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 // SAFETY: setup runs on the main thread and the NSWindow is live.
                 unsafe {
-                    glossa_platform::configure_window(window.ns_window()?);
+                    yurelay_platform::configure_window(window.ns_window()?);
                 }
             }
             state::initialize_result_position(app.handle());
@@ -105,7 +108,7 @@ fn main() {
             let open = MenuItem::with_id(app, "show", "打开翻译窗口", true, None::<&str>)?;
             let capture = MenuItem::with_id(app, "capture", "截屏翻译", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出 Glossa", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出 Yurelay", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &capture, &settings, &quit])?;
             let app_menu = Menu::default(app.handle())?;
             if let Some(MenuItemKind::Submenu(submenu)) = app_menu.items()?.first() {
@@ -120,8 +123,8 @@ fn main() {
                     state::show_settings(app);
                 }
             });
-            let mut tray = TrayIconBuilder::with_id("glossa")
-                .tooltip("Glossa · 翻译窗口")
+            let mut tray = TrayIconBuilder::with_id("yurelay")
+                .tooltip("Yurelay · 翻译窗口")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => state::show(app, true),
@@ -275,7 +278,7 @@ fn main() {
             commands::show_settings,
         ])
         .build(tauri::generate_context!())
-        .expect("Glossa could not start")
+        .expect("Yurelay could not start")
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => state::show(app, true),

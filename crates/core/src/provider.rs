@@ -196,7 +196,7 @@ impl TranslationClient {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent("Glossa/0.1")
+            .user_agent("Yurelay/0.1")
             .build()
             .map_err(|_| Error::Connection)?;
         Ok(Self {
@@ -760,7 +760,7 @@ mod tests {
     async fn translation_only_request_contract_covers_words_identifiers_and_sentences() {
         for input in [
             "stage_envelope_may_include_waiting",
-            "Glossa",
+            "Yurelay",
             "The server is waiting.",
         ] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -1,12 +1,4 @@
 use crate::state::{self, AppState, ShortcutReport};
-use glossa_core::{
-    config::{Profile, Settings},
-    engine::Configuration,
-    provider::Metrics,
-    storage::Stats,
-    tasks::{Event, Snapshot, Source, Task},
-};
-use glossa_platform::{NativeEvent, Permissions};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -16,6 +8,14 @@ use std::{
 use tauri::{AppHandle, Manager, ipc::Channel};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tokio_util::sync::CancellationToken;
+use yurelay_core::{
+    config::{Profile, Settings},
+    engine::Configuration,
+    provider::Metrics,
+    storage::Stats,
+    tasks::{Event, Snapshot, Source, Task},
+};
+use yurelay_platform::{NativeEvent, Permissions};
 
 #[derive(Serialize)]
 pub struct Bootstrap {
@@ -48,7 +48,7 @@ pub async fn bootstrap(app: AppHandle) -> Result<Bootstrap, String> {
     });
     Ok(Bootstrap {
         configuration,
-        permissions: glossa_platform::permissions(),
+        permissions: yurelay_platform::permissions(),
         shortcuts,
         snapshot: engine.book.snapshot(),
         selected: view.selected,
@@ -62,11 +62,11 @@ pub async fn bootstrap(app: AppHandle) -> Result<Bootstrap, String> {
 pub fn permissions(app: AppHandle) -> Permissions {
     state::current_notice(&app);
     app.state::<AppState>().resync.notify_one();
-    glossa_platform::permissions()
+    yurelay_platform::permissions()
 }
 #[tauri::command]
 pub fn request_permission(kind: String) -> Result<(), String> {
-    glossa_platform::request_permission(&kind)
+    yurelay_platform::request_permission(&kind)
 }
 #[tauri::command]
 pub fn hide_window(app: AppHandle) {
@@ -146,7 +146,7 @@ pub async fn copy_text(text: String) -> Result<(), String> {
     if text.len() > 2 * 1024 * 1024 {
         return Err("文字过长。".into());
     }
-    tokio::task::spawn_blocking(move || glossa_platform::copy_text(&text))
+    tokio::task::spawn_blocking(move || yurelay_platform::copy_text(&text))
         .await
         .map_err(|_| "复制失败。")?
 }
@@ -164,14 +164,14 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
         return;
     }
     state::clear_capture_view(&app);
-    let permissions = glossa_platform::permissions();
+    let permissions = yurelay_platform::permissions();
     if (screenshot && !permissions.screen) || (!screenshot && !permissions.accessibility) {
         state::notice(
             &app,
             if screenshot {
-                "请先在设置中开启 Glossa 的屏幕录制权限。"
+                "请先在设置中开启 Yurelay 的屏幕录制权限。"
             } else {
-                "请先在设置中开启 Glossa 的辅助功能权限。"
+                "请先在设置中开启 Yurelay 的辅助功能权限。"
             }
             .into(),
         );
@@ -180,7 +180,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
     }
     let epoch = app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed);
     // Native acquisition starts before any database/keychain await can change focus.
-    let mut native = glossa_platform::start_for_target(screenshot, selection_target);
+    let mut native = yurelay_platform::start_for_target(screenshot, selection_target);
     tauri::async_runtime::spawn(async move {
         let engine = match state::engine(&app).await {
             Ok(e) => e,
@@ -218,7 +218,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                 }
                 NativeEvent::Text(text) => {
                     let (text, detected) = tokio::task::spawn_blocking(move || {
-                        let language = glossa_platform::detect_language(&text);
+                        let language = yurelay_platform::detect_language(&text);
                         (text, language)
                     })
                     .await
@@ -350,7 +350,7 @@ pub async fn fetch_models(
     app: AppHandle,
     profile: Profile,
     key_override: Option<String>,
-) -> Result<Vec<glossa_core::provider::ModelInfo>, String> {
+) -> Result<Vec<yurelay_core::provider::ModelInfo>, String> {
     state::engine(&app)
         .await?
         .models(profile, key_override)
@@ -432,7 +432,7 @@ pub enum Wire {
         events: Vec<Event>,
     },
 }
-fn snapshot_message(app: &AppHandle, engine: &glossa_core::engine::Engine) -> Wire {
+fn snapshot_message(app: &AppHandle, engine: &yurelay_core::engine::Engine) -> Wire {
     let state = app.state::<AppState>();
     let selected = state.selected.lock().unwrap().clone();
     let notice = state::current_notice(app);
@@ -618,7 +618,7 @@ pub async fn end_shortcut_recording(app: AppHandle, epoch: u64) -> ShortcutRepor
 #[tauri::command]
 pub async fn save_preferences(
     app: AppHandle,
-    preferences: glossa_core::config::DisplayPreferences,
+    preferences: yurelay_core::config::DisplayPreferences,
 ) -> Result<Configuration, String> {
     let configuration = state::engine(&app)
         .await?
@@ -640,10 +640,10 @@ pub fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn detect_text_language(text: String) -> Result<Option<String>, String> {
-    if text.chars().count() > glossa_core::MAX_INPUT_CHARACTERS {
+    if text.chars().count() > yurelay_core::MAX_INPUT_CHARACTERS {
         return Err("原文为空或过长。".into());
     }
-    tokio::task::spawn_blocking(move || glossa_platform::detect_language(&text))
+    tokio::task::spawn_blocking(move || yurelay_platform::detect_language(&text))
         .await
         .map_err(|_| "语言识别失败。".into())
 }
@@ -673,12 +673,12 @@ pub fn fit_result_height(app: AppHandle, height: f64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_dictionary(kind: String, text: String) -> Result<(), String> {
-    glossa_platform::open_dictionary(&kind, &text)
+    yurelay_platform::open_dictionary(&kind, &text)
 }
 
 #[tauri::command]
 pub fn default_translation_prompt() -> &'static str {
-    glossa_core::provider::DEFAULT_PROMPT
+    yurelay_core::provider::DEFAULT_PROMPT
 }
 #[tauri::command]
 pub async fn resolve_sensitive(app: AppHandle, id: String, allow: bool) -> Result<(), String> {
@@ -693,14 +693,14 @@ pub async fn resolve_sensitive(app: AppHandle, id: String, allow: bool) -> Resul
 #[tauri::command]
 pub async fn vocabulary_list(
     app: AppHandle,
-) -> Result<Vec<glossa_core::vocabulary::VocabularyItem>, String> {
+) -> Result<Vec<yurelay_core::vocabulary::VocabularyItem>, String> {
     state::engine(&app).await?.storage.vocabulary().await
 }
 #[tauri::command]
 pub async fn vocabulary_lookup(
     app: AppHandle,
     words: Vec<String>,
-) -> Result<Vec<glossa_core::vocabulary::VocabularyItem>, String> {
+) -> Result<Vec<yurelay_core::vocabulary::VocabularyItem>, String> {
     state::engine(&app)
         .await?
         .storage
@@ -710,8 +710,8 @@ pub async fn vocabulary_lookup(
 #[tauri::command]
 pub async fn vocabulary_collect(
     app: AppHandle,
-    candidate: glossa_core::vocabulary::Candidate,
-) -> Result<glossa_core::vocabulary::VocabularyItem, String> {
+    candidate: yurelay_core::vocabulary::Candidate,
+) -> Result<yurelay_core::vocabulary::VocabularyItem, String> {
     let item = state::engine(&app)
         .await?
         .storage
@@ -729,14 +729,14 @@ pub async fn vocabulary_preview(
     selection_end: usize,
     task_id: Option<String>,
     attempt: Option<u32>,
-) -> Result<glossa_core::vocabulary::selection::Preview, String> {
-    use glossa_core::vocabulary::selection::{DictionaryEntry, Selection};
+) -> Result<yurelay_core::vocabulary::selection::Preview, String> {
+    use yurelay_core::vocabulary::selection::{DictionaryEntry, Selection};
     let selection = Selection::new(&source_text, selection_start, selection_end)?;
     let word = selection.surface.clone();
     let entry = tokio::task::spawn_blocking(move || {
-        let lemma = glossa_platform::lemma(&word);
-        let details = glossa_platform::lookup_dictionary_details(&lemma).unwrap_or(
-            glossa_platform::DictionaryDetails {
+        let lemma = yurelay_platform::lemma(&word);
+        let details = yurelay_platform::lookup_dictionary_details(&lemma).unwrap_or(
+            yurelay_platform::DictionaryDetails {
                 definition: String::new(),
                 phonetic: None,
             },
@@ -763,7 +763,7 @@ pub async fn vocabulary_manual(
     selection_end: usize,
     task_id: Option<String>,
     attempt: Option<u32>,
-) -> Result<glossa_core::vocabulary::VocabularyItem, String> {
+) -> Result<yurelay_core::vocabulary::VocabularyItem, String> {
     let preview = vocabulary_preview(
         app.clone(),
         source_text,
@@ -783,7 +783,7 @@ pub async fn vocabulary_update(
     note: Option<String>,
     status: Option<String>,
     remove_context: Option<String>,
-) -> Result<glossa_core::vocabulary::VocabularyItem, String> {
+) -> Result<yurelay_core::vocabulary::VocabularyItem, String> {
     let item = state::engine(&app)
         .await?
         .storage
@@ -803,14 +803,14 @@ pub async fn vocabulary_remove(app: AppHandle, id: String) -> Result<(), String>
 #[tauri::command]
 pub async fn vocabulary_export(app: AppHandle, format: String) -> Result<bool, String> {
     let items = state::engine(&app).await?.storage.vocabulary().await?;
-    let data = glossa_core::storage::vocabulary::export(&items, &format)?;
+    let data = yurelay_core::storage::vocabulary::export(&items, &format)?;
     let extension = match format.as_str() {
         "csv" => "csv",
         "markdown" => "md",
         "anki" => "txt",
         _ => return Err("不支持的导出格式。".into()),
     };
-    let path = glossa_platform::choose_export(&format!("Glossa-vocabulary.{extension}")).await?;
+    let path = yurelay_platform::choose_export(&format!("Yurelay-vocabulary.{extension}")).await?;
     if let Some(path) = path {
         tokio::fs::write(path, data)
             .await
@@ -821,8 +821,8 @@ pub async fn vocabulary_export(app: AppHandle, format: String) -> Result<bool, S
     }
 }
 #[tauri::command]
-pub async fn speech_voices() -> Result<Vec<glossa_platform::SpeechVoice>, String> {
-    tokio::task::spawn_blocking(glossa_platform::speech_voices)
+pub async fn speech_voices() -> Result<Vec<yurelay_platform::SpeechVoice>, String> {
+    tokio::task::spawn_blocking(yurelay_platform::speech_voices)
         .await
         .map_err(|_| "无法读取系统朗读声音。".into())
 }
@@ -833,11 +833,11 @@ pub async fn speak_word(
     locale: Option<String>,
     slow: Option<bool>,
 ) -> Result<(), String> {
-    if glossa_core::sensitive::detect(&word).is_some() {
+    if yurelay_core::sensitive::detect(&word).is_some() {
         return Err("朗读内容无效。".into());
     }
     tokio::task::spawn_blocking(move || {
-        glossa_platform::speak_word(&word, locale.as_deref(), slow.unwrap_or(false))
+        yurelay_platform::speak_word(&word, locale.as_deref(), slow.unwrap_or(false))
     })
     .await
     .map_err(|_| "系统朗读失败。")?

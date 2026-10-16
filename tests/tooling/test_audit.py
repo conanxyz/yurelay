@@ -9,7 +9,7 @@ spec.loader.exec_module(audit)
 
 class AuditTests(unittest.TestCase):
     def test_forbidden_paths_cover_nested_builds_and_database_sidecars(self):
-        for path in ['Easydict/a.swift', 'crates/core/target/file', 'nested/.env.production', 'state.sqlite3', 'state.sqlite3-wal', 'state.db-shm', 'logs/service.log', 'x/Glossa.app/Contents/MacOS/glossa']:
+        for path in ['Easydict/a.swift', 'crates/core/target/file', 'nested/.env.production', 'state.sqlite3', 'state.sqlite3-wal', 'state.db-shm', 'logs/service.log', 'x/Yurelay.app/Contents/MacOS/yurelay']:
             self.assertTrue(audit.bad_path(path), path)
         for path in ['Cargo.lock', 'package-lock.json', 'src/main.ts', 'src-tauri/build.rs', '.github/workflows/ci.yml']:
             self.assertFalse(audit.bad_path(path), path)

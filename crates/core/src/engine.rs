@@ -1619,7 +1619,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (engine, requests) = configured(root.path().into(), Retention::Disabled).await;
         let source = "查到了：两个题目其实都有job，归属都是muse03，目前处于 needs_reconciliation（待核对恢复），租约分别在今晚22:27:47和22:28:28过期。\n所以不是单纯刷新版本号能解决的问题：7/8是原稿版本，和认领租约是两套状态。按题目查询、不限制status时能看到job，原先列表可能过滤掉了这种状态。我再确认恢复路径，不能直接当作无任务清锁。";
-        let detected = glossa_platform::detect_language(source);
+        let detected = yurelay_platform::detect_language(source);
         assert_eq!(detected.as_deref(), Some("zh-Hans"));
         let capture = engine.begin(Source::Selection).await.unwrap();
         engine.accept_detected_text(&capture, source.into(), 0, detected.clone());

@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/zricethezav/gitleaks/v8@v8.24.3
-          scan_dir="$(mktemp -d "$RUNNER_TEMP/glossa-scan.XXXXXX")"
+          scan_dir="$(mktemp -d "$RUNNER_TEMP/yurelay-scan.XXXXXX")"
           trap 'rm -rf "$scan_dir"' EXIT
           git archive HEAD | tar -xf - -C "$scan_dir"
           "$(go env GOPATH)/bin/gitleaks" dir "$scan_dir" --redact=100 --no-banner

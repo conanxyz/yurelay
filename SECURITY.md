@@ -1,6 +1,6 @@
 # Security policy
 
-Glossa is currently a development preview; fixes target the latest source and
+Yurelay is currently a development preview; fixes target the latest source and
 preview release. No stable maintenance branches are promised yet.
 
 Report suspected vulnerabilities privately to **12594210+conanxyz@users.noreply.github.com**, or use GitHub

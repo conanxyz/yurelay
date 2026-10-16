@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="src/assets/glossa-logo.png" width="88" alt="Glossa" />
-  <h1>Glossa</h1>
+  <img src="src/assets/yurelay-logo.png" width="88" alt="Yurelay" />
+  <h1>Yurelay</h1>
   <p><strong>你的语言，你的节奏</strong><br />专为 macOS 打造的轻量级 LLM 划词 / 截图翻译与语境生词沉淀工具。</p>
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-222222?logo=apple)
@@ -10,7 +10,7 @@
 [English](README.md) · [下载安装](https://github.com/conanxyz/glossa/releases) · [参与贡献](CONTRIBUTING.md)
 </div>
 
-读懂眼前的内容，也把值得记住的表达留下来。Glossa 将划词、截图翻译和语境生词本放在同一个轻量窗口里，让阅读与积累自然衔接。
+读懂眼前的内容，也把值得记住的表达留下来。Yurelay 将划词、截图翻译和语境生词本放在同一个轻量窗口里，让阅读与积累自然衔接。
 
 ![界面预览占位：翻译窗口、阅读视图、生词侧栏、服务与生词本设置](docs/images/preview.svg)
 
@@ -18,7 +18,7 @@
 
 ### ⚡ 随手取词，边译边读
 
-选中文字或框选屏幕区域，用全局快捷键唤起 Glossa。截图文字在本机识别；你可以先检查、编辑原文，再按 `X` 或点击箭头开始翻译，译文随返回内容逐步显示。
+选中文字或框选屏幕区域，用全局快捷键唤起 Yurelay。截图文字在本机识别；你可以先检查、编辑原文，再按 `X` 或点击箭头开始翻译，译文随返回内容逐步显示。
 
 阅读模式保留标题、列表与代码块，并帮助还原 PDF、网页和更新日志中粘连的段落。需要原始文字时，一键切换纯文本，无需重新翻译。
 
@@ -40,7 +40,7 @@ SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，本地�
 
 ### 🔌 选择适合自己的服务
 
-无需账号即可使用 macOS 系统词典查词，也可以接入自己的模型服务。Glossa 预置智谱 `glm-4-flash-250414` 等模型候选，支持利用服务商提供的免费模型或免费层起步；具体费用、额度与可用性以各平台政策为准。
+无需账号即可使用 macOS 系统词典查词，也可以接入自己的模型服务。Yurelay 预置智谱 `glm-4-flash-250414` 等模型候选，支持利用服务商提供的免费模型或免费层起步；具体费用、额度与可用性以各平台政策为准。
 
 | 服务 | 配置方式 |
 | :--- | :--- |
@@ -54,9 +54,9 @@ SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，本地�
 
 ## 🚀 安装与首次配置
 
-### 1. 安装 Glossa
+### 1. 安装 Yurelay
 
-前往 [Releases](https://github.com/conanxyz/glossa/releases)，下载适合芯片架构的 `.dmg`，将 Glossa 拖入“应用程序”：
+前往 [Releases](https://github.com/conanxyz/glossa/releases)，下载适合芯片架构的 `.dmg`，将 Yurelay 拖入“应用程序”：
 
 - **Apple Silicon（M 系列）**：选择 `aarch64`。
 - **Intel**：选择 `x64` / `x86_64`。
@@ -71,7 +71,7 @@ SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，本地�
 如果确认下载自项目 Releases、校验文件一致，且问题由下载隔离属性引起，可执行：
 
 ```sh
-sudo xattr -rd com.apple.quarantine /Applications/Glossa.app
+sudo xattr -rd com.apple.quarantine /Applications/Yurelay.app
 ```
 
 此命令只移除该应用的隔离标记，不代表 Apple 公证；不要用于来源不明或校验不符的文件。
@@ -80,16 +80,16 @@ sudo xattr -rd com.apple.quarantine /Applications/Glossa.app
 
 ### 2. 开启捕获权限
 
-在「系统设置 → 隐私与安全性」中允许 Glossa 使用：
+在「系统设置 → 隐私与安全性」中允许 Yurelay 使用：
 
 - **辅助功能（Accessibility）**：读取其他应用中选中的文字。
 - **屏幕录制（Screen Recording）**：截取选区并识别文字。
 
-也可从 Glossa「设置 → 翻译与快捷键」检查状态并打开对应系统设置。新版 macOS 的辅助功能授权可能显示为“设备控制和数据访问”。
+也可从 Yurelay「设置 → 翻译与快捷键」检查状态并打开对应系统设置。新版 macOS 的辅助功能授权可能显示为“设备控制和数据访问”。
 
 ### 3. 配置第一个服务
 
-点击菜单栏 Glossa 图标 → **设置… → 服务**。
+点击菜单栏 Yurelay 图标 → **设置… → 服务**。
 
 - **先试本地查词**：选择“系统词典”，设为默认，无需 API Key。
 - **开始段落翻译**：选择智谱或其他服务，填写自己的 API Key，选择模型，点击“测试连接”；成功后设为默认并保存。智谱可从预置的 `glm-4-flash-250414` 开始。
@@ -100,7 +100,7 @@ sudo xattr -rd com.apple.quarantine /Applications/Glossa.app
 
 | 操作 | 默认快捷键 / 方式 | 说明 |
 | :--- | :--- | :--- |
-| 划词取词 | `Option + D` | 在其他应用中选中文字后，捕获至 Glossa |
+| 划词取词 | `Option + D` | 在其他应用中选中文字后，捕获至 Yurelay |
 | 截图 OCR | `Option + S` | 框选区域，在本机识别文字 |
 | 开始翻译 | `X` 或右侧箭头 | 检查原文后发起翻译；编辑文字时请点击箭头，`X` 会正常输入 |
 | 切换阅读 / 纯文本 | 译文区切换按钮 | 改变显示方式，不重复请求模型 |
@@ -131,8 +131,8 @@ npm run bundle:mac              # 构建本机 .app 与 .dmg
 
 ## 📄 开源协议与致谢
 
-Copyright © 2026 Glossa Contributors. 项目按 **GNU GPL v3.0 only（`GPL-3.0-only`）** 开源，完整条款见 [LICENSE](LICENSE)。
+Copyright © 2026 Yurelay Contributors. 项目按 **GNU GPL v3.0 only（`GPL-3.0-only`）** 开源，完整条款见 [LICENSE](LICENSE)。
 
-Glossa 的功能与交互设计参考了 [Easydict](https://github.com/tisfeng/Easydict) 和 [Bob](https://github.com/ripperhe/Bob)。开发过程中，也对照 Easydict 的划词、截图、OCR 与翻译服务接入实现进行了研究。感谢这些项目及其作者提供的思路与经验。
+Yurelay 的功能与交互设计参考了 [Easydict](https://github.com/tisfeng/Easydict) 和 [Bob](https://github.com/ripperhe/Bob)。开发过程中，也对照 Easydict 的划词、截图、OCR 与翻译服务接入实现进行了研究。感谢这些项目及其作者提供的思路与经验。
 
 感谢 Tauri、Rust、Svelte 及相关开源社区。依赖、字体和服务商标志的许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
