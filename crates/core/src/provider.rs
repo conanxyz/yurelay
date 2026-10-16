@@ -10,8 +10,8 @@ use std::{sync::LazyLock, time::Duration};
 use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
-// Invalidate cached translations created before tolerant metadata separation.
-pub const PROMPT_VERSION: u32 = 11;
+// Partition cached translations from the old prompt's copyable formatting example.
+pub const PROMPT_VERSION: u32 = 12;
 pub const DEFAULT_PROMPT: &str = include_str!("../data/translation-prompt.txt");
 
 pub const TRANSLATION_ONLY: &str = include_str!("../data/translation-only-format.txt");
@@ -1117,6 +1117,52 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn default_requests_do_not_offer_unrelated_formatting_examples_as_answers() {
+        use crate::config::Provider;
+        for input in [
+            "Argon",
+            "The inert gas is used in welding.",
+            "Features• A (#1)Bug Fixes• B (#2)",
+        ] {
+            for extract in [false, true] {
+                let profile = Profile {
+                    provider: Provider::Zhipu,
+                    model: "glm-4-flash-250414".into(),
+                    ..Profile::default()
+                };
+                let instruction = translation_instruction("zh-Hans", input, "", extract);
+                let request = protocol::request(
+                    &Client::new(),
+                    &profile,
+                    "fixture-key",
+                    input,
+                    ("zh-Hans", None),
+                    &instruction,
+                    profile.request_url().unwrap(),
+                )
+                .unwrap()
+                .build()
+                .unwrap();
+                let body: serde_json::Value =
+                    serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+                assert_eq!(body["messages"][1]["content"], input);
+                let system = body["messages"][0]["content"].as_str().unwrap();
+                assert!(system.contains("Simplified Chinese"));
+                assert!(system.contains(SOURCE_ONLY));
+                assert!(
+                    !system.contains("## Features\n- A (#1)"),
+                    "The unrelated example copied in the Argon incident is still in the request"
+                );
+                assert!(!system.contains("Input:"));
+                assert!(!system.contains("Output:"));
+                if !crate::vocabulary::short_query(input) {
+                    assert!(system.contains("every heading MUST start on a new line"));
+                }
+            }
+        }
+    }
+
     #[test]
     fn compact_prompt_selects_one_mode_and_keeps_source_isolation_for_custom_prompts() {
         for (input, mode) in [
