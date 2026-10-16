@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::LazyLock};
 pub mod context;
+pub mod selection;
 
 /// Space-delimited languages use words; unspaced CJK input uses a conservative
 /// three-character short-query boundary rather than treating whole paragraphs as one word.

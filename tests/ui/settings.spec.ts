@@ -481,3 +481,109 @@ test('native entrance animations respect changes to reduced motion', async ({pag
   await expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
   await expect(page.getByLabel('Default translation language',{exact:true})).toBeVisible();
 });
+
+
+test('permission recovery explains re-adding Glossa in order and trusts only refreshed permission status',async({page})=>{
+  await settingsFixture(page);
+  const recovery=page.locator('details.permission-recovery');
+  await expect(recovery).toHaveCount(0);
+  const target=page.getByLabel('Default translation language',{exact:true});
+  await target.selectOption('fr');
+  await page.evaluate(()=>{const w=window as any;w.permissions={accessibility:false,screen:false};window.dispatchEvent(new Event('focus'));});
+  await expect(page.locator('.permission-state')).toHaveText(['Not allowed','Not allowed']);
+  await expect(recovery).toBeVisible();
+  await expect.poll(()=>recovery.evaluate((el:HTMLDetailsElement)=>el.open)).toBe(false);
+  const summary=recovery.locator('summary');
+  await expect(summary).toHaveText('Updated Glossa but still not allowed?');
+  await summary.click();
+  const steps=recovery.locator('ol > li');
+  await expect(steps).toHaveCount(4);
+  await expect(steps.nth(0)).toContainText(/remove/i);
+  await expect(steps.nth(0)).toContainText('Glossa');
+  await expect(steps.nth(0)).toContainText('−');
+  await expect(steps.nth(1)).toContainText(/add/i);
+  await expect(steps.nth(1)).toContainText('Glossa');
+  await expect(steps.nth(1)).toContainText(/[+＋]/);
+  await expect(steps.nth(2)).toContainText(/enable|turn on/i);
+  await expect(steps.nth(2)).toContainText(/Quit.*Reopen/i);
+  await expect(steps.nth(3)).toContainText(/Refresh/i);
+  await page.locator('.permission-core').screenshot({path:'artifacts/previews/2026-10-16-permission-recovery-en.png'});
+  await summary.click();
+  await expect.poll(()=>recovery.evaluate((el:HTMLDetailsElement)=>el.open)).toBe(false);
+  for(const [index,kind] of [[0,'accessibility'],[1,'screen']] as const){
+    await page.locator('.permission-row').nth(index).getByRole('button',{name:'Open system settings',exact:true}).click();
+    await expect.poll(()=>recovery.evaluate((el:HTMLDetailsElement)=>el.open)).toBe(true);
+    expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='request_permission').at(-1).args)).toEqual({kind});
+    await expect(page.locator('.permission-state')).toHaveText(['Not allowed','Not allowed']);
+    await expect(target).toHaveValue('fr');
+  }
+  await page.evaluate(()=>{const w=window as any;w.permissions.accessibility=true;window.dispatchEvent(new Event('focus'));});
+  await expect(page.locator('.permission-state')).toHaveText(['Allowed','Not allowed']);
+  await expect(recovery).toBeVisible();
+  const previousReads=await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='permissions').length);
+  await page.evaluate(()=>{(window as any).permissions.screen=true;});
+  await page.getByRole('button',{name:'Refresh status',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='permissions').length)).toBeGreaterThan(previousReads);
+  await expect(page.locator('.permission-state')).toHaveText(['Allowed','Allowed']);
+  await expect(recovery).toHaveCount(0);
+  await expect(target).toHaveValue('fr');
+  await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as any).settings.target_language)).toBe('zh-Hans');
+  expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='save_configuration'))).toEqual([]);
+});
+
+test('permission recovery localizes its collapsed guide and ordered actions in Chinese',async({page})=>{
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.permissions={accessibility:false,screen:true};window.dispatchEvent(new Event('focus'));});
+  await expect(page.locator('.permission-state')).toHaveText(['Not allowed','Allowed']);
+  await page.getByRole('button',{name:'Appearance',exact:true}).click();
+  await page.getByRole('combobox',{name:'Display language',exact:true}).selectOption('zh');
+  await page.getByRole('button',{name:'翻译与快捷键',exact:true}).click();
+  const recovery=page.locator('details.permission-recovery');
+  await expect(recovery).toBeVisible();
+  await expect.poll(()=>recovery.evaluate((el:HTMLDetailsElement)=>el.open)).toBe(false);
+  await expect(recovery.locator('summary')).toHaveText('更新后仍未授权？');
+  await recovery.locator('summary').click();
+  const steps=recovery.locator('ol > li');
+  await expect(steps).toHaveCount(4);
+  await expect(steps.nth(0)).toContainText(/移除|删除/);
+  await expect(steps.nth(0)).toContainText('−');
+  await expect(steps.nth(1)).toContainText(/添加|加入/);
+  await expect(steps.nth(1)).toContainText(/[+＋]/);
+  await expect(steps.nth(2)).toContainText(/启用|开启|打开/);
+  await expect(steps.nth(2)).toContainText(/退出.*重新|Quit.*Reopen/);
+  await expect(steps.nth(3)).toContainText('刷新');
+  await page.locator('.permission-core').screenshot({path:'artifacts/previews/2026-10-16-permission-recovery-zh.png'});
+  expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.cmd==='request_permission'))).toEqual([]);
+});
+
+
+test('permission recovery stays readable in narrow and dark settings without covering the footer',async({page})=>{
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.permissions={accessibility:false,screen:false};window.dispatchEvent(new Event('focus'));});
+  await expect(page.locator('.permission-state')).toHaveText(['Not allowed','Not allowed']);
+  for(const theme of ['light','dark']){
+    await page.getByRole('button',{name:'Appearance',exact:true}).click();
+    await page.getByRole('combobox',{name:'Theme',exact:true}).selectOption(theme);
+    await page.getByRole('button',{name:'Translation',exact:true}).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme',theme);
+    const recovery=page.locator('details.permission-recovery');
+    if(!await recovery.evaluate((el:HTMLDetailsElement)=>el.open))await recovery.locator('summary').click();
+    for(const width of [1100,620]){
+      await page.setViewportSize({width,height:820});
+      await page.locator('.settings-content').evaluate(el=>el.scrollTop=el.scrollHeight);
+      await expect(recovery.locator('ol > li').last()).toBeInViewport();
+      await expect(page.getByRole('button',{name:'Refresh status',exact:true})).toBeInViewport();
+      await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeInViewport();
+      const layout=await page.evaluate(()=>{
+        const guide=document.querySelector('details.permission-recovery')!,content=document.querySelector('.settings-content')!,footer=document.querySelector('.settings-actions')!,refresh=document.querySelector('.permission-refresh')!;
+        return {overflow:document.documentElement.scrollWidth>innerWidth,guideOverflow:guide.scrollWidth>guide.clientWidth,contentBottom:content.getBoundingClientRect().bottom,footerTop:footer.getBoundingClientRect().top,footerBottom:footer.getBoundingClientRect().bottom,refreshBottom:refresh.getBoundingClientRect().bottom,height:innerHeight};
+      });
+      expect(layout.overflow).toBe(false);expect(layout.guideOverflow).toBe(false);
+      expect(layout.contentBottom).toBeLessThanOrEqual(layout.footerTop);
+      expect(layout.refreshBottom).toBeLessThanOrEqual(layout.footerTop);
+      expect(layout.footerBottom).toBeLessThanOrEqual(layout.height);
+      await page.screenshot({path:`artifacts/previews/2026-10-16-permission-recovery-${width}-${theme}.png`});
+    }
+  }
+});

@@ -14,6 +14,9 @@
     type Wire,
     type Bootstrap,
     type Settings,
+    type VocabularyCandidate,
+    type VocabularyPreview,
+    type TranslationHighlight,
   } from "./types";
   import {
     localeFor,
@@ -120,11 +123,103 @@
         (waiting || changed) &&
         !canStart),
   );
-  const hasVocabulary = $derived(
-    showResult &&
-      current?.status === "completed" &&
-      !!current.vocabulary?.length,
+  const candidateKey = (word: string) =>
+    word.trim().replace(/\s+/gu, " ").toLowerCase();
+  let manualCandidates = $state<VocabularyCandidate[]>([]);
+  let candidateDetails = $state<Record<string, VocabularyCandidate>>({});
+  let activeWord = $state("");
+  let selectionHighlights = $state<TranslationHighlight[]>([]);
+  let highlightTranslation = $state("");
+  let previewSequence = 0;
+  let previewTimer: ReturnType<typeof setTimeout> | undefined;
+  let selectionScope = "";
+  let lastSelection = "";
+  type SourceSelection = {
+    word: string;
+    sourceText: string;
+    selectionStart: number;
+    selectionEnd: number;
+    taskId: string | null;
+    attempt: number | null;
+  };
+  let selectedRequest = $state<SourceSelection | null>(null);
+  let previewContextIdentity = "";
+  const previewContext = $derived(
+    JSON.stringify([
+      current?.status,
+      current?.vocabulary_state,
+      current?.vocabulary ?? [],
+    ]),
   );
+  const previewCache = new Map<string, VocabularyPreview>();
+  const visibleCandidates = $derived.by(() => {
+    const automatic =
+      showResult && current?.status === "completed"
+        ? (current.vocabulary ?? [])
+        : [];
+    const seen = new Set<string>();
+    return [...manualCandidates, ...automatic]
+      .filter((candidate) => {
+        const key = candidateKey(candidate.word);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map(
+        (candidate) =>
+          candidateDetails[candidateKey(candidate.word)] ?? candidate,
+      );
+  });
+  const hasVocabulary = $derived(
+    !current?.sensitive && visibleCandidates.length > 0,
+  );
+  const activeHighlights = $derived(
+    !changed && current?.translation === highlightTranslation
+      ? selectionHighlights
+      : [],
+  );
+  $effect(() => {
+    const scope = `${current?.id ?? "draft"}:${current?.attempt ?? 0}:${draft}`;
+    untrack(() => {
+      if (scope !== selectionScope) {
+        selectionScope = scope;
+        previewSequence++;
+        clearTimeout(previewTimer);
+        lastSelection = "";
+        previewCache.clear();
+        selectedRequest = null;
+        manualCandidates = [];
+        candidateDetails = {};
+        activeWord = "";
+        selectionHighlights = [];
+        highlightTranslation = "";
+      }
+    });
+  });
+  $effect(() => {
+    const context = previewContext;
+    untrack(() => {
+      if (context === previewContextIdentity) return;
+      previewContextIdentity = context;
+      lastSelection = "";
+      previewCache.clear();
+      candidateDetails = {};
+      selectionHighlights = [];
+      if (selectedRequest?.sourceText === draft) {
+        const request = {
+          ...selectedRequest,
+          taskId:
+            !changed && current?.status === "completed" ? current.id : null,
+          attempt:
+            !changed && current?.status === "completed"
+              ? current.attempt
+              : null,
+        };
+        selectedRequest = request;
+        requestPreview(request, false);
+      }
+    });
+  });
   $effect(() => {
     const width = hasVocabulary ? (vocabularyOpen ? 220 : 40) : 0;
     const revision = ++sidebarRevision;
@@ -193,7 +288,7 @@
     const version = `${current?.id}:${current?.original_text}:${current?.edited_text}`;
     if (version !== sourceVersion) {
       sourceVersion = version;
-      selectedWord = null;
+      clearSelection();
       draft = current?.edited_text ?? current?.original_text ?? "";
     }
     if (current?.id !== draftId) {
@@ -211,23 +306,28 @@
         );
     }
   });
-  let selectedWord = $state<{
-    word: string;
-    sourceText: string;
-    selectionStart: number;
-    selectionEnd: number;
-    taskId: string | null;
-    attempt: number | null;
-  } | null>(null);
-  let collectingWord = $state(false);
+  function clearSelection() {
+    selectedRequest = null;
+    activeWord = "";
+    selectionHighlights = [];
+    highlightTranslation = "";
+    lastSelection = "";
+    previewSequence++;
+    clearTimeout(previewTimer);
+  }
   function captureSelection(event: Event) {
     const el = event.currentTarget as HTMLTextAreaElement;
     const word = el.value.slice(el.selectionStart, el.selectionEnd).trim();
-    if (!word || word.length > 128 || word.split(/\s+/).length > 3) {
-      selectedWord = null;
+    if (
+      !word ||
+      word.length > 128 ||
+      word.split(/\s+/u).length > 3 ||
+      !/\p{L}/u.test(word)
+    ) {
+      clearSelection();
       return;
     }
-    selectedWord = {
+    const request = {
       word,
       sourceText: el.value,
       selectionStart: el.selectionStart,
@@ -236,19 +336,94 @@
       attempt:
         !changed && current?.status === "completed" ? current.attempt : null,
     };
+    selectedRequest = request;
+    requestPreview(request, true);
   }
-  async function collectSelection() {
-    if (!selectedWord || collectingWord) return;
-    collectingWord = true;
-    await action("vocabulary_manual", {
-      sourceText: selectedWord.sourceText,
-      selectionStart: selectedWord.selectionStart,
-      selectionEnd: selectedWord.selectionEnd,
-      taskId: selectedWord.taskId,
-      attempt: selectedWord.attempt,
-    });
-    collectingWord = false;
-    if (!error) selectedWord = null;
+  function requestPreview(request: SourceSelection, reveal: boolean) {
+    error = "";
+    const translation = current?.translation ?? "";
+    const key = JSON.stringify([
+      selectionScope,
+      request.selectionStart,
+      request.selectionEnd,
+      translation,
+      previewContext,
+    ]);
+    if (key === lastSelection) return;
+    lastSelection = key;
+    const sequence = ++previewSequence;
+    clearTimeout(previewTimer);
+    selectionHighlights = [];
+    activeWord = "";
+    const scope = selectionScope;
+    const cached = previewCache.get(key);
+    if (cached) {
+      applyPreview(cached, translation, reveal);
+      return;
+    }
+    previewTimer = setTimeout(async () => {
+      try {
+        const result = await invoke<VocabularyPreview>("vocabulary_preview", {
+          sourceText: request.sourceText,
+          selectionStart: request.selectionStart,
+          selectionEnd: request.selectionEnd,
+          taskId: request.taskId,
+          attempt: request.attempt,
+        });
+        if (
+          sequence !== previewSequence ||
+          scope !== selectionScope ||
+          !result?.candidate
+        )
+          return;
+        if (previewCache.size >= 100)
+          previewCache.delete(previewCache.keys().next().value!);
+        previewCache.set(key, result);
+        applyPreview(result, translation, reveal);
+      } catch (e) {
+        if (sequence === previewSequence && scope === selectionScope)
+          error = String(e);
+      }
+    }, 120);
+  }
+  function applyPreview(
+    result: VocabularyPreview,
+    translation: string,
+    reveal: boolean,
+  ) {
+    error = "";
+    const candidate = result.candidate;
+    const wordKey = candidateKey(candidate.word);
+    if (
+      !visibleCandidates.some((item) => candidateKey(item.word) === wordKey)
+    ) {
+      manualCandidates = [candidate, ...manualCandidates];
+    }
+    candidateDetails = { ...candidateDetails, [wordKey]: candidate };
+    activeWord = wordKey;
+    selectionHighlights = result.translation_highlights ?? [];
+    highlightTranslation = translation;
+    if (reveal) {
+      vocabularyOpen = true;
+      vocabularyAutoShown = true;
+    }
+  }
+  function selectWordAtCaret(event: MouseEvent) {
+    if (event.button !== 0) return;
+    const el = event.currentTarget as HTMLTextAreaElement;
+    if (el.selectionStart === el.selectionEnd) {
+      const caret = el.selectionStart;
+      for (const match of el.value.matchAll(
+        /[\p{L}\p{N}]+(?:['’_-][\p{L}\p{N}]+)*/gu,
+      )) {
+        const start = match.index!;
+        if (start <= caret && caret <= start + match[0].length) {
+          el.setSelectionRange(start, start + match[0].length);
+          break;
+        }
+      }
+    }
+    captureSelection(event);
   }
   let resolvingSensitive = $state(false);
   async function resolveSensitive(allow: boolean) {
@@ -470,6 +645,8 @@
     })();
     return () => {
       disposed = true;
+      previewSequence++;
+      clearTimeout(previewTimer);
       clearInterval(timer);
       cleanup.forEach((off) => off());
       if (subscription)
@@ -485,8 +662,9 @@
   class:with-vocabulary={sidebarWidth > 0}
   style={`--reading-size:${settings.font_size}px;--vocabulary-width:${sidebarWidth}px`}
 >
-  {#if hasVocabulary && sidebarWidth > 0 && current}{#key `${current.id}:${current.attempt}`}<VocabularySidebar
-        candidates={current.vocabulary || []}
+  {#if hasVocabulary && sidebarWidth > 0}{#key `${current?.id ?? "draft"}:${current?.attempt ?? 0}`}<VocabularySidebar
+        candidates={visibleCandidates}
+        {activeWord}
         {locale}
         open={sidebarWidth > 40}
         onToggle={() => (vocabularyOpen = !vocabularyOpen)}
@@ -618,20 +796,13 @@
               bind:value={draft}
               readonly={!!current && active(current)}
               onselect={captureSelection}
-              oninput={() => (selectedWord = null)}
+              onmouseup={selectWordAtCaret}
+              oninput={clearSelection}
               placeholder={t(
                 "选中文字或截取屏幕区域…",
                 "Select text or capture a screen region…",
               )}
               spellcheck="false"></textarea>
-            {#if selectedWord}<div class="word-selection-bubble">
-                <button disabled={collectingWord} onclick={collectSelection}
-                  ><Icon name="plus" size={14} />{t(
-                    "加入生词本",
-                    "Add to vocabulary",
-                  )}</button
-                ><span>{selectedWord.word}</span>
-              </div>{/if}
           {/if}
           {#if current?.image_error}<p class="inline-feedback">
               {errorText(current.image_error, locale)}
@@ -745,6 +916,7 @@
                 identity={`${current.id}:${current.attempt}`}
                 streaming={active(current)}
                 plain={localDictionary}
+                highlights={activeHighlights}
               />
             {:else if submitting || (current && active(current))}<div
                 class="translation-skeleton"

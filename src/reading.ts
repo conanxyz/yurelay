@@ -108,3 +108,83 @@ export function translationPlainText(text: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+export type TextHighlight = { start: number; end: number };
+export function highlightedText(text: string, ranges: TextHighlight[]) {
+  const valid = ranges
+    .filter(
+      (range) =>
+        Number.isInteger(range.start) &&
+        Number.isInteger(range.end) &&
+        range.start >= 0 &&
+        range.end > range.start &&
+        range.end <= text.length,
+    )
+    .sort((a, b) => a.start - b.start);
+  const parts: { text: string; highlighted: boolean }[] = [];
+  let end = 0;
+  for (const range of valid) {
+    if (range.start < end) continue;
+    if (range.start > end)
+      parts.push({ text: text.slice(end, range.start), highlighted: false });
+    parts.push({ text: text.slice(range.start, range.end), highlighted: true });
+    end = range.end;
+  }
+  if (end < text.length)
+    parts.push({ text: text.slice(end), highlighted: false });
+  return parts;
+}
+
+// Map trusted raw-text highlights onto sanitized Markdown text nodes. No model
+// HTML is added, and emphasis/links remain intact even when a match spans nodes.
+export function highlightedReading(
+  blocks: string[],
+  raw: string,
+  ranges: TextHighlight[],
+): string[] {
+  if (!ranges.length || !blocks.length) return blocks;
+  const roots = blocks.map((block) => {
+    const element = document.createElement("div");
+    element.innerHTML = block;
+    return element;
+  });
+  const nodes: { node: Text; start: number; end: number }[] = [];
+  let visible = "";
+  for (const root of roots) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const start = visible.length;
+      visible += node.textContent ?? "";
+      nodes.push({ node: node as Text, start, end: visible.length });
+    }
+  }
+  const matches: TextHighlight[] = [];
+  for (const part of highlightedText(raw, ranges).filter(
+    (part) => part.highlighted,
+  )) {
+    const start = visible.indexOf(part.text);
+    if (start >= 0 && start === visible.lastIndexOf(part.text))
+      matches.push({ start, end: start + part.text.length });
+  }
+  for (const entry of nodes) {
+    const local = matches
+      .filter((range) => range.start < entry.end && range.end > entry.start)
+      .map((range) => ({
+        start: Math.max(0, range.start - entry.start),
+        end: Math.min(entry.end, range.end) - entry.start,
+      }));
+    if (!local.length) continue;
+    const fragment = document.createDocumentFragment();
+    for (const part of highlightedText(entry.node.data, local)) {
+      if (part.highlighted) {
+        const mark = document.createElement("mark");
+        mark.className = "translation-word-highlight";
+        mark.textContent = part.text;
+        fragment.append(mark);
+      } else fragment.append(document.createTextNode(part.text));
+    }
+    entry.node.replaceWith(fragment);
+  }
+  return roots.map((root) => root.innerHTML);
+}

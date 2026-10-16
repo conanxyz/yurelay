@@ -3,6 +3,11 @@
 use serde::Serialize;
 use tokio::sync::mpsc;
 
+mod pronunciation;
+pub use pronunciation::{
+    DictionaryDetails, SpeechVoice, lookup_dictionary_details, speak_word, speech_voices,
+};
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Permissions {
     pub accessibility: bool,
