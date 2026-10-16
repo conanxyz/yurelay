@@ -91,6 +91,9 @@ Notices: 954f335b8baf5e1a, 14435fbcd271e278
 block-buffer 0.10.4 | MIT OR Apache-2.0 | https://crates.io/crates/block-buffer/0.10.4
 Notices: e8541ea93f027a6c, 5ff5253f2cb9347c
 
+block-buffer 0.12.1 | MIT OR Apache-2.0 | https://crates.io/crates/block-buffer/0.12.1
+Notices: e8541ea93f027a6c, 775a3e20a9af7160
+
 block2 0.6.2 | MIT | https://crates.io/crates/block2/0.6.2
 Notices: Upstream package supplies license metadata only; see source URL above
 
@@ -169,6 +172,9 @@ Notices: a8d7d8157c7166af
 concurrent-queue 2.5.0 | Apache-2.0 OR MIT | https://crates.io/crates/concurrent-queue/2.5.0
 Notices: 954f335b8baf5e1a, 30fefc3a7d6a0041
 
+const-oid 0.10.2 | Apache-2.0 OR MIT | https://crates.io/crates/const-oid/0.10.2
+Notices: e8541ea93f027a6c, ea753cf1e3ec3e02
+
 cookie 0.18.2 | MIT OR Apache-2.0 | https://crates.io/crates/cookie/0.18.2
 Notices: c859d211879e327d, 47c8d25246e6cb7b
 
@@ -201,6 +207,9 @@ Notices: 954f335b8baf5e1a, 5a7d13c6710cdec2
 
 crypto-common 0.1.7 | MIT OR Apache-2.0 | https://crates.io/crates/crypto-common/0.1.7
 Notices: e8541ea93f027a6c, 692b1604961dd580
+
+crypto-common 0.2.2 | MIT OR Apache-2.0 | https://crates.io/crates/crypto-common/0.2.2
+Notices: e8541ea93f027a6c, dec912e37f888cf7
 
 cssparser 0.37.0 | MPL-2.0 | https://crates.io/crates/cssparser/0.37.0
 Notices: 4b89d4518bd135ab
@@ -243,6 +252,9 @@ Notices: 4a4d43f3f90d1d8b
 
 digest 0.10.7 | MIT OR Apache-2.0 | https://crates.io/crates/digest/0.10.7
 Notices: e8541ea93f027a6c, 9c5127ab88e8f55b
+
+digest 0.11.3 | MIT OR Apache-2.0 | https://crates.io/crates/digest/0.11.3
+Notices: e8541ea93f027a6c, c8d7f4fd612a2da8
 
 dirs 7.0.0 | MIT OR Apache-2.0 | https://crates.io/crates/dirs/7.0.0
 Notices: 74f1c9127a52df2c, f25a5b606859d4fa
@@ -489,6 +501,9 @@ Notices: 57f841bc9767b5b8
 
 httparse 1.10.1 | MIT OR Apache-2.0 | https://crates.io/crates/httparse/1.10.1
 Notices: 954f335b8baf5e1a, 8502803cebb30a72
+
+hybrid-array 0.4.15 | MIT OR Apache-2.0 | https://crates.io/crates/hybrid-array/0.4.15
+Notices: e8541ea93f027a6c, a1aa15c3898d79b7
 
 hyper 1.12.0 | MIT | https://crates.io/crates/hyper/1.12.0
 Notices: 05f344491a7d18e1
@@ -1020,6 +1035,9 @@ Notices: 954f335b8baf5e1a, 30fefc3a7d6a0041
 
 sha2 0.10.9 | MIT OR Apache-2.0 | https://crates.io/crates/sha2/0.10.9
 Notices: e8541ea93f027a6c, 4031faf6212ee744
+
+sha2 0.11.1 | MIT OR Apache-2.0 | https://crates.io/crates/sha2/0.11.1
+Notices: e8541ea93f027a6c, 535a6aa345e8622e
 
 shlex 2.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/shlex/2.0.1
 Notices: a759ce38c686a204, cc5ba5589dfb7bbc
@@ -6764,6 +6782,39 @@ DEALINGS IN THE SOFTWARE.
 
 
 ========================================================================
+NOTICE 535a6aa345e8622e
+========================================================================
+Copyright (c) 2016-2026 The RustCrypto Project Developers
+Copyright (c) 2016 Artyom Pavlov
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2006-2009 Graydon Hoare
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+========================================================================
 NOTICE 537db907352420ce
 ========================================================================
 Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
@@ -8733,6 +8784,36 @@ Except as otherwise noted (below and/or in individual files), Rust is
 licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
 <http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
 <LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.
+
+
+========================================================================
+NOTICE 775a3e20a9af7160
+========================================================================
+Copyright (c) 2018-2025 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 
 
 ========================================================================
@@ -12406,6 +12487,36 @@ DEALINGS IN THE SOFTWARE.
 
 
 ========================================================================
+NOTICE a1aa15c3898d79b7
+========================================================================
+Copyright (c) 2022-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+========================================================================
 NOTICE a1fff344297822d3
 ========================================================================
 // Copyright 2015-2016 Brian Smith.
@@ -14335,6 +14446,37 @@ limitations under the License.
 
 
 ========================================================================
+NOTICE c8d7f4fd612a2da8
+========================================================================
+Copyright (c) 2017-2025 RustCrypto Developers
+Copyright (c) 2017 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+========================================================================
 NOTICE c9027c55c9307b0c
 ========================================================================
 Copyrights in the Rand project are retained by their contributors. No
@@ -15855,6 +15997,36 @@ SOFTWARE.
 NOTICE de561d2b653aaad4
 ========================================================================
 Copyright (c) 2017-2023 Maik Klein, Maja Kądziołka
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+========================================================================
+NOTICE dec912e37f888cf7
+========================================================================
+Copyright (c) 2021-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
