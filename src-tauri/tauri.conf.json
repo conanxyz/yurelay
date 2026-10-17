@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Glossa",
+  "productName": "Yurelay",
   "version": "0.1.0",
   "identifier": "com.autodict.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Glossa",
+        "title": "Yurelay",
         "width": 460,
         "height": 300,
         "minWidth": 360,
@@ -25,7 +25,7 @@
       },
       {
         "label": "settings",
-        "title": "Glossa \u8bbe\u7f6e",
+        "title": "Yurelay \u8bbe\u7f6e",
         "url": "index.html?window=settings",
         "width": 1100,
         "height": 800,
@@ -36,7 +36,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' glossa-image: http://glossa-image.localhost data:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' yurelay-image: http://yurelay-image.localhost data:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {
@@ -58,7 +58,7 @@
     },
     "license": "GPL-3.0-only",
     "licenseFile": "../LICENSE",
-    "copyright": "Copyright (c) 2026 Glossa Contributors",
+    "copyright": "Copyright (c) 2026 Yurelay Contributors",
     "resources": {
       "../LICENSE": "licenses/LICENSE",
       "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",

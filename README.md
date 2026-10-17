@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="src/assets/glossa-logo.png" width="88" alt="Glossa" />
-  <h1>Glossa</h1>
+  <img src="src/assets/yurelay-logo.png" width="88" alt="Yurelay" />
+  <h1>Yurelay</h1>
   <p><strong>Your words. Your pace.</strong><br />Lightweight selection and screenshot translation for macOS, with vocabulary grounded in context.</p>
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-222222?logo=apple)
@@ -11,7 +11,7 @@
 </div>
 
 Understand what you are reading, and keep the expressions worth remembering.
-Glossa brings text capture, translation and contextual vocabulary into one compact window.
+Yurelay brings text capture, translation and contextual vocabulary into one compact window.
 
 ![Screenshot placeholders: translation, reading, vocabulary sidebar and settings](docs/images/preview.svg)
 
@@ -67,10 +67,10 @@ tiers depend on each provider's current pricing, availability and account limits
 
 ## 🚀 Install and set up
 
-### 1. Install Glossa
+### 1. Install Yurelay
 
 Download a `.dmg` from [Releases](https://github.com/conanxyz/glossa/releases) and drag
-Glossa into Applications. Choose `aarch64` for Apple Silicon or `x64` / `x86_64` for Intel.
+Yurelay into Applications. Choose `aarch64` for Apple Silicon or `x64` / `x86_64` for Intel.
 Requires **macOS 14 or newer**. If no package is available yet, build from source below.
 
 <details>
@@ -83,7 +83,7 @@ Only after confirming the official Release source and matching checksum, a
 quarantine-related warning can be addressed with:
 
 ```sh
-sudo xattr -rd com.apple.quarantine /Applications/Glossa.app
+sudo xattr -rd com.apple.quarantine /Applications/Yurelay.app
 ```
 
 This removes quarantine; it does not provide Apple notarization. Do not use it for
@@ -94,13 +94,13 @@ untrusted downloads or files whose checksum does not match.
 ### 2. Allow text and screen capture
 
 In System Settings → Privacy & Security, enable **Accessibility** for selected-text
-capture and **Screen Recording** for screenshot OCR. Glossa's Translation settings
+capture and **Screen Recording** for screenshot OCR. Yurelay's Translation settings
 can check permissions and open the appropriate system page. Newer macOS versions
 may label Accessibility access as “Device Control and Data Access.”
 
 ### 3. Choose a service
 
-Open the Glossa menu bar icon → **Settings… → Services**.
+Open the Yurelay menu bar icon → **Settings… → Services**.
 
 - **Local lookup:** choose System dictionary and set it as default. No API key needed.
 - **Passage translation:** choose Zhipu or another provider, enter your API key,
@@ -114,7 +114,7 @@ Connection tests send fixed sample text and may incur a small API charge.
 
 | Action | Shortcut / control | What it does |
 | :--- | :--- | :--- |
-| Capture selected text | `Option + D` | Bring text from another application into Glossa |
+| Capture selected text | `Option + D` | Bring text from another application into Yurelay |
 | Screenshot OCR | `Option + S` | Select a region and recognize its text locally |
 | Translate | `X` or the arrow | Start translation after reviewing; while editing text, click the arrow because `X` types normally |
 | Reading / plain text | Translation view switch | Change presentation without another request |
@@ -148,10 +148,10 @@ npm run bundle:mac
 
 ## 📄 License and acknowledgements
 
-Copyright © 2026 Glossa Contributors. Licensed under **GNU GPL v3.0 only
+Copyright © 2026 Yurelay Contributors. Licensed under **GNU GPL v3.0 only
 (`GPL-3.0-only`)**; see [LICENSE](LICENSE).
 
-Glossa draws on the product and interaction design of
+Yurelay draws on the product and interaction design of
 [Easydict](https://github.com/tisfeng/Easydict) and [Bob](https://github.com/ripperhe/Bob).
 Easydict's implementations of text selection, screenshot capture, OCR and translation
 provider integrations were also studied during development. Thank you to these

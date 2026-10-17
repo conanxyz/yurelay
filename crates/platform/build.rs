@@ -5,7 +5,7 @@ fn main() {
             .flag("-fobjc-arc")
             .flag("-fblocks")
             .flag("-mmacosx-version-min=14.0")
-            .compile("glossa_native");
+            .compile("yurelay_native");
         for framework in [
             "AppKit",
             "Foundation",

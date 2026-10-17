@@ -1,5 +1,5 @@
 [package]
-name = "glossa-platform"
+name = "yurelay-platform"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,5 +1,5 @@
 [package]
-name = "glossa"
+name = "yurelay"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,8 @@ license.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-glossa-core = { path = "../crates/core" }
-glossa-platform = { path = "../crates/platform" }
+yurelay-core = { path = "../crates/core" }
+yurelay-platform = { path = "../crates/platform" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 serde.workspace = true

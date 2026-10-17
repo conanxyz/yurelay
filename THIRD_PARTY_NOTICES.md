@@ -1,6 +1,6 @@
 # Third-party notices
 
-Glossa's own code is GPL-3.0-only. This does not relicense dependencies or provider
+Yurelay's own code is GPL-3.0-only. This does not relicense dependencies or provider
 trademarks. Keep this document and `licenses/` with redistributed bundles.
 
 | Component | License / source |
@@ -14,7 +14,7 @@ trademarks. Keep this document and `licenses/` with redistributed bundles.
 | English BIP-39 word list | MIT; [BIP-39 specification and authors](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki), [word list](https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt); used solely for local detection |
 
 BIP-39 authors: Marek Palatinus, Pavol Rusnak, Aaron Voisine and Sean Bowe.
-Glossa does not implement wallet generation. The bundled list remains attributed
+Yurelay does not implement wallet generation. The bundled list remains attributed
 to its upstream authors.
 
 Generated inventories include versions, declared licenses, source links and
@@ -25,9 +25,10 @@ or redistributing those dependencies. Regenerate with
 `python3 scripts/third-party-notices.py` after `npm ci` and Rust dependency fetch.
 
 Provider names and marks identify supported services and do not imply endorsement.
-The project logo is the maintainer-supplied Glossa asset. Easydict is a local
+The project logo is an AI-assisted Y monogram adapted, with maintainer approval,
+from the maintainer-supplied artwork. Easydict is a local
 read-only reference, excluded from Git; its source and assets are not distributed.
 
 GSAP was removed before the initial commit because its custom license carries
-use restrictions. Glossa's entrance effects now use native Web Animations and
+use restrictions. Yurelay's entrance effects now use native Web Animations and
 IntersectionObserver, with reduced-motion support.

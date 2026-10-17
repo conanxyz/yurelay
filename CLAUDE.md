@@ -1,6 +1,6 @@
-# Glossa engineering contract
+# Yurelay engineering contract
 
-Glossa is a macOS 14+ Tauri 2 / Rust / Svelte 5 application. Read this file and
+Yurelay is a macOS 14+ Tauri 2 / Rust / Svelte 5 application. Read this file and
 CONTRIBUTING.md before editing. AGENTS.md points to this same contract.
 
 ## Architecture boundaries

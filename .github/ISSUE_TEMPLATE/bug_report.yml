@@ -8,7 +8,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Glossa version / commit
+      label: Yurelay version / commit
     validations:
       required: true
   - type: input

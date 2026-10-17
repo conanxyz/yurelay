@@ -1,5 +1,5 @@
 [package]
-name = "glossa-core"
+name = "yurelay-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,4 +24,4 @@ regex = "1"
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-glossa-platform = { path = "../platform" }
+yurelay-platform = { path = "../platform" }

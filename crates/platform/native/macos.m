@@ -225,7 +225,7 @@ void ad_select_text_for_pid(int target_pid, void *context, ADCallback callback) 
     ADSession *s = ADMakeSession(context, callback);
     dispatch_async(dispatch_get_main_queue(), ^{
         if (ADSelectionBusy) { [s text:3 value:@"正在读取选中文字，请稍候。"] ; [s end]; return; }
-        if (!AXIsProcessTrusted()) { [s text:3 value:@"请先在设置中开启 Glossa 的辅助功能权限。"] ; [s end]; return; }
+        if (!AXIsProcessTrusted()) { [s text:3 value:@"请先在设置中开启 Yurelay 的辅助功能权限。"] ; [s end]; return; }
         pid_t pid = target_pid;
         if (pid <= 0) { [s text:3 value:@"没有可读取的前台应用，请重新选中文字。"] ; [s end]; return; }
         if (pid == getpid()) { [s text:3 value:@"请在其他应用中选中文字，再按划词快捷键。"] ; [s end]; return; }
@@ -352,7 +352,7 @@ static NSString *ADOCRImage(CGImageRef image, NSError **error) {
 static dispatch_queue_t ADOCRQueue(void) {
     static dispatch_queue_t queue;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ queue = dispatch_queue_create("com.glossa.ocr", DISPATCH_QUEUE_SERIAL); });
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("com.yurelay.ocr", DISPATCH_QUEUE_SERIAL); });
     return queue;
 }
 
@@ -411,7 +411,7 @@ void ad_capture(void *context, ADCallback callback) {
     ADSession *session = ADMakeSession(context, callback);
     dispatch_async(dispatch_get_main_queue(), ^{
         if (ADCaptureActive) { [session text:3 value:@"正在截图，请完成或取消当前选区。"] ; [session end]; return; }
-        if (!CGPreflightScreenCaptureAccess()) { [session text:3 value:@"请先在设置中开启 Glossa 的屏幕录制权限。"] ; [session end]; return; }
+        if (!CGPreflightScreenCaptureAccess()) { [session text:3 value:@"请先在设置中开启 Yurelay 的屏幕录制权限。"] ; [session end]; return; }
         ADCaptureController *controller = [ADCaptureController new];
         controller.session = session; controller.windows = [NSMutableArray new];
         controller.previousApp = NSWorkspace.sharedWorkspace.frontmostApplication;

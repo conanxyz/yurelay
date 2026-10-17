@@ -66,7 +66,7 @@ impl Storage {
         let (tx, mut rx) = mpsc::channel::<Job>(32);
         let (ready, initialized) = oneshot::channel();
         std::thread::Builder::new()
-            .name("glossa-storage".into())
+            .name("yurelay-storage".into())
             .spawn(move || match Database::open(root, clock) {
                 Ok(mut db) => {
                     let _ = ready.send(Ok(()));

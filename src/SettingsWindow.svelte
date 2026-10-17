@@ -44,7 +44,7 @@
   let serviceQuery = $state("");
   import HistoryPanel from "./HistoryPanel.svelte";
   import Icon from "./Icons.svelte";
-  import logo from "./assets/glossa-logo.png";
+  import logo from "./assets/yurelay-logo.png";
   import {
     servicePresets,
     presetFor,
@@ -445,7 +445,7 @@
         alt=""
       />
       <div>
-        <strong class="block text-base tracking-tight">Glossa</strong><span
+        <strong class="block text-base tracking-tight">Yurelay</strong><span
           class="subtle">{t("设置", "Settings")}</span
         >
       </div>
@@ -470,7 +470,7 @@
     <div class="settings-sidebar-footer">
       <span class="settings-tagline"
         >{t("你的语言，你的节奏。", "Your words. Your pace.")}</span
-      ><span class="settings-version">Glossa 0.1</span>
+      ><span class="settings-version">Yurelay 0.1</span>
     </div>
   </aside>
   <div class="flex min-h-0 min-w-0 flex-col overflow-hidden">
@@ -706,26 +706,26 @@
                         <summary
                           >{t(
                             "更新后仍未授权？",
-                            "Updated Glossa but still not allowed?",
+                            "Updated Yurelay but still not allowed?",
                           )}</summary
                         >
                         <p>
                           {t(
-                            "如果系统列表里的 Glossa 已开启，但这里仍显示未授权，仅点“＋”可能仍保留旧记录。请在对应权限列表中重新添加：",
-                            "If Glossa is switched on in System Settings but still shows Not allowed here, Add (+) may leave the old entry unchanged. Re-add it in the affected permission list:",
+                            "如果系统列表里的 Yurelay 已开启，但这里仍显示未授权，仅点“＋”可能仍保留旧记录。请在对应权限列表中重新添加：",
+                            "If Yurelay is switched on in System Settings but still shows Not allowed here, Add (+) may leave the old entry unchanged. Re-add it in the affected permission list:",
                           )}
                         </p>
                         <ol>
                           <li>
                             {t(
-                              "选中旧的 Glossa 条目，点击“−”移除。",
-                              "Select the old Glossa entry and click Remove (−).",
+                              "选中旧的 Yurelay 条目，点击“−”移除。",
+                              "Select the old Yurelay entry and click Remove (−).",
                             )}
                           </li>
                           <li>
                             {t(
-                              "点击“＋”，重新添加当前正在使用的 Glossa.app（通常在“应用程序”中）。",
-                              "Click Add (＋) and select the current Glossa.app, usually in Applications.",
+                              "点击“＋”，重新添加当前正在使用的 Yurelay.app（通常在“应用程序”中）。",
+                              "Click Add (＋) and select the current Yurelay.app, usually in Applications.",
                             )}
                           </li>
                           <li>
@@ -736,8 +736,8 @@
                           </li>
                           <li>
                             {t(
-                              "回到 Glossa，点击“刷新状态”确认结果。",
-                              "Return to Glossa and click Refresh status to confirm.",
+                              "回到 Yurelay，点击“刷新状态”确认结果。",
+                              "Return to Yurelay and click Refresh status to confirm.",
                             )}
                           </li>
                         </ol>
@@ -1210,8 +1210,8 @@
                           rows="12"></textarea>
                         <small class="subtle"
                           >{t(
-                            "支持 {{target_lang}}；Glossa 本地选择模式，并保留六字段生词协议。",
-                            "Supports {{target_lang}}. Glossa selects the mode locally and preserves the six-field vocabulary protocol.",
+                            "支持 {{target_lang}}；Yurelay 本地选择模式，并保留六字段生词协议。",
+                            "Supports {{target_lang}}. Yurelay selects the mode locally and preserves the six-field vocabulary protocol.",
                           )}</small
                         >
                       </section>{/if}

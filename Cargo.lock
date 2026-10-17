@@ -1496,54 +1496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glossa"
-version = "0.1.0"
-dependencies = [
- "glossa-core",
- "glossa-platform",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-single-instance",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "glossa-core"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "glossa-platform",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-util",
- "url",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "glossa-platform"
-version = "0.1.0"
-dependencies = [
- "cc",
- "security-framework",
- "serde",
- "tokio",
-]
-
-[[package]]
 name = "gobject-sys"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5362,6 +5314,54 @@ dependencies = [
  "quote",
  "syn 3.0.9",
  "synstructure",
+]
+
+[[package]]
+name = "yurelay"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "yurelay-core",
+ "yurelay-platform",
+]
+
+[[package]]
+name = "yurelay-core"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "url",
+ "uuid",
+ "yurelay-platform",
+ "zeroize",
+]
+
+[[package]]
+name = "yurelay-platform"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "security-framework",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

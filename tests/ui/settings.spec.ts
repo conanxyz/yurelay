@@ -483,7 +483,7 @@ test('native entrance animations respect changes to reduced motion', async ({pag
 });
 
 
-test('permission recovery explains re-adding Glossa in order and trusts only refreshed permission status',async({page})=>{
+test('permission recovery explains re-adding Yurelay in order and trusts only refreshed permission status',async({page})=>{
   await settingsFixture(page);
   const recovery=page.locator('details.permission-recovery');
   await expect(recovery).toHaveCount(0);
@@ -494,15 +494,15 @@ test('permission recovery explains re-adding Glossa in order and trusts only ref
   await expect(recovery).toBeVisible();
   await expect.poll(()=>recovery.evaluate((el:HTMLDetailsElement)=>el.open)).toBe(false);
   const summary=recovery.locator('summary');
-  await expect(summary).toHaveText('Updated Glossa but still not allowed?');
+  await expect(summary).toHaveText('Updated Yurelay but still not allowed?');
   await summary.click();
   const steps=recovery.locator('ol > li');
   await expect(steps).toHaveCount(4);
   await expect(steps.nth(0)).toContainText(/remove/i);
-  await expect(steps.nth(0)).toContainText('Glossa');
+  await expect(steps.nth(0)).toContainText('Yurelay');
   await expect(steps.nth(0)).toContainText('−');
   await expect(steps.nth(1)).toContainText(/add/i);
-  await expect(steps.nth(1)).toContainText('Glossa');
+  await expect(steps.nth(1)).toContainText('Yurelay');
   await expect(steps.nth(1)).toContainText(/[+＋]/);
   await expect(steps.nth(2)).toContainText(/enable|turn on/i);
   await expect(steps.nth(2)).toContainText(/Quit.*Reopen/i);

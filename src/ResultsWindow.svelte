@@ -282,9 +282,9 @@
     return () => clearTimeout(timer);
   });
   let requiredPermission = $derived(
-    notice === "请先在设置中开启 Glossa 的屏幕录制权限。"
+    notice === "请先在设置中开启 Yurelay 的屏幕录制权限。"
       ? "screen"
-      : notice === "请先在设置中开启 Glossa 的辅助功能权限。"
+      : notice === "请先在设置中开启 Yurelay 的辅助功能权限。"
         ? "accessibility"
         : null,
   );
@@ -687,7 +687,7 @@
       />{/key}{/if}
   <div class="translation-main">
     <div class="window-chrome" onpointerdown={drag} role="presentation">
-      <span class="window-name">Glossa</span>
+      <span class="window-name">Yurelay</span>
       <div class="window-tools">
         <button
           class="icon-button"
@@ -777,12 +777,12 @@
               <p>
                 {current.source === "manual"
                   ? t(
-                      "Glossa 已在本地拦截该请求并隐藏您输入的原文，未发送至任何云端服务。",
-                      "Glossa blocked this request locally and hid your input. It has not been sent to any cloud service.",
+                      "Yurelay 已在本地拦截该请求并隐藏您输入的原文，未发送至任何云端服务。",
+                      "Yurelay blocked this request locally and hid your input. It has not been sent to any cloud service.",
                     )
                   : t(
-                      "为保护您的资产与隐私安全，Glossa 已在本地拦截该内容，未将其展示或发送至任何云端服务。",
-                      "Glossa blocked this content locally. It has not been displayed or sent to any cloud service.",
+                      "为保护您的资产与隐私安全，Yurelay 已在本地拦截该内容，未将其展示或发送至任何云端服务。",
+                      "Yurelay blocked this content locally. It has not been displayed or sent to any cloud service.",
                     )}
               </p>
               <div class="guard-actions">
@@ -805,7 +805,7 @@
             {#if current?.has_image}<details class="source-image">
                 <summary>{t("查看截图", "View screenshot")}</summary><img
                   use:imageEntrance
-                  src={convertFileSrc(current.id, "glossa-image")}
+                  src={convertFileSrc(current.id, "yurelay-image")}
                   alt={t("原始截图选区", "Original screenshot selection")}
                 />
               </details>{/if}

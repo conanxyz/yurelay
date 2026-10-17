@@ -297,7 +297,7 @@
           {#if current.has_image}<details class="history-image">
               <summary>{t("查看截图", "View screenshot")}</summary><img
                 use:imageEntrance
-                src={convertFileSrc(current.id, "glossa-image")}
+                src={convertFileSrc(current.id, "yurelay-image")}
                 alt={t("保存的截图选区", "Saved screenshot selection")}
               />
             </details>{/if}

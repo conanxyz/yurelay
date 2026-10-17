@@ -1,8 +1,3 @@
-use glossa_core::{
-    engine::{Credentials, Engine},
-    storage,
-    tasks::Status,
-};
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -16,20 +11,25 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut};
 use tokio::sync::{Notify, OnceCell};
 use tokio_util::sync::CancellationToken;
+use yurelay_core::{
+    engine::{Credentials, Engine},
+    storage,
+    tasks::Status,
+};
 
 pub struct PlatformDictionary;
-impl glossa_core::engine::LocalDictionary for PlatformDictionary {
+impl yurelay_core::engine::LocalDictionary for PlatformDictionary {
     fn lookup(&self, text: &str) -> Result<String, String> {
-        glossa_platform::lookup_dictionary(text)
+        yurelay_platform::lookup_dictionary(text)
     }
 }
 pub struct PlatformCredentials;
 impl Credentials for PlatformCredentials {
     fn read(&self, id: &str) -> Result<Option<String>, String> {
-        glossa_platform::read_credential(id)
+        yurelay_platform::read_credential(id)
     }
     fn write(&self, id: &str, value: Option<&str>) -> Result<(), String> {
-        glossa_platform::write_credential(id, value)
+        yurelay_platform::write_credential(id, value)
     }
 }
 
@@ -119,7 +119,7 @@ pub async fn engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                 let mut finished = HashSet::new();
                 loop {
                     match events.recv().await {
-                        Ok(glossa_core::tasks::Event::Changed { task }) => {
+                        Ok(yurelay_core::tasks::Event::Changed { task }) => {
                             if !task.status.is_terminal() {
                                 session.insert(task.id.clone());
                             }
@@ -144,7 +144,7 @@ pub async fn engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                                 }
                             }
                         }
-                        Ok(glossa_core::tasks::Event::Removed { id, .. }) => {
+                        Ok(yurelay_core::tasks::Event::Removed { id, .. }) => {
                             session.remove(&id);
                             finished.retain(|(key, _)| key != &id);
                             observer_app
@@ -244,7 +244,7 @@ pub fn register_shortcuts(app: &AppHandle, selection: &str, screenshot: &str) ->
 }
 
 pub fn current_notice(app: &AppHandle) -> Option<String> {
-    let permissions = glossa_platform::permissions();
+    let permissions = yurelay_platform::permissions();
     let state = app.state::<AppState>();
     let mut notice = state.notice.lock().unwrap();
     if notice.as_deref().is_some_and(|message| {
@@ -314,18 +314,18 @@ pub fn notice(app: &AppHandle, message: String) {
 pub fn update_tray(app: &AppHandle) {
     let count = app.state::<AppState>().unread.lock().unwrap().len();
     let en = app.state::<AppState>().locale.lock().unwrap().as_str() == "en";
-    if let Some(tray) = app.tray_by_id("glossa") {
+    if let Some(tray) = app.tray_by_id("yurelay") {
         let _ = tray.set_title(if count > 0 { Some("•") } else { None });
         let _ = tray.set_tooltip(Some(if count > 0 {
             if en {
-                format!("Glossa · {count} unread results")
+                format!("Yurelay · {count} unread results")
             } else {
-                format!("Glossa · {count} 条未查看结果")
+                format!("Yurelay · {count} 条未查看结果")
             }
         } else if en {
-            "Glossa · Latest result".into()
+            "Yurelay · Latest result".into()
         } else {
-            "Glossa · 翻译窗口".into()
+            "Yurelay · 翻译窗口".into()
         }));
     }
 }
@@ -337,20 +337,20 @@ pub fn show_settings(app: &AppHandle) {
     }
 }
 
-pub fn localize_menus(app: &AppHandle, settings: &glossa_core::config::Settings) {
+pub fn localize_menus(app: &AppHandle, settings: &yurelay_core::config::Settings) {
     use tauri::menu::{Menu, MenuItem, MenuItemKind};
     let en = settings.ui_locale() == "en";
-    glossa_platform::set_locale(en);
+    yurelay_platform::set_locale(en);
     *app.state::<AppState>().locale.lock().unwrap() = settings.ui_locale().into();
     let labels = if en {
         [
             "Open translation window",
             "Screenshot translation",
             "Settings…",
-            "Quit Glossa",
+            "Quit Yurelay",
         ]
     } else {
-        ["打开翻译窗口", "截屏翻译", "设置…", "退出 Glossa"]
+        ["打开翻译窗口", "截屏翻译", "设置…", "退出 Yurelay"]
     };
     let items: Result<Vec<_>, _> = ["show", "capture", "settings", "quit"]
         .into_iter()
@@ -361,7 +361,7 @@ pub fn localize_menus(app: &AppHandle, settings: &glossa_core::config::Settings)
         let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
             items.iter().map(|item| item as _).collect();
         if let Ok(menu) = Menu::with_items(app, &refs)
-            && let Some(tray) = app.tray_by_id("glossa")
+            && let Some(tray) = app.tray_by_id("yurelay")
         {
             let _ = tray.set_menu(Some(menu));
         }
@@ -385,9 +385,9 @@ pub fn localize_menus(app: &AppHandle, settings: &glossa_core::config::Settings)
     }
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.set_title(if en {
-            "Glossa Settings"
+            "Yurelay Settings"
         } else {
-            "Glossa 设置"
+            "Yurelay 设置"
         });
     }
     update_tray(app);
@@ -514,7 +514,7 @@ pub fn present_capture(app: &AppHandle) {
             if let Ok(pointer) = handle.ns_window() {
                 // SAFETY: this closure executes on the main thread, window is live.
                 unsafe {
-                    glossa_platform::present_window(pointer);
+                    yurelay_platform::present_window(pointer);
                 }
             }
             let _ = handle.set_focus();

@@ -207,7 +207,7 @@ mod macos {
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
-// Stable pre-rename Keychain service: keep existing keys through the Glossa rename.
+// Stable pre-rename Keychain service: keep existing keys through the Yurelay rename.
 pub fn read_credential(id: &str) -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
