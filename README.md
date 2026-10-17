@@ -7,7 +7,7 @@
 [![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)
 
-[简体中文](README_cn.md) · [Download](https://github.com/conanxyz/glossa/releases) · [Contribute](CONTRIBUTING.md)
+[简体中文](README_cn.md) · [Download](https://github.com/conanxyz/yurelay/releases) · [Contribute](CONTRIBUTING.md)
 </div>
 
 Understand what you are reading, and keep the expressions worth remembering.
@@ -69,7 +69,7 @@ tiers depend on each provider's current pricing, availability and account limits
 
 ### 1. Install Yurelay
 
-Download a `.dmg` from [Releases](https://github.com/conanxyz/glossa/releases) and drag
+Download a `.dmg` from [Releases](https://github.com/conanxyz/yurelay/releases) and drag
 Yurelay into Applications. Choose `aarch64` for Apple Silicon or `x64` / `x86_64` for Intel.
 Requires **macOS 14 or newer**. If no package is available yet, build from source below.
 

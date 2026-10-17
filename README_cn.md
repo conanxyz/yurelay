@@ -7,7 +7,7 @@
 [![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)
 
-[English](README.md) · [下载安装](https://github.com/conanxyz/glossa/releases) · [参与贡献](CONTRIBUTING.md)
+[English](README.md) · [下载安装](https://github.com/conanxyz/yurelay/releases) · [参与贡献](CONTRIBUTING.md)
 </div>
 
 读懂眼前的内容，也把值得记住的表达留下来。Yurelay 将划词、截图翻译和语境生词本放在同一个轻量窗口里，让阅读与积累自然衔接。
@@ -56,7 +56,7 @@ SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，本地�
 
 ### 1. 安装 Yurelay
 
-前往 [Releases](https://github.com/conanxyz/glossa/releases)，下载适合芯片架构的 `.dmg`，将 Yurelay 拖入“应用程序”：
+前往 [Releases](https://github.com/conanxyz/yurelay/releases)，下载适合芯片架构的 `.dmg`，将 Yurelay 拖入“应用程序”：
 
 - **Apple Silicon（M 系列）**：选择 `aarch64`。
 - **Intel**：选择 `x64` / `x86_64`。
