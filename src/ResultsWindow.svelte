@@ -1083,8 +1083,8 @@
             {:else if !dictionaryPending}
               <p class="dictionary-guidance-detail">
                 {t(
-                  "尚无已配置的翻译服务，请在设置的“服务”中添加。",
-                  "No translation service is configured. Add one under Services in Settings.",
+                  "暂无可选的翻译服务，请在设置的“服务”中检查配置。",
+                  "No translation service can be selected. Check its configuration under Services in Settings.",
                 )}
               </p>
               <button

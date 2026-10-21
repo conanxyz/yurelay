@@ -860,7 +860,7 @@ test('dictionary guidance switches only this query and waits for explicit transl
 test('dictionary guidance offers settings without dispatching a lookup when no service is configured',async({page})=>{
   await dictionaryFixture(page,false);
   await expect(page.getByRole('combobox',{name:'Translation service',exact:true})).toHaveCount(0);
-  await expect(page.getByText('No translation service is configured.',{exact:false})).toBeVisible();
+  await expect(page.getByText('No translation service can be selected.',{exact:false})).toBeVisible();
   await page.keyboard.press('x');
   expect(await requests(page)).toBe(0);
   await page.getByRole('button',{name:'Open settings',exact:true}).click();
