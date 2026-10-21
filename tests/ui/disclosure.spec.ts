@@ -8,6 +8,7 @@ async function fixture(page: Page, initiallySelected=true) {
     w.speechVoices = [{locale:'en-GB',available:true},{locale:'en-US',available:true}];
     w.previewResults = {};w.deferredPreviewWords=[];w.previewResolvers=[];
     w.lookupFailure='';w.deferLookup=false;w.lookupResolvers=[];
+    w.guidanceResponses={};w.deferGuidance=false;w.guidanceResolvers=[];
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     const callbacks: Record<number, Function> = {}, events: Record<string, number> = {};
     let callback = 0;
@@ -39,6 +40,10 @@ async function fixture(page: Page, initiallySelected=true) {
         if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: false, expanded: false };
         if (cmd === 'configuration_settings') return w.settings;
         if (cmd === 'permissions') return { accessibility: true, screen: true };
+        if (cmd === 'dictionary_guidance') {
+          if(w.deferGuidance)return new Promise(resolve=>w.guidanceResolvers.push({text:args.text,resolve}));
+          return structuredClone(w.guidanceResponses[args.text] ?? {issue:null,profile_ids:[]});
+        }
         if(cmd==='vocabulary_list')return structuredClone(w.words);
         if(cmd==='vocabulary_lookup'){
           if(w.deferLookup)return new Promise((resolve,reject)=>w.lookupResolvers.push({words:args.words,resolve,reject}));
@@ -61,7 +66,14 @@ async function fixture(page: Page, initiallySelected=true) {
         }
         if (cmd === 'detect_text_language') return 'en';
         if (cmd === 'subscribe') { w.wire = (m: unknown) => args.onEvent.onmessage(m); return 'fixture'; }
+        if (cmd === 'translate_text') {
+          const profile=w.settings.profiles.find((p:any)=>p.id===(args.profileId??w.settings.active_profile));
+          Object.assign(w.task,{id:'manual-fixture',profile:structuredClone(profile),status:'queued',original_text:args.text,edited_text:null,error:null,source_language:args.sourceLanguage,target_language:args.targetLanguage,revision:w.task.revision+1});
+          w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
+          return w.task.id;
+        }
         if (cmd === 'retry_task') {
+          if(args.profileId)w.task.profile=structuredClone(w.settings.profiles.find((p:any)=>p.id===args.profileId));
           if (w.task.status !== 'ready') w.task.attempt++;
           Object.assign(w.task, { status: 'queued', edited_text: args.editedText, source_language: args.sourceLanguage, target_language: args.targetLanguage, translation: '', revision: w.task.revision + 1 });
           w.wire(snapshot());
@@ -78,7 +90,7 @@ async function fixture(page: Page, initiallySelected=true) {
   if(initiallySelected)await expect(page.locator('.disclosure-control')).toBeEnabled();else await expect(page.locator('.disclosure-control')).toBeDisabled();
 }
 
-const requests = (page: Page) => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'retry_task').length);
+const requests = (page: Page) => page.evaluate(() => (window as any).calls.filter((c: any) => ['retry_task','translate_text'].includes(c.cmd)).length);
 const complete = (page: Page) => page.evaluate(() => (window as any).complete());
 
 test('arrow reflects state; X and button toggle, retain result and detect edits', async ({ page }) => {
@@ -802,5 +814,136 @@ test('late vocabulary metadata refreshes the selected meaning and highlight with
   await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
   await expect(page.locator('.vocabulary-side-card[data-word="team"]')).toHaveCount(1);
   await expect(page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-row-meaning')).toHaveText('团队');
+  expect(await requests(page)).toBe(0);
+});
+
+
+const dictionarySentence = 'A local dictionary explains individual words but cannot translate this complete example sentence.';
+async function dictionaryFixture(page: Page, configured=true) {
+  await fixture(page);
+  await page.evaluate(({source,configured})=>{
+    const w=window as any;
+    const local={...w.settings.profiles[0],id:'dictionary',provider:'system_dictionary',name:'System dictionary',model:''};
+    if(configured)w.settings.profiles[0].name='Configured translator';
+    w.settings.profiles=configured?[w.settings.profiles[0],local]:[local];
+    w.settings.active_profile='dictionary';
+    w.guidanceResponses[source]={issue:'sentence',profile_ids:configured?['default']:[]};
+    Object.assign(w.task,{profile:local,original_text:source,edited_text:null,status:'ready',error:null,translation:'',revision:w.task.revision+1});
+    w.emit('configuration-changed',structuredClone(w.settings));
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
+  },{source:dictionarySentence,configured});
+  await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toBeVisible();
+}
+
+test('dictionary guidance switches only this query and waits for explicit translation',async({page})=>{
+  await dictionaryFixture(page);
+  await expect(page.locator('.disclosure-control')).toBeDisabled();
+  await expect(page.locator('.capture-hint')).toHaveCount(0);
+  await expect(page.getByText('Enable the dictionaries you need',{exact:false})).toHaveCount(0);
+  expect(await requests(page)).toBe(0);
+  await page.getByRole('combobox',{name:'Translation service',exact:true}).selectOption('default');
+  expect(await requests(page)).toBe(0);
+  await page.getByRole('button',{name:'Use this service',exact:true}).click();
+  await expect(page.locator('.provider-name')).toHaveText('Configured translator');
+  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue(dictionarySentence);
+  await expect(page.getByRole('combobox',{name:'Translation language',exact:true})).toBeVisible();
+  await expect(page.locator('.disclosure-control')).toBeFocused();
+  expect(await requests(page)).toBe(0);
+  expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('dictionary');
+  await page.keyboard.press('x');
+  expect(await requests(page)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).calls.find((c:any)=>c.cmd==='retry_task').args.profileId)).toBe('default');
+  await page.evaluate(()=>(window as any).complete());
+  await expect(page.locator('.provider-name')).toHaveText('Configured translator');
+});
+
+test('dictionary guidance offers settings without dispatching a lookup when no service is configured',async({page})=>{
+  await dictionaryFixture(page,false);
+  await expect(page.getByRole('combobox',{name:'Translation service',exact:true})).toHaveCount(0);
+  await expect(page.getByText('No translation service is configured.',{exact:false})).toBeVisible();
+  await page.keyboard.press('x');
+  expect(await requests(page)).toBe(0);
+  await page.getByRole('button',{name:'Open settings',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='show_settings').length)).toBe(1);
+  expect(await requests(page)).toBe(0);
+});
+
+test('dictionary miss and stale guidance recover when the query changes',async({page})=>{
+  await dictionaryFixture(page);
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{original_text:'unmatched',status:'failed',error:'本机词典未找到释义，请在 macOS 词典中启用所需词典。',revision:w.task.revision+1});
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
+  });
+  await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toContainText('No matching dictionary entry was found.');
+  await expect(page.getByText('No definition yet. Try again.',{exact:true})).toHaveCount(0);
+  await page.getByRole('textbox',{name:'Source text'}).fill('hello');
+  await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toHaveCount(0);
+  await expect(page.locator('.disclosure-control')).toBeEnabled();
+  await page.evaluate(()=>(window as any).deferGuidance=true);
+  await page.getByRole('textbox',{name:'Source text'}).fill(dictionarySentence);
+  await expect.poll(()=>page.evaluate(()=>(window as any).guidanceResolvers.length)).toBe(1);
+  await page.getByRole('textbox',{name:'Source text'}).fill('good morning');
+  await expect.poll(()=>page.evaluate(()=>(window as any).guidanceResolvers.length)).toBe(2);
+  await page.evaluate(()=>{const w=window as any;w.guidanceResolvers[1].resolve({issue:null,profile_ids:[]});});
+  await expect(page.locator('.disclosure-control')).toBeEnabled();
+  await page.evaluate(()=>{const w=window as any;w.guidanceResolvers[0].resolve({issue:'sentence',profile_ids:['default']});});
+  await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toHaveCount(0);
+  await expect(page.locator('.disclosure-control')).toBeEnabled();
+  expect(await requests(page)).toBe(0);
+});
+
+test('dictionary guidance is localized and readable in narrow dark windows',async({page})=>{
+  await dictionaryFixture(page);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  for(const theme of ['light','dark']){
+    await page.evaluate(theme=>{const w=window as any;w.settings.theme=theme;w.settings.ui_language='zh';w.emit('configuration-changed',structuredClone(w.settings));},theme);
+    for(const width of [360,580,980]){
+      await page.setViewportSize({width,height:800});
+      await expect(page.getByRole('region',{name:'词典查询提示'})).toContainText('整句或段落请使用翻译服务');
+      await expect(page.getByRole('button',{name:'使用此服务',exact:true})).toBeVisible();
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    }
+  }
+  await page.setViewportSize({width:580,height:800});
+  await page.screenshot({path:'artifacts/dictionary-guidance/after-dark.png'});
+  await page.evaluate(()=>{const w=window as any;w.settings.theme='light';w.settings.ui_language='en';w.emit('configuration-changed',structuredClone(w.settings));});
+  await page.screenshot({path:'artifacts/dictionary-guidance/after-light.png'});
+});
+
+
+test('dictionary alternatives work for a new manual draft and are cleared when a service is removed',async({page})=>{
+  await fixture(page,false);
+  await page.evaluate(source=>{
+    const w=window as any;
+    w.settings.profiles[0].name='Configured translator';
+    w.settings.profiles.push({...w.settings.profiles[0],id:'dictionary',provider:'system_dictionary',name:'System dictionary',model:''});
+    w.settings.active_profile='dictionary';
+    w.guidanceResponses[source]={issue:'sentence',profile_ids:['default']};
+    w.emit('configuration-changed',structuredClone(w.settings));
+  },dictionarySentence);
+  await page.getByRole('textbox',{name:'Source text'}).fill(dictionarySentence);
+  await page.getByRole('button',{name:'Use this service',exact:true}).click();
+  expect(await requests(page)).toBe(0);
+  await page.keyboard.press('x');
+  expect(await requests(page)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).calls.find((c:any)=>c.cmd==='translate_text').args.profileId)).toBe('default');
+  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'completed',translation:'Synthetic translation',revision:w.task.revision+1});w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+  await expect(page.locator('.provider-name')).toHaveText('Configured translator');
+  await page.evaluate(()=>{const w=window as any;w.task.id='restored-query';w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+  await expect(page.locator('.provider-name')).toHaveText('Configured translator');
+  await expect(page.getByRole('region',{name:'Translation',exact:true})).toContainText('Synthetic translation');
+  expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('dictionary');
+  await page.evaluate(()=>{const w=window as any;w.settings.profiles=w.settings.profiles.filter((p:any)=>p.id==='dictionary');w.guidanceResponses[w.task.original_text]={issue:'sentence',profile_ids:[]};w.emit('configuration-changed',structuredClone(w.settings));});
+  await expect(page.locator('.provider-name')).toHaveText('System dictionary');
+  await expect(page.getByRole('button',{name:'Open settings',exact:true})).toBeVisible();
+  expect(await requests(page)).toBe(1);
+});
+
+test('dictionary alternatives are hidden for sensitive content',async({page})=>{
+  await dictionaryFixture(page);
+  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{original_text:'',edited_text:null,sensitive:'API_SECRET',revision:w.task.revision+1});w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+  await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Use this service',exact:true})).toHaveCount(0);
   expect(await requests(page)).toBe(0);
 });

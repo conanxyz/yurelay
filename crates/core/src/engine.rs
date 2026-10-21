@@ -27,6 +27,20 @@ pub trait LocalDictionary: Send + Sync + 'static {
 }
 type Secret = Arc<Zeroizing<String>>;
 
+fn query_profile<'a>(
+    settings: &'a Settings,
+    profile_id: Option<&str>,
+) -> Result<&'a Profile, String> {
+    match profile_id {
+        Some(id) => settings
+            .profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .ok_or_else(|| "所选服务已移除，请重新选择。".into()),
+        None => settings.active(),
+    }
+}
+
 struct LiveConfig {
     settings: Settings,
     keys: BTreeMap<String, Secret>,
@@ -235,7 +249,37 @@ impl Engine {
         }
     }
 
+    pub async fn dictionary_guidance(&self, text: &str) -> crate::dictionary::Guidance {
+        let live = self.live.read().await;
+        crate::dictionary::Guidance {
+            issue: crate::dictionary::query_issue(text),
+            profile_ids: live
+                .settings
+                .profiles
+                .iter()
+                .filter(|profile| {
+                    !live.errors.contains_key(&profile.id)
+                        && crate::dictionary::configured_translator(
+                            profile,
+                            live.keys
+                                .get(&profile.id)
+                                .is_some_and(|key| !key.is_empty()),
+                        )
+                })
+                .map(|profile| profile.id.clone())
+                .collect(),
+        }
+    }
+
     pub async fn begin(self: &Arc<Self>, source: Source) -> Result<CaptureHandle, String> {
+        self.begin_with_profile(source, None).await
+    }
+
+    async fn begin_with_profile(
+        self: &Arc<Self>,
+        source: Source,
+        profile_id: Option<&str>,
+    ) -> Result<CaptureHandle, String> {
         self.cancel_vocabulary_jobs();
         let _guard = self.mutations.lock().await;
         if self.closing.load(Ordering::Relaxed) {
@@ -243,7 +287,7 @@ impl Engine {
         }
         self.trim();
         let live = self.live.read().await;
-        let profile = live.settings.active()?.clone();
+        let profile = query_profile(&live.settings, profile_id)?.clone();
         let key = live
             .keys
             .get(&profile.id)
@@ -738,6 +782,17 @@ impl Engine {
         languages: Option<(Option<String>, String)>,
         detected: Option<String>,
     ) -> Result<String, String> {
+        self.manual_languages_with_profile(text, languages, detected, None)
+            .await
+    }
+
+    pub async fn manual_languages_with_profile(
+        self: &Arc<Self>,
+        text: String,
+        languages: Option<(Option<String>, String)>,
+        detected: Option<String>,
+        profile_id: Option<&str>,
+    ) -> Result<String, String> {
         if text.trim().is_empty() || text.chars().count() > crate::MAX_INPUT_CHARACTERS {
             return Err("原文为空或过长。".into());
         }
@@ -751,7 +806,7 @@ impl Engine {
                 return Err("无效的语言代码。".into());
             }
         }
-        let handle = self.begin(Source::Manual).await?;
+        let handle = self.begin_with_profile(Source::Manual, profile_id).await?;
         if let Some((source, target)) = languages {
             self.book
                 .capture_languages(&handle.id, source, target, detected.clone(), self.now());
@@ -771,6 +826,18 @@ impl Engine {
         edited: Option<String>,
         languages: Option<(Option<String>, String)>,
         detected: Option<String>,
+    ) -> Result<(), String> {
+        self.retry_languages_with_profile(id, edited, languages, detected, None)
+            .await
+    }
+
+    pub async fn retry_languages_with_profile(
+        self: &Arc<Self>,
+        id: &str,
+        edited: Option<String>,
+        languages: Option<(Option<String>, String)>,
+        detected: Option<String>,
+        profile_id: Option<&str>,
     ) -> Result<(), String> {
         if let Some((source, target)) = &languages {
             let valid = |v: &str| {
@@ -810,7 +877,7 @@ impl Engine {
                 None
             }
         });
-        let current = live.settings.active()?;
+        let current = query_profile(&live.settings, profile_id)?;
         let key = live
             .keys
             .get(&current.id)
@@ -1102,20 +1169,29 @@ impl Engine {
         cancel: CancellationToken,
         mut on_text: impl FnMut(&str, u64) -> Result<(), provider::Error>,
     ) -> Result<provider::Metrics, provider::Error> {
+        if cancel.is_cancelled() {
+            return Err(provider::Error::Cancelled);
+        }
         let dictionary = self
             .dictionary
             .clone()
             .ok_or_else(|| provider::Error::Configuration("此平台暂不支持系统词典。".into()))?;
-        let text = text.trim().to_owned();
-        if text.is_empty() || text.chars().count() > 200 {
+        let text = text.trim();
+        if text.is_empty() {
             return Err(provider::Error::Configuration(
-                "系统词典用于查询单词或短语，请缩短原文后重试。".into(),
+                "请输入要查询的单词或短语。".into(),
             ));
         }
+        if let Some(issue) = crate::dictionary::query_issue(text) {
+            return Err(provider::Error::Configuration(issue.message().into()));
+        }
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let started = tokio::time::Instant::now();
         let result = tokio::select! {biased; _=cancel.cancelled()=>return Err(provider::Error::Cancelled), result=tokio::task::spawn_blocking(move||dictionary.lookup(&text))=>result.map_err(|_|provider::Error::Protocol("系统词典查询失败。".into()))?.map_err(provider::Error::Protocol)?};
         if result.trim().is_empty() {
-            return Err(provider::Error::Empty);
+            return Err(provider::Error::Protocol(
+                crate::dictionary::NOT_FOUND_MESSAGE.into(),
+            ));
         }
         let ms = started.elapsed().as_millis() as u64;
         on_text(&result, ms)?;
@@ -1425,6 +1501,129 @@ mod tests {
         })
         .await
         .expect("task did not reach its expected state")
+    }
+
+    #[tokio::test]
+    async fn dictionary_blocks_sentences_before_lookup_and_reports_empty_matches() {
+        struct Dictionary(Arc<AtomicUsize>);
+        impl LocalDictionary for Dictionary {
+            fn lookup(&self, text: &str) -> Result<String, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                if text == "unmatched" {
+                    return Ok(String::new());
+                }
+                assert_eq!(text, "at the end of the day");
+                Ok("ultimately".into())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let engine = Engine::open_with_dictionary(
+            dir.path().into(),
+            Arc::new(MemoryCredentials::default()),
+            storage::system_clock(),
+            Some(Arc::new(Dictionary(count.clone()))),
+        )
+        .await
+        .unwrap();
+        let result = engine.lookup_dictionary("A local dictionary explains individual words but cannot translate this entire example sentence.", CancellationToken::new(), |_, _| panic!("rejected input must not emit text")).await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            crate::dictionary::SENTENCE_MESSAGE
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+        let mut output = String::new();
+        engine
+            .lookup_dictionary(
+                "  at the end\n of the day  ",
+                CancellationToken::new(),
+                |text, _| {
+                    output.push_str(text);
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(output, "ultimately");
+        let miss = engine
+            .lookup_dictionary("unmatched", CancellationToken::new(), |_, _| Ok(()))
+            .await
+            .unwrap_err();
+        assert_eq!(miss.to_string(), crate::dictionary::NOT_FOUND_MESSAGE);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            engine
+                .lookup_dictionary("at the end of the day", cancel, |_, _| Ok(()))
+                .await,
+            Err(provider::Error::Cancelled)
+        ));
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn dictionary_alternative_is_per_query_and_still_guards_sensitive_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, requests) = configured(dir.path().into(), Retention::Disabled).await;
+        let mut settings = engine.configuration().await.settings;
+        settings.profiles.push(Profile {
+            id: "dictionary".into(),
+            provider: crate::config::Provider::SystemDictionary,
+            ..Profile::default()
+        });
+        settings.active_profile = "dictionary".into();
+        engine
+            .save_configuration(settings, BTreeMap::new())
+            .await
+            .unwrap();
+        let guide = engine.dictionary_guidance("A local dictionary explains individual words but cannot translate this entire example sentence.").await;
+        assert_eq!(guide.issue, Some(crate::dictionary::QueryIssue::Sentence));
+        assert_eq!(guide.profile_ids, vec!["default"]);
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        let handle = engine.begin(Source::Selection).await.unwrap();
+        engine.accept_text(&handle, "We will meet tomorrow.".into(), 0);
+        engine
+            .retry_languages_with_profile(&handle.id, None, None, None, Some("default"))
+            .await
+            .unwrap();
+        let task = until(&engine, &handle.id, |task| task.status == Status::Completed).await;
+        assert_eq!(task.profile.id, "default");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            engine.configuration().await.settings.active_profile,
+            "dictionary"
+        );
+        assert!(
+            engine
+                .retry_languages_with_profile(&handle.id, None, None, None, Some("removed"))
+                .await
+                .is_err()
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        let manual = engine
+            .manual_languages_with_profile(
+                "This is another example.".into(),
+                None,
+                None,
+                Some("default"),
+            )
+            .await
+            .unwrap();
+        until(&engine, &manual, |task| task.status == Status::Completed).await;
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+        let secret = format!("sk-{}", "x".repeat(48));
+        let blocked = engine
+            .manual_languages_with_profile(secret, None, None, Some("default"))
+            .await
+            .unwrap();
+        assert!(engine.book.get(&blocked).unwrap().sensitive.is_some());
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            engine.configuration().await.settings.active_profile,
+            "dictionary"
+        );
+        engine.shutdown().await;
     }
 
     #[tokio::test]

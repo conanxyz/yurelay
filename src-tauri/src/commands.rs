@@ -269,6 +269,7 @@ pub async fn translate_text(
     text: String,
     source_language: Option<String>,
     target_language: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<String, String> {
     let engine = state::engine(&app).await?;
     let detected = if source_language.is_none() {
@@ -277,10 +278,11 @@ pub async fn translate_text(
         None
     };
     let id = engine
-        .manual_languages(
+        .manual_languages_with_profile(
             text,
             target_language.map(|target| (source_language, target)),
             detected,
+            profile_id.as_deref(),
         )
         .await?;
     state::select(&app, id.clone());
@@ -298,6 +300,7 @@ pub async fn retry_task(
     edited_text: Option<String>,
     source_language: Option<String>,
     target_language: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
     let engine = state::engine(&app).await?;
     let task = engine.load_into_book(&id).await?;
@@ -311,11 +314,12 @@ pub async fn retry_task(
         None
     };
     engine
-        .retry_languages(
+        .retry_languages_with_profile(
             &id,
             edited_text,
             target_language.map(|target| (source_language, target)),
             detected,
+            profile_id.as_deref(),
         )
         .await
 }
@@ -954,4 +958,15 @@ pub fn set_vocabulary_sidebar(app: AppHandle, width: u32) -> Result<u32, String>
             .store(u64::from(applied), Ordering::Relaxed);
     }
     Ok(applied)
+}
+
+#[tauri::command]
+pub async fn dictionary_guidance(
+    app: AppHandle,
+    text: String,
+) -> Result<yurelay_core::dictionary::Guidance, String> {
+    if text.chars().count() > yurelay_core::MAX_INPUT_CHARACTERS {
+        return Err("原文为空或过长。".into());
+    }
+    Ok(state::engine(&app).await?.dictionary_guidance(&text).await)
 }
