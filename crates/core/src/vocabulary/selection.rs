@@ -53,6 +53,9 @@ impl Selection {
         {
             return Err("请在原文中选择单词或短语。".into());
         }
+        if !super::vocabulary_word(&surface) {
+            return Err("生词本仅支持英语单词或短语。".into());
+        }
         if crate::sensitive::detect(&sentence).is_some() {
             return Err("原句包含疑似敏感内容，未查询。".into());
         }
@@ -496,6 +499,8 @@ mod tests {
 
     #[test]
     fn selection_validation_guards_sensitive_and_invalid_utf16_before_dictionary_lookup() {
+        assert!(Selection::new("逐渐侵蚀", 0, 4).is_err());
+        assert!(Selection::new("English 与中文", 8, 10).is_err());
         assert!(Selection::new("😀 resilient", 1, 2).is_err());
         assert!(Selection::new("resilient", 0, 50).is_err());
         assert!(Selection::new("....", 0, 4).is_err());

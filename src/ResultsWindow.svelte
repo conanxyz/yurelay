@@ -112,6 +112,19 @@
       !submitting &&
       !(localDictionary && (dictionaryPending || dictionaryGuidance?.issue)),
   );
+  // UI affordance only; preview and collection are validated again in core.
+  let vocabularyEligible = $derived(
+    (
+      sourceLanguage ||
+      detected ||
+      (draft === (current?.edited_text ?? current?.original_text)
+        ? current?.detected_language
+        : "") ||
+      ""
+    )
+      .toLowerCase()
+      .split(/[-_]/)[0] === "en",
+  );
   let sourceProcessing = $derived(
     !!current &&
       current.source === "screenshot" &&
@@ -267,6 +280,7 @@
   );
   const previewCache = new Map<string, VocabularyPreview>();
   const visibleCandidates = $derived.by(() => {
+    if (!vocabularyEligible) return [];
     const automatic =
       showResult && current?.status === "completed"
         ? (current.vocabulary ?? [])
@@ -293,7 +307,7 @@
       : [],
   );
   $effect(() => {
-    const scope = `${current?.id ?? "draft"}:${current?.attempt ?? 0}:${draft}`;
+    const scope = `${current?.id ?? "draft"}:${current?.attempt ?? 0}:${draft}:${sourceLanguage}:${vocabularyEligible}`;
     untrack(() => {
       if (scope !== selectionScope) {
         selectionScope = scope;
@@ -446,12 +460,15 @@
   }
   function captureSelection(event: Event) {
     const el = event.currentTarget as HTMLTextAreaElement;
+    if (document.activeElement !== el) return;
     const word = el.value.slice(el.selectionStart, el.selectionEnd).trim();
     if (
+      !vocabularyEligible ||
       !word ||
       word.length > 128 ||
       word.split(/\s+/u).length > 3 ||
-      !/\p{L}/u.test(word)
+      !/\p{Script=Latin}/u.test(word) ||
+      !/^[\p{Script=Latin}\x21-\x7e\s’‘–—]+$/u.test(word)
     ) {
       clearSelection();
       return;
@@ -498,6 +515,7 @@
           selectionEnd: request.selectionEnd,
           taskId: request.taskId,
           attempt: request.attempt,
+          sourceLanguage: sourceLanguage || null,
         });
         if (
           sequence !== previewSequence ||
@@ -538,7 +556,7 @@
     }
   }
   function selectWordAtCaret(event: MouseEvent) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !vocabularyEligible) return;
     const el = event.currentTarget as HTMLTextAreaElement;
     if (el.selectionStart === el.selectionEnd) {
       const caret = el.selectionStart;
@@ -646,7 +664,23 @@
       event.isComposing ||
       event.ctrlKey ||
       event.altKey ||
-      event.metaKey ||
+      event.metaKey
+    )
+      return;
+    if (event.key === "Escape") {
+      // Give native menus and the vocabulary sidebar their own dismissal first.
+      if (
+        event.shiftKey ||
+        (event.target as HTMLElement)?.closest('select,[role="combobox"]') ||
+        document.activeElement?.closest('select,[role="combobox"]') ||
+        (hasVocabulary && vocabularyOpen)
+      )
+        return;
+      event.preventDefault();
+      void action("hide_window");
+      return;
+    }
+    if (
       (event.target as HTMLElement)?.closest(editing) ||
       document.activeElement?.closest(editing)
     )
@@ -802,6 +836,8 @@
         candidates={visibleCandidates}
         {activeWord}
         {locale}
+        sourceText={draft}
+        {sourceLanguage}
         open={sidebarWidth > 40}
         onToggle={() => (vocabularyOpen = !vocabularyOpen)}
       />{/key}{/if}
@@ -825,7 +861,8 @@
         <button
           class="icon-button"
           aria-label={t("收起", "Hide")}
-          title={t("收起", "Hide")}
+          title={t("收起（Esc）", "Hide (Esc)")}
+          aria-keyshortcuts="Escape"
           onclick={() => action("hide_window")}
           ><Icon name="hide" size={17} /></button
         >

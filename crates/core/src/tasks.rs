@@ -498,10 +498,12 @@ impl TaskBook {
         &self,
         id: &str,
         attempt: u32,
-        items: Vec<crate::vocabulary::Candidate>,
+        mut items: Vec<crate::vocabulary::Candidate>,
         notice: Option<String>,
         now: i64,
     ) {
+        // Cached metadata is untrusted too; revalidate it under current rules.
+        items.retain_mut(|candidate| candidate.validate().is_ok());
         self.update(id, Some(attempt), now, |t| {
             if !matches!(
                 t.status,
@@ -889,6 +891,8 @@ impl TaskBook {
             if task.expired(now) || inner.tasks.contains_key(&task.id) {
                 continue;
             }
+            task.vocabulary
+                .retain_mut(|candidate| candidate.validate().is_ok());
             if task.vocabulary_state == VocabularyState::Extracting {
                 task.vocabulary_state = VocabularyState::Cancelled;
             }
@@ -1026,6 +1030,28 @@ mod tests {
         book.recognized(&t.id, "Hello".into(), 2, now + 1)
             .unwrap()
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cached_and_restored_metadata_reject_translated_headwords() {
+        let book = TaskBook::new(Retention::Days(7), 12);
+        let task = queued(&book, 1);
+        let invalid = crate::vocabulary::Candidate {
+            word: "逐渐侵蚀".into(),
+            surface: "Chipping away".into(),
+            ..Default::default()
+        };
+        book.set_vocabulary(&task.id, 1, vec![invalid.clone()], None, 2);
+        assert!(book.get(&task.id).unwrap().vocabulary.is_empty());
+        let mut legacy = task;
+        legacy.vocabulary = vec![invalid];
+        let restored = TaskBook::new(Retention::Days(7), 12);
+        restored.restore(vec![legacy.clone()], 3);
+        assert!(restored.get(&legacy.id).unwrap().vocabulary.is_empty());
+        assert_eq!(
+            restored.get(&legacy.id).unwrap().original_text,
+            legacy.original_text
+        );
     }
 
     #[tokio::test]

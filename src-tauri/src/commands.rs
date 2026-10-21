@@ -156,106 +156,114 @@ pub fn start_capture(app: AppHandle, screenshot: bool) {
 }
 
 pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: Option<i32>) {
-    if app
+    let selection_target = if screenshot {
+        selection_target
+    } else {
+        selection_target.or_else(yurelay_platform::selection_target)
+    };
+    let captures = app.state::<AppState>().captures.clone();
+    let recording = app
         .state::<AppState>()
         .shortcut_recording
-        .load(Ordering::SeqCst)
-    {
-        return;
-    }
-    state::clear_capture_view(&app);
-    let permissions = yurelay_platform::permissions();
-    if (screenshot && !permissions.screen) || (!screenshot && !permissions.accessibility) {
-        state::notice(
-            &app,
-            if screenshot {
-                "请先在设置中开启 Yurelay 的屏幕录制权限。"
-            } else {
-                "请先在设置中开启 Yurelay 的辅助功能权限。"
-            }
-            .into(),
-        );
-        state::show(&app, true);
-        return;
-    }
-    let epoch = app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed);
-    // Native acquisition starts before any database/keychain await can change focus.
-    let mut native = yurelay_platform::start_for_target(screenshot, selection_target);
-    tauri::async_runtime::spawn(async move {
-        let engine = match state::engine(&app).await {
-            Ok(e) => e,
-            Err(e) => {
-                state::notice(&app, e);
-                state::show(&app, true);
-                return;
-            }
-        };
-        let handle = match engine
-            .begin(if screenshot {
-                Source::Screenshot
-            } else {
-                Source::Selection
-            })
-            .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                state::notice(&app, e);
-                state::show(&app, true);
-                return;
-            }
-        };
-        state::select(&app, handle.id.clone());
-        let mut source_started = std::time::Instant::now();
-        while let Some(event) = native.recv().await {
-            match event {
-                NativeEvent::Captured => {
-                    source_started = std::time::Instant::now();
-                    engine.book.recognizing(&handle.id, engine.now());
-                    if app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed) == epoch {
-                        state::present_capture(&app);
-                    }
+        .load(Ordering::SeqCst);
+    captures.start(recording, screenshot, selection_target, |permit| {
+        state::clear_capture_view(&app);
+        let permissions = yurelay_platform::permissions();
+        if (screenshot && !permissions.screen) || (!screenshot && !permissions.accessibility) {
+            state::notice(
+                &app,
+                if screenshot {
+                    "请先在设置中开启 Yurelay 的屏幕录制权限。"
+                } else {
+                    "请先在设置中开启 Yurelay 的辅助功能权限。"
                 }
-                NativeEvent::Text(text) => {
-                    let (text, detected) = tokio::task::spawn_blocking(move || {
-                        let language = yurelay_platform::detect_language(&text);
-                        (text, language)
-                    })
-                    .await
-                    .map_err(|_| ())
-                    .unwrap_or_default();
-                    engine.accept_detected_text(
-                        &handle,
-                        text,
-                        source_started.elapsed().as_millis() as u64,
-                        detected,
-                    );
-                    if !screenshot
-                        && app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed) == epoch
-                    {
-                        state::present_capture(&app);
-                    }
-                }
-                NativeEvent::Image(bytes) => engine.accept_image(&handle.id, bytes),
-                NativeEvent::OcrError(error) => engine.fail_capture(&handle.id, 1, error),
-                NativeEvent::ImageError(error) => engine.fail_image(&handle.id, error),
-                NativeEvent::Error(error) => {
-                    state::notice(&app, error);
-                    let _ = engine.remove(&handle.id).await;
-                    *app.state::<AppState>().selected.lock().unwrap() = None;
-                    state::show(&app, true);
-                }
-                NativeEvent::Cancelled => {
-                    if engine
-                        .book
-                        .get(&handle.id)
-                        .is_some_and(|t| t.original_text.is_empty() && !t.has_image)
-                    {
-                        let _ = engine.remove(&handle.id).await;
-                    }
-                }
-            }
+                .into(),
+            );
+            state::show(&app, true);
+            return;
         }
+        let epoch = app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed);
+        // Native acquisition starts before any database/keychain await can change focus.
+        let mut native = yurelay_platform::start_for_target(screenshot, selection_target);
+        tauri::async_runtime::spawn(async move {
+            let _capture = permit;
+            let engine = match state::engine(&app).await {
+                Ok(e) => e,
+                Err(e) => {
+                    state::notice(&app, e);
+                    state::show(&app, true);
+                    while native.recv().await.is_some() {}
+                    return;
+                }
+            };
+            let handle = match engine
+                .begin(if screenshot {
+                    Source::Screenshot
+                } else {
+                    Source::Selection
+                })
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    state::notice(&app, e);
+                    state::show(&app, true);
+                    while native.recv().await.is_some() {}
+                    return;
+                }
+            };
+            state::select(&app, handle.id.clone());
+            let mut source_started = std::time::Instant::now();
+            while let Some(event) = native.recv().await {
+                match event {
+                    NativeEvent::Captured => {
+                        source_started = std::time::Instant::now();
+                        engine.book.recognizing(&handle.id, engine.now());
+                        if app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed) == epoch {
+                            state::present_capture(&app);
+                        }
+                    }
+                    NativeEvent::Text(text) => {
+                        let (text, detected) = tokio::task::spawn_blocking(move || {
+                            let language = yurelay_platform::detect_language(&text);
+                            (text, language)
+                        })
+                        .await
+                        .map_err(|_| ())
+                        .unwrap_or_default();
+                        engine.accept_detected_text(
+                            &handle,
+                            text,
+                            source_started.elapsed().as_millis() as u64,
+                            detected,
+                        );
+                        if !screenshot
+                            && app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed) == epoch
+                        {
+                            state::present_capture(&app);
+                        }
+                    }
+                    NativeEvent::Image(bytes) => engine.accept_image(&handle.id, bytes),
+                    NativeEvent::OcrError(error) => engine.fail_capture(&handle.id, 1, error),
+                    NativeEvent::ImageError(error) => engine.fail_image(&handle.id, error),
+                    NativeEvent::Error(error) => {
+                        state::notice(&app, error);
+                        let _ = engine.remove(&handle.id).await;
+                        *app.state::<AppState>().selected.lock().unwrap() = None;
+                        state::show(&app, true);
+                    }
+                    NativeEvent::Cancelled => {
+                        if engine
+                            .book
+                            .get(&handle.id)
+                            .is_some_and(|t| t.original_text.is_empty() && !t.has_image)
+                        {
+                            let _ = engine.remove(&handle.id).await;
+                        }
+                    }
+                }
+            }
+        });
     });
 }
 #[tauri::command]
@@ -714,8 +722,16 @@ pub async fn vocabulary_lookup(
 #[tauri::command]
 pub async fn vocabulary_collect(
     app: AppHandle,
-    candidate: yurelay_core::vocabulary::Candidate,
+    mut candidate: yurelay_core::vocabulary::Candidate,
+    source_text: String,
+    source_language: Option<String>,
 ) -> Result<yurelay_core::vocabulary::VocabularyItem, String> {
+    let detected = detect_text_language(source_text.clone()).await?;
+    candidate.validate_source(
+        &source_text,
+        source_language.as_deref(),
+        detected.as_deref(),
+    )?;
     let item = state::engine(&app)
         .await?
         .storage
@@ -733,9 +749,15 @@ pub async fn vocabulary_preview(
     selection_end: usize,
     task_id: Option<String>,
     attempt: Option<u32>,
+    source_language: Option<String>,
 ) -> Result<yurelay_core::vocabulary::selection::Preview, String> {
     use yurelay_core::vocabulary::selection::{DictionaryEntry, Selection};
     let selection = Selection::new(&source_text, selection_start, selection_end)?;
+    let detected = detect_text_language(source_text.clone()).await?;
+    yurelay_core::vocabulary::require_english_source(
+        source_language.as_deref(),
+        detected.as_deref(),
+    )?;
     let word = selection.surface.clone();
     let entry = tokio::task::spawn_blocking(move || {
         let lemma = yurelay_platform::lemma(&word);
@@ -767,17 +789,19 @@ pub async fn vocabulary_manual(
     selection_end: usize,
     task_id: Option<String>,
     attempt: Option<u32>,
+    source_language: Option<String>,
 ) -> Result<yurelay_core::vocabulary::VocabularyItem, String> {
     let preview = vocabulary_preview(
         app.clone(),
-        source_text,
+        source_text.clone(),
         selection_start,
         selection_end,
         task_id,
         attempt,
+        source_language.clone(),
     )
     .await?;
-    vocabulary_collect(app, preview.candidate).await
+    vocabulary_collect(app, preview.candidate, source_text, source_language).await
 }
 
 #[tauri::command]

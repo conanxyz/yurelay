@@ -1,138 +1,164 @@
 <div align="center">
   <img src="src/assets/yurelay-logo.png" width="88" alt="Yurelay" />
   <h1>Yurelay</h1>
-  <p><strong>你的语言，你的节奏</strong><br />专为 macOS 打造的轻量级 LLM 划词 / 截图翻译与语境生词沉淀工具。</p>
+  <p><strong>你的语言，你的节奏</strong><br />macOS 划词与截图翻译，把值得记住的英语表达留在语境里。</p>
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-222222?logo=apple)
 [![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)
 
-[English](README.md) · [下载安装](https://github.com/conanxyz/yurelay/releases) · [参与贡献](CONTRIBUTING.md)
+[English](README.md) · [下载与版本](https://github.com/conanxyz/yurelay/releases) · [参与贡献](CONTRIBUTING.md)
 </div>
 
-读懂眼前的内容，也把值得记住的表达留下来。Yurelay 将划词、截图翻译和语境生词本放在同一个轻量窗口里，让阅读与积累自然衔接。
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme-translation-dark.png" />
+    <img src="docs/images/readme-translation-light.png" width="840" alt="Yurelay 实机界面：英语原文、中文译文与带有释义和朗读控件的生词侧栏" />
+  </picture>
+</p>
 
-![界面预览占位：翻译窗口、阅读视图、生词侧栏、服务与生词本设置](docs/images/preview.svg)
+<p align="center">先读懂眼前的内容，再留下值得记住的表达。<br />
+<a href="docs/images/readme-translation-light.png">浅色画面</a> · <a href="docs/images/readme-translation-dark.png">深色画面</a></p>
 
-## ✨ 核心特性
+## 💡 为什么选择 Yurelay？
 
-### ⚡ 随手取词，边译边读
+- **先审阅，再翻译。** 划词或截图后先显示原文；检查、修改后，再按 `X` 或点击箭头请求模型，让每次发送都有明确意图。
+- **敏感信息在本机先检查。** SensitiveGuard 检查常见助记词、私钥和 API Key 格式，命中后隐藏原文并阻止发送。
+- **记住单词，也记住它出现在哪里。** 从英语原文查词、收录，用词形还原合并词条，把不同文章中的语境放在一起。
+- **本地能力随手可用。** 截图 OCR、系统词典和语音朗读在本机完成；应用基于 Tauri 2、Rust 和 Svelte 5 构建，服务密钥保存在 macOS 钥匙串。
 
-选中文字或框选屏幕区域，用全局快捷键唤起 Yurelay。截图文字在本机识别；你可以先检查、编辑原文，再按 `X` 或点击箭头开始翻译，译文随返回内容逐步显示。
+## ⚡ 从捕获到阅读
 
-阅读模式保留标题、列表与代码块，并帮助还原 PDF、网页和更新日志中粘连的段落。需要原始文字时，一键切换纯文本，无需重新翻译。
+在其他应用中选中文字，按默认快捷键 **`Option + D`**；或按 **`Option + S`** 框选屏幕文字。也可以直接在翻译框输入或粘贴。
 
-### 📖 把生词留在语境里
+```mermaid
+flowchart LR
+    A["划词 / 截图 / 输入"] --> B["检查原文"]
+    B --> C["X 或箭头"]
+    C --> D["查看释义 / 阅读译文"]
+    D --> E["英语选词 → 收录语境"]
+```
 
-翻译时可自动提炼 2–5 个值得学习的单词、短语或习语，附上当前语境中的含义。候选词在左侧栏展示，保持译文阅读位置；同一次任务中手动收起后，不会被再次自动展开。
+阅读模式展示段落、标题、列表和代码块；可切换纯文本，分别复制译文或 Markdown。隐藏窗口后，已经开始的翻译继续运行。
 
-- **两种收录方式**：一键保存候选词，或直接划选原文中的单词，通过本机词形还原与系统词典补录，不消耗模型 Token。
-- **一词多境**：再次遇到同一个词时，累积不同文章中的原句、释义与出现频次。
-- **方便复习**：系统朗读、掌握状态、个人笔记，以及 **CSV / Markdown / Anki TSV** 导出。
+<details>
+<summary>观看实机动图：预览 → 翻译 → 选词 → 收录</summary>
 
-### 🛡️ 敏感内容，先在本机检查
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/readme-translation-light.png" />
+  <img src="docs/images/readme-workflow.gif" width="840" alt="实机操作演示：确认原文后触发流式译文，选中 lighthouse 查看本机词典，再点击收录" />
+</picture>
 
-SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，本地检测常见的英文 BIP-39 助记词、私钥与 API Key 格式。命中规则时隐藏明文并阻止发送，未放行的内容不写入历史。
+片段从已经输入的原文开始；录制使用本地演示响应，展示操作过程，不代表远程模型的速度。
 
-服务密钥保存在 **macOS 系统钥匙串（Keychain）**。OCR 和系统词典查询在本机完成；远程翻译只发送给你选择的服务商。历史记录可设置保留期，也可关闭。
+</details>
 
-检测可能误报或漏报，请在发送前检查原文。模型生成的译文、排版和释义也需要结合上下文判断。
+## 📚 查词与语境生词本
 
-### 🔌 选择适合自己的服务
+**只想查一个词？** 在「设置 → 服务」把 **macOS 系统词典**设为默认，即可查询本机已启用词典中的单词和短语，无需 API Key。选择模型服务时，Yurelay 会按输入内容使用词典或段落提示词。
 
-无需账号即可使用 macOS 系统词典查词，也可以接入自己的模型服务。Yurelay 预置智谱 `glm-4-flash-250414` 等模型候选，支持利用服务商提供的免费模型或免费层起步；具体费用、额度与可用性以各平台政策为准。
+遇到整句或段落，系统词典会提示为当前查询选择已配置的翻译服务；选好后按 `X` 或点击箭头才会开始翻译，全局默认服务保持不变。
+
+**想把表达留下来？** 点击或划选英语原文中的单词，先看本机词形还原和词典预览，再点击“收录”。也可以从模型提炼的英语候选中收录。
+
+- 一词保留多段原句和可用释义，同一句重复收录不会重复计数。
+- 支持个人笔记、学习中 / 已掌握状态、词条与语境搜索。
+- 侧栏提供英式 / 美式及慢速朗读，使用本机可用语音。
+- 可导出 **CSV、Markdown 或 Anki TSV**，继续整理和复习。
+
+![实机生词本：lighthouse 的个人笔记、两段原文语境与学习状态](docs/images/readme-vocabulary.png)
+
+## 🕘 读过的内容，随时找回
+
+在「设置 → 历史记录」按原文、译文或来源查找，回看划词、截图与手动输入的记录。可以查看原文、修正后的文本、已保存截图和译文，复制内容或重新打开翻译框。
+
+历史默认保留 **7 天**，也可指定天数、永久保存或不保存到磁盘。已经明确收录的生词独立保存，方便长期积累。
+
+![实机历史记录：按来源查找，查看原文与译文并重新打开翻译](docs/images/readme-history.png)
+
+## 🔌 使用自己的翻译服务
 
 | 服务 | 配置方式 |
 | :--- | :--- |
-| macOS 系统词典 | 无需密钥，使用本机已启用的词典；适合单词与短语查询 |
+| macOS 系统词典 | 无需密钥，使用本机已启用的词典 |
 | 智谱 AI、硅基流动、DeepSeek、通义千问 | API Key + 模型名称 |
 | Gemini、OpenAI、Claude | 对应平台的 API Key + 模型名称 |
-| MiniMax | 选择中国区或国际区，填写对应区域的 API Key |
+| MiniMax | 选择中国区或国际区，使用对应区域的密钥 |
 | OpenRouter | API Key + 模型 ID |
 | 有道智云 | 应用 ID + 应用密钥 |
 | 自定义服务 | OpenAI 兼容地址 + 模型名称，按服务要求填写密钥 |
 
-## 🚀 安装与首次配置
+打开「设置 → 服务」，选择服务、填写配置、测试连接，最后设为默认并保存。服务预置了部分模型候选，例如智谱 `glm-4-flash-250414`；费用、免费额度和可用性以服务商为准。测试连接也会发送固定示例文本，可能计费。
 
-### 1. 安装 Yurelay
+## 🚀 安装与开始使用
 
-前往 [Releases](https://github.com/conanxyz/yurelay/releases)，下载适合芯片架构的 `.dmg`，将 Yurelay 拖入“应用程序”：
+需要 **macOS 14 或更新版本**。安装包发布后，可从 [Releases](https://github.com/conanxyz/yurelay/releases) 下载 `.dmg`，打开后将 Yurelay 拖入“应用程序”。Apple Silicon 选择 `aarch64`，Intel 选择 `x64` / `x86_64`；页面暂无安装包时，可按文末步骤从源码构建。Homebrew 安装渠道尚未提供。
 
-- **Apple Silicon（M 系列）**：选择 `aarch64`。
-- **Intel**：选择 `x64` / `x86_64`。
-
-需要 **macOS 14 或更新版本**。若 Releases 暂无安装包，可按文末说明从源码构建。
+1. 为划词开启**辅助功能**权限，为截图开启**屏幕录制**权限。
+2. 在「设置 → 服务」选择系统词典，或配置自己的模型服务。
+3. 捕获一段文字，检查原文后点击箭头开始。
 
 <details>
-<summary>首次打开提示“无法验证开发者”或“应用已损坏”？</summary>
+<summary>首次打开与权限说明</summary>
 
-未公证的开发包可能触发 macOS 提示。优先在「系统设置 → 隐私与安全性」选择“仍要打开”。
+当前工作流生成的是临时签名、未经 Apple 公证的开发包。确认来源可信后，可按 [Apple 官方说明](https://support.apple.com/zh-cn/102445)，在「系统设置 → 隐私与安全性」选择“仍要打开”。提示文件损坏时，应先核实文件与发布来源。
 
-如果确认下载自项目 Releases、校验文件一致，且问题由下载隔离属性引起，可执行：
-
-```sh
-sudo xattr -rd com.apple.quarantine /Applications/Yurelay.app
-```
-
-此命令只移除该应用的隔离标记，不代表 Apple 公证；不要用于来源不明或校验不符的文件。
+辅助功能用于跨应用取词，屏幕录制用于截图；仅手动输入、粘贴或本地查词不需要这两项权限。它们与应用签名、公证和钥匙串访问分别管理。更新开发包后，必要时在 Yurelay 的权限页面查看恢复指引。
 
 </details>
 
-### 2. 开启捕获权限
+## ⌨️ 快捷键与交互细节
 
-在「系统设置 → 隐私与安全性」中允许 Yurelay 使用：
+| 操作 | 默认快捷键 / 入口 |
+| :--- | :--- |
+| 划词取词 | `Option + D` |
+| 截图 OCR | `Option + S` |
+| 开始翻译 / 展开或收起译文 | `X` 或箭头按钮 |
+| 隐藏翻译框 | `Esc`；生词侧栏展开时先收起侧栏 |
+| 找回窗口 / 打开设置 | 菜单栏图标或 Dock |
+| 导出词条 | 设置 → 生词本 → 导出 |
 
-- **辅助功能（Accessibility）**：读取其他应用中选中的文字。
-- **屏幕录制（Screen Recording）**：截取选区并识别文字。
+<details>
+<summary>交互细节与 FAQ</summary>
 
-也可从 Yurelay「设置 → 翻译与快捷键」检查状态并打开对应系统设置。新版 macOS 的辅助功能授权可能显示为“设备控制和数据访问”。
+- **按键可以修改吗？** 可以，在「设置 → 翻译与快捷键」中录入；上表为默认值，实际以你的配置为准，冲突时会提示。
+- **输入框里的 X 会翻译吗？** 编辑文字时正常输入 `X`；请点击箭头，或将焦点移出输入框后再用快捷键。
+- **连按两次捕获快捷键会怎样？** 当前取词或截图未结束时忽略重复请求；翻译框获得焦点后再次按划词快捷键会保留结果。截图完成或取消后，可再次触发。
+- **什么内容能收进生词本？** 原文需被识别为英语或手动指定为英语；预览后明确点击“收录”才保存。点击或划选译文不会触发预览或收录。
+- **自动提词有什么限制？** 在设置中开启后，模型可为英语原文提供候选；超过 150 词或 800 字符的输入会跳过自动提词，翻译仍可继续。
+- **收起侧栏后会自动弹回来吗？** 后续模型元数据不会重新打开手动收起的侧栏；主动在原文重新选词可以打开预览。
+- **浏览历史会再次调用模型吗？** 不会；主动点击“重新翻译”才会发起新请求。
+- **历史清理会删除什么？** 保留期按创建时间计算；保存较短期限会清理已过期记录，关闭磁盘保存会清理已有历史。删除一条历史会一并删除其原文、截图与译文，确认后不可撤销。已收录词条在生词本中单独管理。
+- **“段落模式 / 词典模式”是手动切换翻译方式吗？** 服务设置里的按钮切换默认提示词预览；实际处理模式由输入内容选择。
 
-### 3. 配置第一个服务
+</details>
 
-点击菜单栏 Yurelay 图标 → **设置… → 服务**。
+## 🛡️ 隐私与安全
 
-- **先试本地查词**：选择“系统词典”，设为默认，无需 API Key。
-- **开始段落翻译**：选择智谱或其他服务，填写自己的 API Key，选择模型，点击“测试连接”；成功后设为默认并保存。智谱可从预置的 `glm-4-flash-250414` 开始。
+SensitiveGuard 在捕获文字进入结果窗口和发送给模型前，检查常见英文 BIP-39 助记词、私钥和 API Key 格式；命中后隐藏明文并阻止发送，未放行的内容不写入历史。检测可能误报或漏报，模型译文和 OCR 结果也需要结合上下文核对。
 
-远程服务需要有效账号、模型权限和可用额度。“测试连接”会发送固定示例文字，可能产生少量 API 费用。
+服务密钥仅保存在 **macOS Keychain**。本机 OCR、词典与朗读不需要远程模型；远程翻译会将原文发送给你选择的服务商。问题报告请勿附带密钥或私人捕获内容，安全问题见 [SECURITY.md](SECURITY.md)。
 
-## ⌨️ 日常使用与快捷键
-
-| 操作 | 默认快捷键 / 方式 | 说明 |
-| :--- | :--- | :--- |
-| 划词取词 | `Option + D` | 在其他应用中选中文字后，捕获至 Yurelay |
-| 截图 OCR | `Option + S` | 框选区域，在本机识别文字 |
-| 开始翻译 | `X` 或右侧箭头 | 检查原文后发起翻译；编辑文字时请点击箭头，`X` 会正常输入 |
-| 切换阅读 / 纯文本 | 译文区切换按钮 | 改变显示方式，不重复请求模型 |
-| 收录生词 | 候选词的添加按钮，或划选原文 | 保存语境，随时收起左侧栏继续阅读 |
-| 导出生词 | 设置 → 生词本 → 导出 | 选择 CSV、Markdown 或 Anki TSV |
-| 找回窗口 / 打开设置 | 菜单栏图标或 Dock | 切换其他应用不打断后台翻译 |
-
-取词和截图快捷键可在「设置 → 翻译与快捷键」中修改；发生快捷键冲突时，应用会给出提示。
+本文图片录制于真实 macOS 应用窗口，使用隔离的示例数据与本地演示响应；已裁去系统录制控件，动图经过剪辑。素材说明见 [docs/images/README.md](docs/images/README.md)。
 
 ## 🛠️ 本地构建与贡献
 
-欢迎反馈问题、改善翻译体验或提交代码。开发流程与架构约束见 [贡献指南](CONTRIBUTING.md)；安全问题请按 [安全报告流程](SECURITY.md) 私下反馈。
-
-<details>
-<summary>展开开发与构建命令</summary>
-
-准备 Xcode Command Line Tools、Rust（rustup）、Node.js 24 和 Python 3.11+。项目会使用固定的 Rust 工具链。
+准备 Xcode Command Line Tools、rustup、Node.js 24 和 Python 3.11+。仓库会选择固定的 Rust 工具链。
 
 ```sh
-npm ci                         # 安装锁定版本的依赖
-npx playwright install chromium # 安装浏览器测试环境
-npm run tauri -- dev            # 启动桌面开发模式
-./scripts/verify.sh             # 运行完整本地自检
-npm run bundle:mac              # 构建本机 .app 与 .dmg
+npm ci
+npx playwright install chromium
+npm run tauri -- dev
+./scripts/verify.sh
+npm run bundle:mac
 ```
 
-</details>
+开发流程、架构约束和发布验证见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 📄 开源协议与致谢
 
-Copyright © 2026 Yurelay Contributors. 项目按 **GNU GPL v3.0 only（`GPL-3.0-only`）** 开源，完整条款见 [LICENSE](LICENSE)。
+Copyright © 2026 Yurelay Contributors. 项目按 **GNU GPL v3.0 only（`GPL-3.0-only`）** 开源，见 [LICENSE](LICENSE)。
 
-Yurelay 的功能与交互设计参考了 [Easydict](https://github.com/tisfeng/Easydict) 和 [Bob](https://github.com/ripperhe/Bob)。开发过程中，也对照 Easydict 的划词、截图、OCR 与翻译服务接入实现进行了研究。感谢这些项目及其作者提供的思路与经验。
+Yurelay 的功能与交互设计参考了 [Easydict](https://github.com/tisfeng/Easydict) 和 [Bob](https://github.com/ripperhe/Bob)。开发过程中，也对照 Easydict 的划词、截图、OCR 与翻译服务接入实现进行了研究。感谢这些项目及其作者分享思路与经验。
 
 感谢 Tauri、Rust、Svelte 及相关开源社区。依赖、字体和服务商标志的许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。

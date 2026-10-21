@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod capture;
 mod commands;
 mod placement;
 mod settings_guard;
@@ -30,16 +31,18 @@ fn main() {
                     if event.state() == ShortcutState::Pressed {
                         // Freeze the source at key-down. Key release and queued
                         // AppKit work must not choose a different foreground app.
+                        // Keep busy presses ignored even if the first capture
+                        // finishes before this key is released or auto-repeated.
                         let target = yurelay_platform::selection_target();
                         state
                             .pressed_shortcuts
                             .lock()
                             .unwrap()
                             .entry(shortcut.id())
-                            .or_insert(target);
+                            .or_insert_with(|| state.captures.shortcut_press(target));
                         return;
                     }
-                    let Some(target) = state
+                    let Some(capture::ShortcutPress::Capture(target)) = state
                         .pressed_shortcuts
                         .lock()
                         .unwrap()
