@@ -266,6 +266,7 @@ fn main() {
             commands::save_configuration,
             commands::save_preferences,
             commands::configuration_settings,
+            commands::dictionary_guidance,
             commands::drag_window,
             commands::retry_shortcuts,
             commands::begin_shortcut_recording,

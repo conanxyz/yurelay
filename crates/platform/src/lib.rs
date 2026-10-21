@@ -308,7 +308,7 @@ pub fn lookup_dictionary(text: &str) -> Result<String, String> {
         let len =
             unsafe { macos::ad_dictionary_lookup(input.as_ptr(), bytes.as_mut_ptr(), bytes.len()) };
         if len == 0 {
-            return Err("本机词典未找到释义，请在 macOS 词典中启用所需词典。".into());
+            return Err("系统词典未找到匹配词条。".into());
         }
         if len >= bytes.len() {
             return Err("词典释义过长。".into());
@@ -367,5 +367,16 @@ pub async fn choose_export(name: &str) -> Result<Option<String>, String> {
     {
         let _ = name;
         Err("此平台暂不支持导出。".into())
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod dictionary_tests {
+    #[test]
+    fn missing_entry_does_not_claim_dictionaries_are_disabled() {
+        assert_eq!(
+            super::lookup_dictionary("yurelay_zxqv_unmatched_dictionary_probe_2026"),
+            Err("系统词典未找到匹配词条。".into())
+        );
     }
 }

@@ -55,6 +55,17 @@
     disclosed = $state(false);
   let content: HTMLElement;
   let current = $derived(tasks.find((task) => task.id === selected));
+  type DictionaryGuidance = {
+    issue: "sentence" | "too_long" | null;
+    profile_ids: string[];
+  };
+  let dictionaryGuidance = $state<DictionaryGuidance | null>(null);
+  let dictionaryPending = $state(false);
+  let dictionarySequence = 0;
+  let profileOverride = $state<string | null>(null);
+  let defaultProfileId = defaults.active_profile;
+  let pendingManualProfile: string | null = null;
+  let candidateProfileId = $state("");
   let vocabularyOpen = $state(false),
     sidebarWidth = $state(0);
   let vocabularyIdentity = "",
@@ -77,12 +88,6 @@
       }
     });
   });
-  let canStart = $derived(
-    !!draft.trim() &&
-      !current?.sensitive &&
-      (!current || !active(current)) &&
-      !submitting,
-  );
   let waiting = $derived(
     current?.status === "ready" || current?.status === "original_only",
   );
@@ -95,9 +100,18 @@
   let service = $derived(
     current && active(current)
       ? current.profile
-      : settings.profiles.find((p) => p.id === settings.active_profile),
+      : settings.profiles.find(
+          (p) => p.id === (profileOverride ?? settings.active_profile),
+        ),
   );
   let localDictionary = $derived(service?.provider === "system_dictionary");
+  let canStart = $derived(
+    !!draft.trim() &&
+      !current?.sensitive &&
+      (!current || !active(current)) &&
+      !submitting &&
+      !(localDictionary && (dictionaryPending || dictionaryGuidance?.issue)),
+  );
   let sourceProcessing = $derived(
     !!current &&
       current.source === "screenshot" &&
@@ -121,6 +135,89 @@
         sourceLanguage !== (current.source_language ?? "") ||
         targetLanguage !== current.target_language),
   );
+  let dictionaryNotFound = $derived(
+    localDictionary &&
+      !changed &&
+      !current?.sensitive &&
+      [
+        "系统词典未找到匹配词条。",
+        "本机词典未找到释义，请在 macOS 词典中启用所需词典。",
+      ].includes(current?.error ?? ""),
+  );
+  let dictionaryHint = $derived(
+    localDictionary && !current?.sensitive && !sourceProcessing && draft.trim()
+      ? dictionaryGuidance?.issue === "too_long"
+        ? t(
+            "查询内容过长，请缩短为单词或短语，或使用翻译服务。",
+            "The query is too long. Shorten it to a word or phrase, or use a translation service.",
+          )
+        : dictionaryGuidance?.issue
+          ? t(
+              "系统词典用于查询单词或短语；整句或段落请使用翻译服务。",
+              "The system dictionary looks up words and phrases. Use a translation service for sentences or paragraphs.",
+            )
+          : dictionaryNotFound
+            ? t(
+                "系统词典未找到匹配词条。",
+                "No matching dictionary entry was found.",
+              )
+            : ""
+      : "",
+  );
+  let translationChoices = $derived(
+    settings.profiles.filter((profile) =>
+      dictionaryGuidance?.profile_ids.includes(profile.id),
+    ),
+  );
+  $effect(() => {
+    const source = draft;
+    const configuration = settings;
+    const blocked = !!current?.sensitive || sourceProcessing;
+    const enabled = localDictionary;
+    const ticket = ++dictionarySequence;
+    dictionaryGuidance = null;
+    dictionaryPending = false;
+    if (!enabled || blocked || !source.trim() || !isTauri()) return;
+    dictionaryPending = true;
+    invoke<DictionaryGuidance>("dictionary_guidance", { text: source })
+      .then((guide) => {
+        if (ticket !== dictionarySequence) return;
+        dictionaryGuidance = guide;
+        const ids = guide?.profile_ids ?? [];
+        if (!ids.includes(candidateProfileId))
+          candidateProfileId = ids[0] ?? "";
+      })
+      .catch(() => {
+        // The authoritative query guard still applies if this optional preview fails.
+      })
+      .finally(() => {
+        if (ticket === dictionarySequence) dictionaryPending = false;
+      });
+    void configuration;
+  });
+  $effect(() => {
+    if (settings.active_profile !== defaultProfileId) {
+      defaultProfileId = settings.active_profile;
+      profileOverride = null;
+    }
+  });
+  $effect(() => {
+    if (
+      profileOverride &&
+      !settings.profiles.some((profile) => profile.id === profileOverride)
+    )
+      profileOverride = null;
+  });
+  function useTranslationService() {
+    if (
+      !translationChoices.some((profile) => profile.id === candidateProfileId)
+    )
+      return;
+    profileOverride = candidateProfileId;
+    disclosed = false;
+    error = "";
+    tick().then(() => trigger?.focus());
+  }
   let attempted = $derived(
     !!current &&
       !current.sensitive &&
@@ -129,10 +226,11 @@
       ),
   );
   let showResult = $derived(
-    disclosed && (submitting || (attempted && !changed)),
+    disclosed && !dictionaryHint && (submitting || (attempted && !changed)),
   );
   let toggleDisabled = $derived(
     !!current?.sensitive ||
+      (localDictionary && (dictionaryPending || !!dictionaryGuidance?.issue)) ||
       (!current && !draft.trim()) ||
       (!submitting &&
         (!current || !active(current)) &&
@@ -253,17 +351,19 @@
     });
   });
   let triggerLabel = $derived(
-    showResult
-      ? localDictionary
-        ? t("收起释义", "Collapse definition")
-        : t("收起译文", "Collapse translation")
-      : !current || waiting || changed
+    dictionaryNotFound
+      ? t("重新查询（X）", "Look up again (X)")
+      : showResult
         ? localDictionary
-          ? t("查询并展开（X）", "Look up and expand (X)")
-          : t("翻译并展开（X）", "Translate and expand (X)")
-        : localDictionary
-          ? t("展开释义", "Expand definition")
-          : t("展开译文", "Expand translation"),
+          ? t("收起释义", "Collapse definition")
+          : t("收起译文", "Collapse translation")
+        : !current || waiting || changed
+          ? localDictionary
+            ? t("查询并展开（X）", "Look up and expand (X)")
+            : t("翻译并展开（X）", "Translate and expand (X)")
+          : localDictionary
+            ? t("展开释义", "Expand definition")
+            : t("展开译文", "Expand translation"),
   );
   let detectionSequence = 0;
   $effect(() => {
@@ -309,6 +409,19 @@
     }
     if (current?.id !== draftId) {
       draftId = current?.id ?? "";
+      if (
+        !pendingManualProfile ||
+        current?.profile.id !== pendingManualProfile
+      ) {
+        profileOverride =
+          current &&
+          !["ready", "original_only", "capturing", "recognizing"].includes(
+            current.status,
+          )
+            ? current.profile.id
+            : null;
+      }
+      pendingManualProfile = null;
       submitting = false;
       sourceLanguage =
         current?.source_language ?? settings.source_language ?? "";
@@ -478,10 +591,12 @@
     if (!canStart) return;
     if (!current) {
       submitting = true;
+      pendingManualProfile = profileOverride;
       await action("translate_text", {
         text: draft,
         sourceLanguage: sourceLanguage || null,
         targetLanguage,
+        profileId: profileOverride,
       });
       submitting = false;
       return;
@@ -497,11 +612,16 @@
       editedText: draft,
       sourceLanguage: sourceLanguage || null,
       targetLanguage,
+      profileId: profileOverride,
     });
     if ((error || !isTauri()) && current?.id === id) submitting = false;
   }
   function toggleTranslation() {
     if (toggleDisabled) return;
+    if (dictionaryNotFound) {
+      translate();
+      return;
+    }
     if (!current) {
       translate();
       return;
@@ -922,6 +1042,58 @@
             >
           </div>
         </div>
+        {#if dictionaryHint}<section
+            class="dictionary-guidance"
+            aria-label={t("词典查询提示", "Dictionary lookup guidance")}
+          >
+            <p role="status">{dictionaryHint}</p>
+            {#if dictionaryNotFound}<p class="dictionary-guidance-detail">
+                {t(
+                  "可调整词形后重新查询，或选择翻译服务。",
+                  "Try another word form, or choose a translation service.",
+                )}
+              </p>{/if}
+            {#if translationChoices.length}
+              <div class="dictionary-service-choice">
+                <label
+                  >{t("翻译服务", "Translation service")}
+                  <select bind:value={candidateProfileId}>
+                    {#each translationChoices as profile}<option
+                        value={profile.id}
+                        >{serviceName(profile, locale)}{profile.model
+                          ? ` · ${profile.model}`
+                          : ""}</option
+                      >{/each}
+                  </select>
+                </label>
+                <button
+                  class="subtle-button"
+                  onclick={useTranslationService}
+                  disabled={!translationChoices.some(
+                    (p) => p.id === candidateProfileId,
+                  )}>{t("使用此服务", "Use this service")}</button
+                >
+              </div>
+              <p class="dictionary-guidance-detail">
+                {t(
+                  "切换仅用于当前查询；确认后按 X 或点击翻译按钮开始。",
+                  "This changes only the current query. Then press X or click Translate to start.",
+                )}
+              </p>
+            {:else if !dictionaryPending}
+              <p class="dictionary-guidance-detail">
+                {t(
+                  "暂无可选的翻译服务，请在设置的“服务”中检查配置。",
+                  "No translation service can be selected. Check its configuration under Services in Settings.",
+                )}
+              </p>
+              <button
+                class="subtle-button"
+                onclick={() => action("show_settings")}
+                >{t("打开设置", "Open settings")}</button
+              >
+            {/if}
+          </section>{/if}
         {#if showResult}<section
             id="translation-body"
             class="translation-body"
@@ -998,7 +1170,7 @@
           >{current ? statusName(current.status, locale) : ""}</span
         >
       </div>
-      {#if waiting && !submitting && !current?.sensitive}<div
+      {#if waiting && !submitting && !current?.sensitive && !dictionaryHint}<div
           class="capture-hint"
         >
           <span

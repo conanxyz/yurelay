@@ -3,6 +3,7 @@
 pub const MAX_INPUT_CHARACTERS: usize = 50_000;
 
 pub mod config;
+pub mod dictionary;
 pub mod engine;
 mod hex;
 pub mod provider;

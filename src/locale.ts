@@ -106,10 +106,13 @@ Object.assign(errors, {
   "请填写有道应用 ID。": "Enter the Youdao application ID.",
   "有道请求失败，请检查应用 ID、密钥、服务开通状态和额度。":
     "Youdao could not complete the request. Check the application ID, secret, enabled services and quota.",
-  "本机词典未找到释义，请在 macOS 词典中启用所需词典。":
-    "No definition was found. Enable the dictionaries you need in the macOS Dictionary app.",
   "系统词典用于查询单词或短语，请缩短原文后重试。":
     "The system dictionary looks up words and phrases. Shorten the source and try again.",
+  "请输入要查询的单词或短语。": "Enter a word or phrase to look up.",
+  "查询内容过长，请缩短为单词或短语，或使用翻译服务。": "The query is too long. Shorten it to a word or phrase, or use a translation service.",
+  "系统词典未找到匹配词条。": "No matching dictionary entry was found.",
+  "系统词典用于查询单词或短语；整句或段落请使用翻译服务。": "The system dictionary looks up words and phrases. Use a translation service for sentences or paragraphs.",
+  "所选服务已移除，请重新选择。": "The selected service was removed. Choose another service.",
   "系统词典查询失败。": "The system dictionary lookup failed.",
   "查询的生词过长。": "A vocabulary lookup term is too long.",
   "此平台暂不支持系统词典。":
@@ -288,7 +291,8 @@ Object.assign(errors, {
     "The selection is too large. Select a smaller region.",
 });
 export function errorText(value: unknown, locale: Locale): string {
-  const message = String(value ?? "");
+  let message = String(value ?? "");
+  if (message === "本机词典未找到释义，请在 macOS 词典中启用所需词典。") message = "系统词典未找到匹配词条。";
   if (locale === "zh") return message;
   if (errors[message]) return errors[message];
   if (message === "智谱温度必须介于 0 和 1 之间。")
