@@ -6,8 +6,13 @@ const LOOKAHEAD_LIMIT: usize = 4096;
 const FIELDS: [&str; 6] = ["word", "surface", "phonetic", "pos", "meaning", "level"];
 
 pub(super) fn source_contains_schema(source: &str) -> bool {
-    ["word", "surface"].iter().all(|field| {
-        source.contains(&format!("\"{field}\"")) || source.contains(&format!("'{field}'"))
+    FIELDS.iter().all(|field| {
+        ['"', '\''].iter().any(|quote| {
+            let key = format!("{quote}{field}{quote}");
+            source
+                .match_indices(&key)
+                .any(|(at, _)| source[at + key.len()..].trim_start().starts_with(':'))
+        })
     })
 }
 

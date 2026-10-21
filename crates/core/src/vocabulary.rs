@@ -523,9 +523,32 @@ mod tests {
     }
 
     #[test]
+    fn mentioning_field_names_does_not_disable_unmarked_metadata_recovery() {
+        for source in [
+            "The fields \"word\" and \"surface\" describe a lighthouse.",
+            "This lighthouse glossary mentions \"word\", \"surface\", \"phonetic\", \"pos\", \"meaning\" and \"level\".",
+            "This lighthouse example has only two properties: {\"word\": \"lighthouse\", \"surface\": \"lighthouse\"}.",
+        ] {
+            let output = format!("这是一段灯塔说明。\n```json\n{SYNTHETIC_METADATA}\n```");
+            for split in output.char_indices().map(|(at, _)| at) {
+                let mut parser = StreamParser::for_source(source);
+                let mut visible = parser.push(&output[..split]);
+                visible += &parser.push(&output[split..]);
+                assert!(parser.has_metadata(), "source={source:?} split={split}");
+                let (tail, items, notice) = parser.finish(source, &visible);
+                visible += &tail;
+                assert_eq!(visible.trim(), "这是一段灯塔说明。");
+                assert_eq!(items.len(), 1);
+                assert!(notice.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn ordinary_json_code_and_vocabulary_schema_in_source_remain_visible() {
         let schema_source =
             format!("This JSON is a code example:\n```json\n{SYNTHETIC_METADATA}\n```");
+        let single_quoted_source = schema_source.replace('"', "'");
         for (source, output) in [
             (
                 "An example of structured data.",
@@ -544,6 +567,10 @@ mod tests {
             (
                 schema_source.as_str(),
                 format!("这是一段 JSON 示例。\n---\n```json\n{SYNTHETIC_METADATA}\n```"),
+            ),
+            (
+                single_quoted_source.as_str(),
+                format!("这是一段代码示例。\n```json\n{SYNTHETIC_METADATA}\n```"),
             ),
         ] {
             for split in output.char_indices().map(|(at, _)| at) {
