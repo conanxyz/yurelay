@@ -2,6 +2,40 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::LazyLock};
 pub mod context;
 pub mod selection;
+mod unmarked;
+
+/// An explicit source selection takes precedence over local language detection.
+/// Unknown languages are not eligible for the English vocabulary notebook.
+pub fn english_source(source: Option<&str>, detected: Option<&str>) -> bool {
+    source
+        .filter(|language| !language.trim().is_empty())
+        .or(detected)
+        .is_some_and(|language| {
+            language
+                .trim()
+                .split(['-', '_'])
+                .next()
+                .is_some_and(|primary| primary.eq_ignore_ascii_case("en"))
+        })
+}
+
+pub fn require_english_source(source: Option<&str>, detected: Option<&str>) -> Result<(), String> {
+    if english_source(source, detected) {
+        Ok(())
+    } else {
+        Err("生词本仅支持英语原文。".into())
+    }
+}
+
+// This checks the lexical shape, not the language. The source-language check
+// also rejects non-English text that uses Latin letters.
+fn vocabulary_word(word: &str) -> bool {
+    let latin = |c: char| c.is_alphabetic() && c <= '\u{024f}';
+    word.chars().any(latin)
+        && word
+            .chars()
+            .all(|c| latin(c) || c.is_ascii_graphic() || c.is_whitespace() || "’‘–—".contains(c))
+}
 
 /// Space-delimited languages use words; unspaced CJK input uses a conservative
 /// three-character short-query boundary rather than treating whole paragraphs as one word.
@@ -60,7 +94,30 @@ fn term_display(word: &str, surface: &str) -> String {
     }
 }
 impl Candidate {
+    pub fn validate_source(
+        &mut self,
+        source_text: &str,
+        source_language: Option<&str>,
+        detected_language: Option<&str>,
+    ) -> Result<(), String> {
+        self.validate()?;
+        require_english_source(source_language, detected_language)?;
+        let sentence = context::normalize_whitespace(&self.context_sentence);
+        if sentence.is_empty()
+            || !context::normalize_whitespace(source_text).contains(&sentence)
+            || context::bind(&self.context_sentence, &self.surface, "").is_none()
+        {
+            return Err("请从英语原文中选择生词。".into());
+        }
+        Ok(())
+    }
+
     pub fn validate(&mut self) -> Result<(), String> {
+        if !vocabulary_word(&self.word)
+            || (!self.surface.is_empty() && !vocabulary_word(&self.surface))
+        {
+            return Err("生词本仅支持英语单词或短语。".into());
+        }
         let technical =
             technical_word(&self.word, &self.difficulty) || technical_word(&self.surface, "");
         self.word = if technical {
@@ -232,7 +289,7 @@ fn alternate_boundary(text: &str) -> (Option<usize>, bool) {
     (None, possible && text.len() <= 128)
 }
 
-/// Withholds only possible delimiter prefixes; metadata stays out of display.
+/// Streams prose immediately and bounds lookahead for possible metadata tails.
 #[derive(Default)]
 pub struct StreamParser {
     pending: String,
@@ -240,8 +297,16 @@ pub struct StreamParser {
     metadata: bool,
     overflow: bool,
     mid_line: bool,
+    preserve_unmarked: bool,
+    emitted_content: bool,
 }
 impl StreamParser {
+    pub fn for_source(source: &str) -> Self {
+        Self {
+            preserve_unmarked: unmarked::source_contains_schema(source),
+            ..Self::default()
+        }
+    }
     pub fn has_metadata(&self) -> bool {
         self.metadata
     }
@@ -285,6 +350,31 @@ impl StreamParser {
                 withheld.get_or_insert(start);
             }
         }
+        if !self.preserve_unmarked {
+            let starts = std::iter::once(0)
+                .filter(|_| !self.mid_line || self.pending.starts_with("---"))
+                .chain(self.pending.match_indices('\n').map(|(at, _)| at + 1))
+                .chain(self.pending.match_indices("---").filter_map(|(at, _)| {
+                    self.pending[..at]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace)
+                        .then_some(at)
+                }));
+            for start in starts {
+                if !self.emitted_content && self.pending[..start].trim().is_empty() {
+                    continue;
+                }
+                let (array, possible) = unmarked::boundary(&self.pending[start..]);
+                if let Some(array) = array {
+                    if boundary.is_none_or(|(at, _)| start < at) {
+                        boundary = Some((start, start + array));
+                    }
+                } else if possible {
+                    withheld = Some(withheld.map_or(start, |prior| prior.min(start)));
+                }
+            }
+        }
         if let Some((at, after)) = boundary {
             let visible = self.pending[..at].to_string();
             self.json = self.pending[after..].to_string();
@@ -306,6 +396,7 @@ impl StreamParser {
         let visible = self.pending[..cut].to_string();
         if !visible.is_empty() {
             self.mid_line = !visible.ends_with('\n');
+            self.emitted_content |= !visible.trim().is_empty();
         }
         self.pending.drain(..cut);
         visible
@@ -391,6 +482,196 @@ impl StreamParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const SYNTHETIC_METADATA: &str = r#"[{"word":"lighthouse","surface":"lighthouse","phonetic":"","pos":"n.","meaning":"灯塔","level":"B2"}]"#;
+
+    #[test]
+    fn unmarked_variants_work_with_single_character_chunks_and_reordered_fields() {
+        let metadata = serde_json::to_string_pretty(&serde_json::json!([{
+            "word":"lighthouse", "surface":"lighthouse", "phonetic":"", "pos":"n.",
+            "meaning":"灯塔；含有引号 \" 和括号 ] 的合成释义", "level":"B2"
+        }]))
+        .unwrap();
+        for prefix in [
+            " ---\n\n```json\n",
+            "\n---\r\n```JSON\r\n",
+            "\n```json\n",
+            "\n```\n",
+            "\n---\n",
+            "\n",
+        ] {
+            let output = format!(
+                "灯塔指引船只归航。{prefix}{metadata}{}",
+                if prefix.contains("```") { "\n```" } else { "" }
+            );
+            let mut parser = StreamParser::for_source("The lighthouse guides ships home.");
+            let mut visible = String::new();
+            for c in output.chars() {
+                visible += &parser.push(&c.to_string());
+                assert!(
+                    !visible.contains("\"word\""),
+                    "metadata leaked for {prefix:?}"
+                );
+            }
+            assert!(parser.has_metadata(), "{prefix:?}");
+            let (tail, candidates, notice) =
+                parser.finish("The lighthouse guides ships home.", &visible);
+            visible += &tail;
+            assert_eq!(visible.trim(), "灯塔指引船只归航。", "{prefix:?}");
+            assert_eq!(candidates.len(), 1);
+            assert!(notice.is_none());
+        }
+    }
+
+    #[test]
+    fn ordinary_json_code_and_vocabulary_schema_in_source_remain_visible() {
+        let schema_source =
+            format!("This JSON is a code example:\n```json\n{SYNTHETIC_METADATA}\n```");
+        for (source, output) in [
+            (
+                "An example of structured data.",
+                "示例。\n---\n```json\n[{\"label\":\"example\",\"value\":1}]\n```\n后文。"
+                    .to_string(),
+            ),
+            ("An empty list.", "空列表。\n```json\n[]\n```".to_string()),
+            (
+                "A script example.",
+                "脚本示例。\n```js\nconst word = 'hello';\n```".to_string(),
+            ),
+            (
+                "Two separate sections.",
+                "第一节。\n---\n第二节。".to_string(),
+            ),
+            (
+                schema_source.as_str(),
+                format!("这是一段 JSON 示例。\n---\n```json\n{SYNTHETIC_METADATA}\n```"),
+            ),
+        ] {
+            for split in output.char_indices().map(|(at, _)| at) {
+                let mut parser = StreamParser::for_source(source);
+                let mut visible = parser.push(&output[..split]);
+                visible += &parser.push(&output[split..]);
+                let (tail, items, notice) = parser.finish(source, &visible);
+                visible += &tail;
+                assert_eq!(visible, output, "source={source:?} split={split}");
+                assert!(items.is_empty() && notice.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn unmarked_lookahead_is_bounded_and_first_prose_chunk_is_immediate() {
+        let mut parser = StreamParser::for_source("A lighthouse by the sea.");
+        assert_eq!(parser.push("灯塔在海边。"), "灯塔在海边。");
+        let code = format!("\n```json\n[{{\"word\":\"{}", "é".repeat(3000));
+        let mut visible = parser.push(&code);
+        assert!(parser.pending.len() <= 4096);
+        let (tail, _, _) = parser.finish("A lighthouse by the sea.", "灯塔在海边。");
+        visible += &tail;
+        assert_eq!(visible, code);
+        let mut parser = StreamParser::for_source("An array is shown here.");
+        assert_eq!(parser.push("["), "[");
+    }
+
+    #[test]
+    fn confirmed_unmarked_metadata_keeps_malformed_and_oversized_tails_hidden() {
+        for tail in [", invalid JSON".to_string(), " ".repeat(65537)] {
+            let mut parser = StreamParser::for_source("The lighthouse guides ships home.");
+            let first = format!(
+                "灯塔指引船只归航。\n```json\n{}",
+                SYNTHETIC_METADATA.trim_end_matches(']')
+            );
+            assert_eq!(parser.push(&first).trim(), "灯塔指引船只归航。");
+            assert!(parser.has_metadata());
+            assert!(parser.push(&tail).is_empty());
+            let (visible, items, notice) =
+                parser.finish("The lighthouse guides ships home.", "灯塔指引船只归航。");
+            assert!(visible.is_empty() && items.is_empty() && notice.is_some());
+        }
+    }
+
+    #[test]
+    fn unmarked_fenced_vocabulary_does_not_leak_into_translation() {
+        let source = "The lighthouse guides ships home.";
+        let output = "灯塔指引船只归航。 ---\n\n```json\n[\n  {\"word\":\"lighthouse\",\"surface\":\"lighthouse\",\"phonetic\":\"\",\"pos\":\"n.\",\"meaning\":\"灯塔\",\"level\":\"B2\"}\n]\n```";
+        for split in output.char_indices().map(|(at, _)| at) {
+            let mut parser = StreamParser::for_source(source);
+            let mut visible = parser.push(&output[..split]);
+            visible += &parser.push(&output[split..]);
+            assert!(
+                parser.has_metadata(),
+                "unmarked vocabulary was not recognized at split {split}"
+            );
+            let (tail, items, notice) = parser.finish(source, &visible);
+            visible += &tail;
+            assert_eq!(visible.trim(), "灯塔指引船只归航。", "split={split}");
+            assert_eq!(items.len(), 1);
+            assert!(notice.is_none());
+        }
+    }
+
+    #[test]
+    fn vocabulary_requires_english_source_including_regional_language_codes() {
+        for (source, detected, expected) in [
+            (None, Some("en"), true),
+            (None, Some("en-GB"), true),
+            (Some("EN_us"), None, true),
+            (Some(""), Some("en"), true),
+            (Some("fr"), Some("en"), false),
+            (None, Some("fr"), false),
+            (None, Some("zh-Hans"), false),
+            (None, None, false),
+            (Some("enough"), None, false),
+        ] {
+            assert_eq!(english_source(source, detected), expected);
+        }
+    }
+
+    #[test]
+    fn collection_rejects_non_english_sources_and_translation_candidates() {
+        for term in ["OAuth2", "CI/CD", "C++", "foo::bar", "café"] {
+            assert!(vocabulary_word(term));
+        }
+        let mut candidate = Candidate {
+            word: "chip away".into(),
+            surface: "Chipping away".into(),
+            context_sentence: "Chipping away".into(),
+            ..Default::default()
+        };
+        candidate
+            .validate_source("Chipping away", None, Some("en"))
+            .unwrap();
+        assert!(
+            candidate
+                .validate_source("Chipping away", Some("fr"), Some("en"))
+                .is_err()
+        );
+        assert!(
+            candidate
+                .validate_source("Chipping away", None, None)
+                .is_err()
+        );
+        assert!(
+            candidate
+                .validate_source("A different source.", Some("en"), None)
+                .is_err()
+        );
+        candidate.word = "逐渐侵蚀".into();
+        assert!(candidate.validate().is_err());
+        candidate.word = "chip away".into();
+        candidate.surface = "逐渐侵蚀".into();
+        assert!(candidate.validate().is_err());
+    }
+
+    #[test]
+    fn metadata_cannot_use_a_translated_meaning_as_the_headword() {
+        let mut parser = StreamParser::default();
+        assert_eq!(parser.push(r#"逐渐侵蚀---VOCAB_JSON---[{"word":"逐渐侵蚀","surface":"Chipping away","meaning":"逐渐侵蚀"},{"word":"chip away","surface":"Chipping away","meaning":"逐渐侵蚀"}]"#), "逐渐侵蚀");
+        let (_, candidates, notice) = parser.finish("Chipping away", "逐渐侵蚀");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].word, "chip away");
+        assert!(notice.is_some());
+    }
+
     #[test]
     fn parser_keeps_all_valid_candidates_beyond_five() {
         let words = [

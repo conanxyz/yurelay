@@ -1,12 +1,12 @@
 :root,[data-theme="light"] {
- --canvas:#f2f4f1;--surface:#ffffff;--line:#dce3dd;--muted:#718077;--accent:#28685b;--accent-soft:#e3eee7;--pref-sidebar:#eaf0e9;--hover:#edf2ed;--focus:#28685b;--panel-tint:#f7faf7;--ink:#24392e;
+ --canvas:#f2f4f1;--surface:#ffffff;--line:#dce3dd;--muted:#718077;--accent:#28685b;--accent-soft:#e3eee7;--pref-sidebar:#eaf0e9;--hover:#edf2ed;--focus:#28685b;--panel-tint:#f7faf7;--ink:#24392e;--prompt-ink:#4b4b4b;
  color:#24392e;background:var(--canvas);color-scheme:light;
 }
 [data-theme="dark"] {
- --canvas:#14211c;--surface:#1c2c24;--line:#354a3d;--muted:#a0b4a5;--accent:#aed5b6;--accent-soft:#304939;--pref-sidebar:#18271f;--hover:#2a4032;--focus:#aed5b6;--panel-tint:#203329;--ink:#e6eee5;
+ --canvas:#14211c;--surface:#1c2c24;--line:#354a3d;--muted:#a0b4a5;--accent:#aed5b6;--accent-soft:#304939;--pref-sidebar:#18271f;--hover:#2a4032;--focus:#aed5b6;--panel-tint:#203329;--ink:#e6eee5;--prompt-ink:#d1d1d1;
  color:#e6eee5;background:var(--canvas);color-scheme:dark;
 }
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]):not([data-theme="dark"]){--canvas:#14211c;--surface:#1c2c24;--line:#354a3d;--muted:#a0b4a5;--accent:#aed5b6;--accent-soft:#304939;--pref-sidebar:#18271f;--hover:#2a4032;--focus:#aed5b6;--panel-tint:#203329;--ink:#e6eee5;color:#e6eee5;background:var(--canvas);color-scheme:dark;}}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]):not([data-theme="dark"]){--canvas:#14211c;--surface:#1c2c24;--line:#354a3d;--muted:#a0b4a5;--accent:#aed5b6;--accent-soft:#304939;--pref-sidebar:#18271f;--hover:#2a4032;--focus:#aed5b6;--panel-tint:#203329;--ink:#e6eee5;--prompt-ink:#d1d1d1;color:#e6eee5;background:var(--canvas);color-scheme:dark;}}
 body {font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
 button,input,select,textarea {font-family:inherit;}
 button {transition:background-color .15s,color .15s,border-color .15s,transform .15s;}
@@ -323,7 +323,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .section-heading {display:flex;align-items:center;justify-content:space-between;gap:12px;}
 .section-heading h2,.section-heading h3 {margin:0;font-size:1em;}
 .preferences-shell .prompt-settings textarea,.preferences-shell .word-note textarea {display:block;box-sizing:border-box;width:100%;border-radius:14px;padding:14px;background:var(--panel-tint);color:var(--ink);border:0;box-shadow:inset 0 0 0 1px var(--line);line-height:1.65;font-size:.9em;resize:vertical;margin:12px 0 8px;}
-.preferences-shell .prompt-settings textarea.default-prompt {color:var(--muted);}
+.preferences-shell .prompt-settings textarea.default-prompt {color:var(--prompt-ink);}
 .guard-setting {margin-bottom:18px!important;}
 .guard-setting label {display:flex;flex-direction:row;align-items:center;gap:12px;line-height:1.7;}
 .sensitive-mask {padding:22px 20px;display:flex;flex-direction:column;align-items:flex-start;gap:14px;}
@@ -406,8 +406,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .preferences-shell .model-suggestions .selected-model {background:var(--surface);color:var(--accent);box-shadow:inset 0 0 0 1px var(--line);}
 .model-catalog>.subtle {margin:9px 0 0;}
 .prompt-mode-switch {display:flex;gap:4px;width:fit-content;padding:4px;margin-top:14px;border-radius:999px;background:var(--panel-tint);box-shadow:inset 0 0 0 1px var(--line);}
-.preferences-shell .prompt-mode-switch button {border:0;border-radius:999px;background:transparent;color:var(--muted);font-size:.8em;padding:6px 13px;min-height:30px;}
-.preferences-shell .prompt-mode-switch button[aria-pressed=true] {background:var(--accent-soft);color:var(--accent);}
+.preferences-shell .prompt-mode-switch button {border:0;border-radius:999px;background:transparent;color:var(--prompt-ink);font-size:.8em;padding:6px 13px;min-height:30px;}
+.preferences-shell .prompt-mode-switch button[aria-pressed=true] {background:var(--accent-soft);}
 .extraction-setting {margin-top:16px;}
 .extraction-setting>span {display:flex;flex-direction:column;gap:3px;}
 .result-actions {display:flex;align-items:center;gap:8px;min-height:32px;margin:8px 16px 12px;}

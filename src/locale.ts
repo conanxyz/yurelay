@@ -76,6 +76,11 @@ const errors: Record<string, string> = {
   "请输入有效的服务地址。": "Enter a valid service URL.",
   "请填写或选择模型。": "Enter or choose a model.",
   "两个快捷键不能相同。": "The two shortcuts must be different.",
+  "生词本仅支持英语原文。":
+    "Vocabulary is only available for English source text.",
+  "生词本仅支持英语单词或短语。":
+    "Only English words or phrases can be added to vocabulary.",
+  "请从英语原文中选择生词。": "Select vocabulary from the English source text.",
   "请使用 HTTPS；仅本机回环地址支持 HTTP。":
     "Use HTTPS. HTTP is only supported for local loopback addresses.",
   "这看起来是完整请求地址，请选择“完整地址”。":

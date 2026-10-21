@@ -15,12 +15,16 @@
     locale,
     open,
     onToggle,
+    sourceText,
+    sourceLanguage,
     activeWord = "",
   }: {
     candidates: VocabularyCandidate[];
     locale: Locale;
     open: boolean;
     onToggle: () => void;
+    sourceText: string;
+    sourceLanguage: string;
     activeWord?: string;
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
@@ -156,6 +160,8 @@
     try {
       const item = await invoke<VocabularyItem>("vocabulary_collect", {
         candidate: c,
+        sourceText,
+        sourceLanguage: sourceLanguage || null,
       });
       sequence++;
       items = [...items.filter((i) => i.id !== item.id), item];
@@ -169,7 +175,20 @@
 
 <svelte:window
   onkeydown={(e) => {
-    if (open && e.key === "Escape") {
+    if (
+      open &&
+      e.key === "Escape" &&
+      !e.defaultPrevented &&
+      !e.repeat &&
+      !e.isComposing &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      !document.querySelector("dialog[open]") &&
+      !(e.target as HTMLElement)?.closest('select,[role="combobox"]') &&
+      !document.activeElement?.closest('select,[role="combobox"]')
+    ) {
       e.preventDefault();
       toggleSide();
     }

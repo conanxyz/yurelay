@@ -307,6 +307,26 @@ pub fn export(items: &[VocabularyItem], format: &str) -> Result<String, String> 
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn translated_headwords_cannot_be_persisted() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = Storage::open(root.path().into(), system_clock())
+            .await
+            .unwrap();
+        assert!(
+            storage
+                .collect_word(Candidate {
+                    word: "逐渐侵蚀".into(),
+                    surface: "Chipping away".into(),
+                    context_sentence: "Chipping away".into(),
+                    ..Default::default()
+                })
+                .await
+                .is_err()
+        );
+        assert!(storage.vocabulary().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn lookup_handles_unbounded_counts_and_returns_unique_matches_in_request_order() {
         let root = tempfile::tempdir().unwrap();
         let storage = Storage::open(root.path().into(), system_clock())

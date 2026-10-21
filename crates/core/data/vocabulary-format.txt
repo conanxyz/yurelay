@@ -1,4 +1,5 @@
 Output the translation first, then exactly ---VOCAB_JSON--- and a valid JSON array (no markdown fences). Use only these six fields:
 [{"word":"dictionary lemma","surface":"exact source spelling","phonetic":"US IPA for ordinary words; empty for terms and acronyms","pos":"n. | v. | adj. | adv. | phrase | idiom","meaning":"concise meaning in context in the target language","level":"B2 | C1 | C2 | Idiom | Term"}]
 Never copy or translate whole sentences into the JSON. Escape quotes and backslashes in JSON strings.
+The separator is a literal machine delimiter, not a Markdown horizontal rule. Put ---VOCAB_JSON--- on its own line and start the array on the following line. Never shorten the separator to --- or omit VOCAB_JSON. Never wrap the array in a code fence.
 For technical terms, protocols, acronyms and code identifiers (OAuth2, SameSite, IdP), preserve standard capitalization in word and use level Term. Set phonetic to an empty string; never invent IPA for them. Ordinary vocabulary uses its dictionary lemma.

@@ -9,6 +9,7 @@ async function fixture(page: Page, initiallySelected=true) {
     w.previewResults = {};w.deferredPreviewWords=[];w.previewResolvers=[];
     w.lookupFailure='';w.deferLookup=false;w.lookupResolvers=[];
     w.guidanceResponses={};w.deferGuidance=false;w.guidanceResolvers=[];
+    w.detectedLanguage='en';
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     const callbacks: Record<number, Function> = {}, events: Record<string, number> = {};
     let callback = 0;
@@ -64,7 +65,7 @@ async function fixture(page: Page, initiallySelected=true) {
           if(!item.contexts.some((v:any)=>norm(v.context_sentence)===norm(c.context_sentence))){item.review_count++;item.contexts.push({...c,id:'context-'+item.review_count});}
           item.status='learning';return structuredClone(item);
         }
-        if (cmd === 'detect_text_language') return 'en';
+        if (cmd === 'detect_text_language') return w.detectedLanguage;
         if (cmd === 'subscribe') { w.wire = (m: unknown) => args.onEvent.onmessage(m); return 'fixture'; }
         if (cmd === 'translate_text') {
           const profile=w.settings.profiles.find((p:any)=>p.id===(args.profileId??w.settings.active_profile));
@@ -169,6 +170,72 @@ test('source editing retains focus across app reactivation; language controls do
   await page.locator('.window-name').click();
   await page.keyboard.press('x');
   expect(await requests(page)).toBe(1);
+});
+
+for (const source of ['selection', 'screenshot']) {
+  test(`Escape hides a ${source} result while preserving the draft and active translation`, async ({ page }) => {
+    await fixture(page);
+    const editor = page.getByRole('textbox', { name: 'Source text' });
+    await editor.fill('Synthetic edited source');
+    await page.evaluate(source => { (window as any).task.source = source; }, source);
+    await page.locator('.disclosure-control').click();
+    await page.evaluate(() => {
+      const w = window as any;
+      Object.assign(w.task, { status: 'translating', translation: 'Partial translation', revision: w.task.revision + 1 });
+      w.wire({ type: 'events', events: [{ type: 'changed', task: structuredClone(w.task) }] });
+    });
+    await page.getByRole('button', { name: 'Pin', exact: true }).click();
+    await editor.focus();
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'hide_window').length)).toBe(1);
+    await expect(editor).toHaveValue('Synthetic edited source');
+    await expect(page.getByRole('button', { name: 'Unpin', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => ({ status: (window as any).task.status, translation: (window as any).task.translation }))).toEqual({ status: 'translating', translation: 'Partial translation' });
+    expect(await page.evaluate(() => (window as any).calls.filter((c: any) => ['stop_task', 'remove_task'].includes(c.cmd)))).toEqual([]);
+    expect(await requests(page)).toBe(1);
+    await complete(page);
+    expect(await page.evaluate(() => (window as any).task.status)).toBe('completed');
+    await expect(editor).toHaveValue('Synthetic edited source');
+  });
+}
+
+test('Escape hides a ready result without translating and advertises its shortcut', async ({ page }) => {
+  await fixture(page);
+  const hide = page.getByRole('button', { name: 'Hide', exact: true });
+  await expect(hide).toHaveAttribute('aria-keyshortcuts', 'Escape');
+  await expect(hide).toHaveAttribute('title', 'Hide (Esc)');
+  const editor = page.getByRole('textbox', { name: 'Source text' });
+  await editor.fill('Unsubmitted synthetic draft');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'hide_window').length)).toBe(1);
+  expect(await requests(page)).toBe(0);
+  await expect(editor).toHaveValue('Unsubmitted synthetic draft');
+  expect(await page.evaluate(() => (window as any).task.status)).toBe('ready');
+});
+
+test('Escape respects modifiers, composition, repeats, dialogs and native select menus', async ({ page }) => {
+  await fixture(page);
+  for (const key of ['Shift+Escape', 'Control+Escape', 'Alt+Escape', 'Meta+Escape']) await page.keyboard.press(key);
+  await page.evaluate(() => {
+    for (const options of [{ repeat: true }, { isComposing: true }]) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...options }));
+    }
+    const consumed = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    consumed.preventDefault();
+    window.dispatchEvent(consumed);
+    const dialog = document.createElement('dialog');
+    dialog.textContent = 'Synthetic dialog';
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => document.querySelector('dialog')?.remove());
+  await page.getByLabel('Translation language', { exact: true }).focus();
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'hide_window'))).toEqual([]);
+  await page.locator('.disclosure-control').focus();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'hide_window').length)).toBe(1);
 });
 
 test('target label, select and disclosure never overlap at supported sizes', async ({ page }) => {
@@ -507,6 +574,8 @@ test('left vocabulary rail supports dark mode, scrolling and manual collapse wit
  await page.getByRole('textbox',{name:'Source text'}).click();await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();
  await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary-left-dark.png'});
  await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeFocused();await expect(page.locator('.vocabulary-side-card')).toHaveCount(0);expect(await requests(page)).toBe(0);
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='hide_window'))).toEqual([]);
+ await page.keyboard.press('Escape');await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='hide_window').length)).toBe(1);
 });
 
 test('stream appends do not move a reader who has scrolled upward',async({page})=>{
@@ -558,6 +627,89 @@ async function selectSourceWord(page: Page, word: string) {
   },word);
 }
 
+for (const [source, language, word] of [
+  ['Bonjour tout le monde.', 'fr', 'Bonjour'],
+  ['这是包含 API 的中文原文。', 'zh-Hans', 'API'],
+  ['Ambiguous', null, 'Ambiguous'],
+] as const) {
+  test(`non-English or unknown source ${language} does not offer vocabulary`, async ({ page }) => {
+    await fixture(page);
+    await page.evaluate(({ source, language }) => {
+      const w = window as any;
+      w.detectedLanguage = language;
+      Object.assign(w.task, { original_text: source, detected_language: language, status: 'completed', translation: 'Synthetic translation.', revision: 2,
+        vocabulary: [{word:'API',surface:'API',context_sentence:source,context_meaning:'Synthetic stale candidate'}] });
+      w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});
+    }, { source, language });
+    await page.locator('.disclosure-control').click();
+    await selectSourceWord(page, word);
+    // Cover both the preview debounce and the later language detection result.
+    await page.waitForTimeout(450);
+    await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
+    expect(await previewRequests(page)).toEqual([]);
+    expect(await page.evaluate(() => (window as any).calls.filter((c:any) => c.cmd === 'vocabulary_collect'))).toEqual([]);
+  });
+}
+
+test('translation clicks and selections never preview or collect vocabulary in either reading mode', async ({ page }) => {
+  await selectionFixture(page);
+  const before = await cardWords(page);
+  for (const mode of ['Read', 'Plain text']) {
+    await page.getByRole('button', {name:mode, exact:true}).click();
+    const translation = page.locator('.translation-prose');
+    await translation.click();
+    await translation.evaluate(el => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,button:0}));
+    });
+    await page.waitForTimeout(180);
+    expect(await previewRequests(page)).toEqual([]);
+    expect(await cardWords(page)).toEqual(before);
+    expect(await page.evaluate(() => (window as any).calls.filter((c:any) => c.cmd === 'vocabulary_collect'))).toEqual([]);
+  }
+  await selectSourceWord(page, 'team');
+  await expect.poll(() => previewRequests(page)).toHaveLength(1);
+  await page.locator('.translation-prose').click();
+  await page.waitForTimeout(180);
+  expect(await previewRequests(page)).toHaveLength(1);
+  expect(await page.evaluate(() => (window as any).calls.filter((c:any) => c.cmd === 'vocabulary_collect'))).toEqual([]);
+});
+
+test('an explicit English source selection enables preview when automatic detection is uncertain', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    const w=window as any;
+    w.detectedLanguage=null;
+    Object.assign(w.task,{original_text:'Chipping away',detected_language:null,revision:2});
+    w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});
+  });
+  await page.getByLabel('Source language', {exact:true}).selectOption('en');
+  await selectSourceWord(page,'Chipping away');
+  await expect.poll(() => previewRequests(page)).toHaveLength(1);
+  expect((await previewRequests(page))[0].args.sourceLanguage).toBe('en');
+  expect(await page.evaluate(()=>(window as any).words)).toEqual([]);
+});
+
+test('changing the source language discards a pending English vocabulary preview', async ({ page }) => {
+  await selectionFixture(page);
+  await page.evaluate(() => { (window as any).deferredPreviewWords = ['team']; });
+  await selectSourceWord(page, 'team');
+  await expect.poll(() => previewRequests(page)).toHaveLength(1);
+  await page.getByLabel('Source language', {exact:true}).selectOption('fr');
+  await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
+  await page.evaluate(() => {
+    const w=window as any;
+    w.previewResolvers[0].resolve(w.previewResults.team);
+  });
+  await page.waitForTimeout(180);
+  await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
+});
+
 test('source selections preview at the top of the sidebar, deduplicate and save only on Add',async({page})=>{
   await selectionFixture(page);
   const sourceBox=await page.getByRole('textbox',{name:'Source text'}).boundingBox();
@@ -567,7 +719,7 @@ test('source selections preview at the top of the sidebar, deduplicate and save 
   await expect(page.locator('.word-selection-bubble')).toHaveCount(0);
   expect(await page.evaluate(()=>(window as any).words)).toEqual([]);
   expect(await page.evaluate(()=>(window as any).calls.filter((call:any)=>['vocabulary_collect','vocabulary_manual'].includes(call.cmd)))).toEqual([]);
-  expect((await previewRequests(page))[0].args).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1});
+  expect((await previewRequests(page))[0].args).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1,sourceLanguage:null});
   await expect(vocabularyCards(page).first()).toHaveClass(/active/);
   await selectSourceWord(page,'resilient');
   await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
@@ -582,6 +734,7 @@ test('source selections preview at the top of the sidebar, deduplicate and save 
   expect(await requests(page)).toBe(0);
   const card=page.locator('.vocabulary-side-card[data-word="change"]');
   await card.getByRole('button',{name:'Add',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_collect').at(-1).args.sourceText)).toBe('A resilient team adapts to change.');
   await expect(card.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
   expect(await page.evaluate(()=>(window as any).words.map((word:any)=>word.word))).toEqual(['change']);
 });
@@ -722,7 +875,7 @@ test('clicking inside a source word previews its complete token without changing
   });
   await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
   await expect(editor).toHaveValue('A resilient team adapts to change.');
-  expect((await previewRequests(page))[0].args).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1});
+  expect((await previewRequests(page))[0].args).toEqual({sourceText:'A resilient team adapts to change.',selectionStart:12,selectionEnd:16,taskId:'fixture',attempt:1,sourceLanguage:null});
   expect(await requests(page)).toBe(0);
 });
 

@@ -335,13 +335,17 @@ impl Engine {
             .book
             .get(&handle.id)
             .map(|t| (t.source_language, t.target_language));
+        let english_source = crate::vocabulary::english_source(
+            languages.as_ref().and_then(|(source, _)| source.as_deref()),
+            detected.as_deref(),
+        );
         if self.guard_text(&handle.id, &text, languages, detected.clone()) {
             return;
         }
         self.book.set_extraction(
             &handle.id,
             crate::vocabulary::extraction_enabled(
-                self.auto_vocabulary.load(Ordering::Relaxed),
+                self.auto_vocabulary.load(Ordering::Relaxed) && english_source,
                 &text,
             ),
             self.now(),
@@ -653,7 +657,7 @@ impl Engine {
             Ok(false) => Err(provider::Error::Cancelled),
             Err(error) => Err(provider::Error::Protocol(error)),
         };
-        let mut parser = crate::vocabulary::StreamParser::default();
+        let mut parser = crate::vocabulary::StreamParser::for_source(task.query_text());
         let parse_output = task.extract_vocabulary
             && !local_dictionary
             && task.profile.provider != crate::config::Provider::Youdao;
@@ -910,8 +914,14 @@ impl Engine {
             .book
             .languages_queued(id, source, target, detected, (self.clock)())
             .ok_or("此任务已不在等待队列。")?;
-        let enabled =
-            crate::vocabulary::extraction_enabled(live.settings.auto_vocabulary, task.query_text());
+        let enabled = crate::vocabulary::extraction_enabled(
+            live.settings.auto_vocabulary
+                && crate::vocabulary::english_source(
+                    task.source_language.as_deref(),
+                    task.detected_language.as_deref(),
+                ),
+            task.query_text(),
+        );
         let task = self
             .book
             .set_extraction(id, enabled, self.now())
@@ -1627,6 +1637,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vocabulary_extraction_requires_english_and_rechecks_language_on_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let (engine, _) = configured(root.path().into(), Retention::Disabled).await;
+        for (source, detected, expected) in [
+            ("Chipping away", Some("en"), true),
+            ("Bonjour tout le monde", Some("fr"), false),
+            ("这是包含 API 的中文原文", Some("zh-Hans"), false),
+            ("Ambiguous", None, false),
+        ] {
+            let handle = engine.begin(Source::Selection).await.unwrap();
+            engine.accept_detected_text(&handle, source.into(), 0, detected.map(str::to_owned));
+            let task = engine.book.get(&handle.id).unwrap();
+            assert_eq!(task.status, Status::Ready);
+            assert_eq!(task.extract_vocabulary, expected);
+            if expected {
+                engine
+                    .retry_languages(
+                        &handle.id,
+                        None,
+                        Some((Some("fr".into()), "zh-Hans".into())),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                let completed = until(&engine, &handle.id, |t| t.status == Status::Completed).await;
+                assert!(!completed.extract_vocabulary);
+                assert!(completed.vocabulary.is_empty());
+            }
+        }
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn system_dictionary_needs_no_model_key_or_language_change() {
         struct Dictionary(Arc<AtomicUsize>);
         impl LocalDictionary for Dictionary {
@@ -2201,6 +2244,7 @@ mod tests {
         .await
         .unwrap();
         let mut settings = engine.configuration().await.settings;
+        settings.source_language = "en".into();
         settings.profiles[0].endpoint = format!("http://{address}/v1");
         settings.profiles[0].model = "fixture".into();
         engine
@@ -2234,6 +2278,95 @@ mod tests {
         assert_eq!(second.vocabulary, first.vocabulary);
         engine.shutdown().await;
     }
+    #[tokio::test]
+    async fn unmarked_metadata_finishes_visible_translation_and_saves_only_clean_results() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, tail) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 16384];
+            let received = socket.read(&mut request).await.unwrap();
+            assert!(received > 0, "client must start the fixture request");
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await.unwrap();
+            let first = "灯塔引导船只驶入港口。 ---\n\n```json\n[{\"word\":\"lighthouse\",\"surface\":\"lighthouse\",\"phonetic\":\"\",\"pos\":\"n.\",\"meaning\":\"灯塔\",\"level\":\"B2\"}";
+            let event = format!(
+                "data: {}\n\n",
+                serde_json::json!({"choices":[{"delta":{"content":first},"finish_reason":null}]})
+            );
+            socket.write_all(event.as_bytes()).await.unwrap();
+            tail.await.unwrap();
+            let rest = ",{\"word\":\"harbor\",\"surface\":\"harbor\",\"phonetic\":\"\",\"pos\":\"n.\",\"meaning\":\"港口\",\"level\":\"B2\"}]\n```";
+            let event = format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                serde_json::json!({"choices":[{"delta":{"content":rest},"finish_reason":null}]})
+            );
+            socket.write_all(event.as_bytes()).await.unwrap();
+        });
+        let root = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            root.path().into(),
+            Arc::new(MemoryCredentials::default()),
+            storage::system_clock(),
+        )
+        .await
+        .unwrap();
+        let mut settings = engine.configuration().await.settings;
+        settings.source_language = "en".into();
+        settings.profiles[0].endpoint = format!("http://{address}/v1");
+        settings.profiles[0].model = "fixture".into();
+        engine
+            .save_configuration(settings, BTreeMap::new())
+            .await
+            .unwrap();
+        let source = "The lighthouse guides ships into the harbor.";
+        let id = engine.manual(source.into()).await.unwrap();
+        let visible = until(&engine, &id, |task| {
+            task.status == Status::Completed
+                && task.vocabulary_state == VocabularyState::Extracting
+                && task.save_state == SaveState::Saved
+        })
+        .await;
+        assert_eq!(visible.translation.trim(), "灯塔引导船只驶入港口。");
+        assert!(visible.vocabulary.is_empty());
+        assert_eq!(engine.permits.available_permits(), 2);
+        assert_eq!(
+            engine
+                .storage
+                .task(id.clone())
+                .await
+                .unwrap()
+                .unwrap()
+                .translation,
+            visible.translation
+        );
+        release.send(()).unwrap();
+        server.await.unwrap();
+        let finished = until(&engine, &id, |task| {
+            task.vocabulary_state == VocabularyState::Complete
+                && task.save_state == SaveState::Saved
+        })
+        .await;
+        assert_eq!(finished.translation, visible.translation);
+        assert_eq!(
+            finished
+                .vocabulary
+                .iter()
+                .map(|c| c.word.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lighthouse", "harbor"]
+        );
+        let saved = engine.storage.task(id).await.unwrap().unwrap();
+        assert_eq!(saved.translation, finished.translation);
+        assert_eq!(saved.vocabulary, finished.vocabulary);
+        let cached = engine.manual(source.into()).await.unwrap();
+        let cached = until(&engine, &cached, |task| task.status == Status::Completed).await;
+        assert!(cached.cache_hit);
+        assert_eq!(cached.translation, finished.translation);
+        assert_eq!(cached.vocabulary, finished.vocabulary);
+        engine.shutdown().await;
+    }
+
     #[tokio::test]
     async fn short_same_language_word_still_gets_dictionary_analysis() {
         let root = tempfile::tempdir().unwrap();
@@ -2279,6 +2412,7 @@ mod tests {
             .await
             .unwrap();
             let mut settings = engine.configuration().await.settings;
+            settings.source_language = "en".into();
             settings.profiles[0].endpoint = format!("http://{addr}/v1");
             settings.profiles[0].model = "fixture".into();
             engine
@@ -2338,6 +2472,7 @@ mod tests {
         .await
         .unwrap();
         let mut settings = engine.configuration().await.settings;
+        settings.source_language = "en".into();
         settings.profiles[0].endpoint = format!("http://{addr}/v1");
         settings.profiles[0].model = "fixture".into();
         engine
@@ -2367,6 +2502,7 @@ mod tests {
         assert!(!task.extract_vocabulary);
         assert_eq!(task.vocabulary_state, VocabularyState::Disabled);
         let mut settings = engine.configuration().await.settings;
+        settings.source_language = "en".into();
         settings.auto_vocabulary = false;
         engine
             .save_configuration(settings.clone(), BTreeMap::new())

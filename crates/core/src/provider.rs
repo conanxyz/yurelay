@@ -11,7 +11,7 @@ use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
 // Partition cached translations when the built-in translation instructions change.
-pub const PROMPT_VERSION: u32 = 14;
+pub const PROMPT_VERSION: u32 = 15;
 pub const DEFAULT_PROMPT: &str = include_str!("../data/translation-prompt.txt");
 
 pub const TRANSLATION_ONLY: &str = include_str!("../data/translation-only-format.txt");

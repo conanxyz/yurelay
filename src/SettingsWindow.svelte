@@ -533,7 +533,10 @@
                     >{t(
                       "自动提炼生词",
                       "Automatically extract vocabulary",
-                    )}</span
+                    )}<small class="subtle">{t(
+                        "仅适用于英语原文；点击译文不会收录生词。",
+                        "English source text only; clicking the translation does not add vocabulary.",
+                      )}</small></span
                   ></label
                 >
               </fieldset>
