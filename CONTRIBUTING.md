@@ -44,8 +44,8 @@ where relevant. Report native and mocked browser coverage separately.
 
 Do not commit reference repos (`Easydict/`), build outputs, screenshots of private
 content, databases, logs, environment files or credentials. Use fake fixture keys.
-Keep development notes in ignored `docs/` or `.ai-notes/`. Only shareable
-product and PR images under `docs/images/` are tracked from that directory.
+Keep development notes in ignored `docs/` or `.ai-notes/`. Public usage guides `docs/FAQ.md` and `docs/FAQ_cn.md`, plus shareable product
+and PR media under `docs/images/`, are tracked from that directory.
 Run `python3 scripts/audit.py --staged` before committing. For an initial import or
 security-sensitive change, also run Gitleaks with full redaction on an export of
 the staged source; the lightweight built-in scanner is not comprehensive.

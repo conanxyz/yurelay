@@ -84,6 +84,8 @@ pnpm-debug.log*
 /vocabulary-left-sidebar.md
 /vocabulary-pipeline-hardening.md
 
-# Development notes stay local; only shareable product/PR images are tracked.
+# Development notes stay local; explicitly allow public guides and product/PR media.
 /docs/*
 !/docs/images/
+!/docs/FAQ.md
+!/docs/FAQ_cn.md

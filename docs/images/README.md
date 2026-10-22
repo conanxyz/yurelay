@@ -1,8 +1,25 @@
 # README media
 
-## Current interface examples — 2026-10-22
+## Five-feature demos — 2026-10-23
 
-The `readme-current-*` images used in the English and Chinese READMEs show the current Svelte components rendered by local Playwright fixtures. They are **browser interface captures, not native macOS screenshots or generated UI illustrations**. All labels are Chinese. No real provider request, API key, Keychain entry, captured document or user history was used.
+The main READMEs display the language-matched 15-second demo directly below the introduction, in addition to the logo and badges. Earlier screenshots remain here as reference material and are no longer embedded in the READMEs.
+
+| Language | GIF | MP4 |
+| --- | --- | --- |
+| Chinese | [yurelay-features-zh.gif](yurelay-features-zh.gif) | [yurelay-features-zh.mp4](yurelay-features-zh.mp4) |
+| English | [yurelay-features-en.gif](yurelay-features-en.gif) | [yurelay-features-en.mp4](yurelay-features-en.mp4) |
+
+- Both editions cover screenshot OCR, selection translation, the macOS dictionary, reply composition and automatic PDF line-break cleanup. Each feature gets 2.6 seconds, followed by a two-second brand ending.
+- The Chinese opening uses “截取画面，识别文字。” The English edition uses English interface labels and localized examples.
+- GIFs are 1280×720 at 15 fps, loop silently and are visible without expanding a section. A matching `*-poster.png` frame is selected when the reader prefers reduced motion. MP4 files are 1440×810 at 30 fps with music and UI sounds.
+- Yurelay screens come from current Svelte components rendered with local synthetic fixtures. Capture rectangles and selection highlights on the sample document are explanatory graphics, **not native macOS capture recordings**. OCR, dictionary and model responses are preset examples, not quality or latency evidence.
+- The footage contains no private documents, real credentials, provider traffic, Keychain records or user history. It does not validate native permissions, OCR, dictionary APIs or global shortcuts.
+- Automatic cleanup specifically illustrates conservative joining of mid-sentence PDF line breaks and the Undo cleanup control; it does not claim grammar correction or arbitrary rewriting.
+- The films were composed with huashu-motion using the original Yurelay logo and existing product colors. Chinese titles use Noto Sans SC; English titles use Outfit. Font licenses are SIL OFL; the small “Made with huashu-motion” end signature is retained. Only the exported media is included here, not the rendering runtime or local authoring environment.
+
+## Earlier interface examples — 2026-10-22
+
+The `readme-current-*` images retained here for reference show the current Svelte components rendered by local Playwright fixtures. They are **browser interface captures, not native macOS screenshots or generated UI illustrations**. All labels are Chinese. No real provider request, API key, Keychain entry, captured document or user history was used.
 
 | File | What to look for |
 | --- | --- |
@@ -22,7 +39,7 @@ The `readme-current-*` images used in the English and Chinese READMEs show the c
 - Used reduced motion and waited for fonts and the relevant rendered state. Compact-window viewport height follows the visible content; the reply image is a direct element screenshot. Pixels and text were not retouched.
 - Source: a fictional request for draft feedback by Friday. Reply intent, translation and back-translation are authored examples, not claims about a model's quality. `demo-model` and `fixture.example` are placeholders, not recommended production settings.
 - Saved-key status and authorization state are mocked. No system password dialog was photographed. These media cannot establish TCC, Keychain, OCR or global-hotkey behavior; those need separate native acceptance.
-- Image captions in the READMEs explain the shown state. In particular, a ready draft is waiting for a fresh D/S press, and the back-translation is expanded for illustration even though it starts collapsed.
+- The original screenshot captions explained the shown state. In particular, a ready draft is waiting for a fresh D/S press, and the back-translation is expanded for illustration even though it starts collapsed.
 
 ## Earlier native macOS captures
 
