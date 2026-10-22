@@ -2,6 +2,7 @@
 // Clipboard cases use fake objects or a uniquely named synthetic pasteboard,
 // never the general clipboard; OCR uses an in-memory synthetic image.
 #import "macos.m"
+#import "ocr_pipeline_cases.m"
 
 
 // NSPasteboard is a class cluster that refuses subclass allocation. This fake
@@ -197,6 +198,10 @@ int main(void) {
             if(!passed)return 1;
         }
         [NSApplication sharedApplication];
+        if (getenv("YURELAY_OCR_MATRIX")) {
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{ exit(ADRunOCRPipelineMatrix()); });
+            [NSApp run]; return 0;
+        }
         if (!ADTestPasteboardBackup()) return 1;
         for (NSArray *fixture in @[@[@"这是用于检查本地语言检测的中文句子。", @"zh"], @[@"This is an English sentence used to verify local language detection.", @"en"], @[@"Bonjour, ceci est une phrase en français pour vérifier la détection de la langue.", @"fr"]]) {
             char code[32] = {0};
@@ -220,6 +225,13 @@ int main(void) {
         size_t traditionalLen = ad_detect_language("這是用於檢查本地語言偵測的繁體中文句子，status 顯示任務已完成。", traditional, sizeof(traditional));
         if (![[[NSString alloc] initWithBytes:traditional length:traditionalLen encoding:NSUTF8StringEncoding] isEqualToString:@"zh-Hant"]) return 1;
         printf("Language uncertain numeric/mixed passed=true\n");
+        unsigned char ranges[16384] = {0};
+        size_t rangeLength = ad_token_ranges("😀 running with friends", ranges, sizeof(ranges));
+        NSArray *tokens = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:ranges length:rangeLength] options:0 error:nil];
+        BOOL matchedRange = NO;
+        for (NSDictionary *token in tokens) if ([token[@"surface"] isEqualToString:@"running"]) matchedRange = [token[@"start_utf16"] intValue] == 3 && [token[@"end_utf16"] intValue] == 10 && [token[@"lemma"] isEqualToString:@"run"];
+        if (!matchedRange) return 1;
+        printf("Local token UTF16 and lemma passed=true\n");
         unsigned char *definition = calloc(1024 * 1024, 1);
         size_t definitionLength = ad_dictionary_lookup("hello", definition, 1024 * 1024);
         printf("System dictionary available=%s bytes=%lu\n", definitionLength ? "true" : "false", (unsigned long)definitionLength);
@@ -245,17 +257,34 @@ int main(void) {
           @autoreleasepool {
             NSError *error = nil;
             CFAbsoluteTime begin = CFAbsoluteTimeGetCurrent();
-            NSString *text = ADOCRImage(fixture, &error);
+            NSData *layoutData = nil;
+            NSString *text = ADOCRImageWithLayout(fixture, &error, &layoutData);
+            NSDictionary *layout = [NSJSONSerialization JSONObjectWithData:layoutData options:0 error:nil];
+            if ([layout[@"width"] intValue] != 1200 || [layout[@"height"] intValue] != 260 || [layout[@"blocks"] count] < 2) exit(1);
+            for (NSDictionary *block in layout[@"blocks"]) {
+                for (NSString *key in @[@"x",@"y",@"width",@"height",@"confidence"]) {double value=[block[key] doubleValue];if (!isfinite(value)||value<0||value>1) exit(1);}
+            }
+            if (run == 0) {
+                CGImageRef crop=CGImageCreateWithImageInRect(fixture,CGRectMake(0,0,1200,130));
+                NSData *cropData=nil;NSError *cropError=nil;NSString *cropText=ADOCRImageWithLayout(crop,&cropError,&cropData);CGImageRelease(crop);
+                NSDictionary *cropLayout=[NSJSONSerialization JSONObjectWithData:cropData options:0 error:nil];
+                if(cropError||!cropText.length||[cropLayout[@"height"] intValue]!=130) exit(1);
+                CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();CGContextRef scaledContext=CGBitmapContextCreate(NULL,600,130,8,0,color,(CGBitmapInfo)kCGImageAlphaPremultipliedLast);CGColorSpaceRelease(color);CGContextDrawImage(scaledContext,CGRectMake(0,0,600,130),fixture);CGImageRef scaled=CGBitmapContextCreateImage(scaledContext);CGContextRelease(scaledContext);
+                NSData *scaledData=nil;NSError *scaledError=nil;NSString *scaledText=ADOCRImageWithLayout(scaled,&scaledError,&scaledData);CGImageRelease(scaled);
+                NSDictionary *scaledLayout=[NSJSONSerialization JSONObjectWithData:scaledData options:0 error:nil];
+                if(scaledError||!scaledText.length||[scaledLayout[@"width"] intValue]!=600||[scaledLayout[@"height"] intValue]!=130) exit(1);
+                printf("OCR crop/scale layout bounds passed=true\n");
+            }
             BOOL passed = !error && [text containsString:@"Yurelay"] && [text containsString:@"翻译结果"];
             printf("OCR run=%d passed=%s elapsed_ms=%.1f characters=%lu\n", run, passed ? "true" : "false", (CFAbsoluteTimeGetCurrent()-begin)*1000, (unsigned long)text.length);
             if (!passed) {
-                fprintf(stderr, "OCR failure domain=%s code=%ld description=%s text=%s\n", error.domain.UTF8String ?: "none", (long)error.code, error.localizedDescription.UTF8String ?: "none", text.UTF8String ?: "nil");
+                fprintf(stderr, "OCR failure domain=%s code=%ld\n", error.domain.UTF8String ?: "none", (long)error.code);
                 exit(1);
             }
           }
         }
         CGImageRelease(fixture);
-        exit(0);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{ exit(ADRunOCRPipelineMatrix()); });
         });
         [NSApp run];
         return 0;

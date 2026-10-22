@@ -126,6 +126,34 @@
       off?.();
     };
   });
+  $effect(() => {
+    const selected = candidates.find(
+      (candidate) => wordKey(candidate) === activeWord,
+    );
+    if (selected && activeWord) expanded = selected.word;
+  });
+  async function markMastered(item: VocabularyItem) {
+    if (busy) return;
+    busy = item.word;
+    error = "";
+    try {
+      await invoke("vocabulary_update", { id: item.id, status: "mastered" });
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = null;
+    }
+  }
+  function contextDate(value: number) {
+    return new Date(value).toLocaleString(locale === "zh" ? "zh-CN" : "en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
   function saved(c: VocabularyCandidate) {
     return items.find((i) => i.word.trim().toLowerCase() === wordKey(c));
   }
@@ -320,6 +348,31 @@
               {#if candidate.sentence_trans}<p>
                   {candidate.sentence_trans}
                 </p>{/if}
+              {#if saved(candidate)}{@const item = saved(candidate)!}
+                <details class="saved-word-contexts">
+                  <summary
+                    >{t("已存语境", "Saved contexts")} · {item.contexts
+                      .length}</summary
+                  >{#each item.contexts as context}<div
+                      class="saved-word-context"
+                    >
+                      <blockquote>{context.context_sentence}</blockquote>
+                      {#if context.context_meaning}<p>
+                          {context.context_meaning}
+                        </p>{/if}{#if context.sentence_trans}<p>
+                          {context.sentence_trans}
+                        </p>{/if}{#if context.created_at}<time
+                          datetime={new Date(context.created_at).toISOString()}
+                          >{contextDate(context.created_at)}</time
+                        >{/if}
+                    </div>{/each}
+                </details>
+                {#if item.status === "learning"}<button
+                    class="mastered-control"
+                    disabled={busy !== null}
+                    onclick={() => markMastered(item)}
+                    >{t("标为已掌握", "Mark as mastered")}</button
+                  >{:else}<small>{t("已掌握", "Mastered")}</small>{/if}{/if}
             </div>{/if}
         </article>
       {/each}

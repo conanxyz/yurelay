@@ -1,6 +1,13 @@
 //! One database/file worker, bounded messages, per-record updates and tombstones.
 
+mod history;
+#[cfg(test)]
+mod history_performance;
+pub mod operations;
+pub mod reliability;
+mod source;
 pub mod vocabulary;
+pub use history::HistorySummary;
 
 use crate::{
     config::{Retention, Settings},
@@ -127,24 +134,6 @@ impl Storage {
         self.call(move |db| db.history(limit.min(100), offset))
             .await
     }
-    pub async fn search_history(
-        &self,
-        query: String,
-        source: String,
-        offset: usize,
-    ) -> Result<Vec<Task>, String> {
-        if query.len() > 512
-            || !matches!(source.as_str(), "" | "selection" | "screenshot" | "manual")
-        {
-            return Err("历史筛选条件无效。".into());
-        }
-        self.call(move |db| {
-            let mut statement = db.connection.prepare("SELECT data,expires_at,status FROM records WHERE (expires_at IS NULL OR expires_at>?1) AND (?2='' OR json_extract(data,'$.source')=?2) AND (?3='' OR instr(lower(json_extract(data,'$.original_text')),lower(?3))>0 OR instr(lower(json_extract(data,'$.translation')),lower(?3))>0) ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?4").map_err(db_error)?;
-            let rows = statement.query_map(params![(db.clock)(),source,query,offset],read_row).map_err(db_error)?;
-            rows.map(|r| decode_row(r.map_err(db_error)?)).collect()
-        }).await
-    }
-
     pub async fn cached(&self, key: String) -> Result<Option<Task>, String> {
         self.call(move |db| db.cached(&key)).await
     }
@@ -220,6 +209,7 @@ pub fn cache_key(task: &Task) -> Option<String> {
     let bytes = serde_json::to_vec(&(
         task.prompt_version,
         task.extract_vocabulary,
+        task.preserve_structure,
         task.query_text(),
         &task.target_language,
         &task.source_language,
@@ -232,6 +222,25 @@ pub fn cache_key(task: &Task) -> Option<String> {
     ))
     .ok()?;
     Some(crate::hex::lower(&Sha256::digest(bytes)))
+}
+
+fn cacheable_result(task: &Task) -> bool {
+    if task.status != Status::Completed || task.translation.trim().is_empty() {
+        return false;
+    }
+    match (
+        task.translation_source_revision,
+        task.translation_source_text.as_deref(),
+    ) {
+        (Some(revision), Some(text)) => {
+            revision == task.source_revision && text == task.query_text()
+        }
+        // Before source drafts existed, editing required a new translation.
+        // Those unchanged records remain valid; any subsequent edit increments
+        // source_revision and must not associate their old result with new input.
+        (None, None) => task.source_revision == 0,
+        _ => false,
+    }
 }
 
 impl Database {
@@ -248,6 +257,29 @@ impl Database {
         connection
             .busy_timeout(std::time::Duration::from_secs(2))
             .map_err(db_error)?;
+        let schema: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(db_error)?;
+        if schema > 1 {
+            return Err("本地数据库来自较新版本，已停止写入。".into());
+        }
+        if schema == 0
+            && root
+                .join("history.sqlite3")
+                .metadata()
+                .is_ok_and(|m| m.len() > 0)
+            && !root.join("history.pre-source-v1.sqlite3").exists()
+        {
+            connection
+                .execute(
+                    "VACUUM INTO ?1",
+                    [root
+                        .join("history.pre-source-v1.sqlite3")
+                        .to_string_lossy()
+                        .as_ref()],
+                )
+                .map_err(db_error)?;
+        }
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS vocabulary(id TEXT PRIMARY KEY, word TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -257,6 +289,21 @@ impl Database {
             CREATE INDEX IF NOT EXISTS records_cache ON records(cache_key);
             CREATE TABLE IF NOT EXISTS tombstones(id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS cleanup_jobs(id TEXT PRIMARY KEY);").map_err(db_error)?;
+        connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(db_error)?;
+        let migration = (|| {
+            source::migrate(&connection)?;
+            reliability::migrate(&connection)?;
+            operations::migrate(&connection)?;
+            connection
+                .execute_batch("PRAGMA user_version=1; COMMIT")
+                .map_err(db_error)
+        })();
+        if migration.is_err() {
+            let _ = connection.execute_batch("ROLLBACK");
+        }
+        migration?;
         let settings: Settings = connection
             .query_row(
                 "SELECT value FROM preferences WHERE key='settings'",
@@ -271,9 +318,11 @@ impl Database {
             .transpose()?
             .unwrap_or_default();
         settings.validate()?;
+        reliability::sync_configuration(&connection, &settings, &settings)?;
         // No requests from the previous process survive startup. Old tombstones
         // can now be discarded, but unfinished work must never restart itself.
         connection.execute_batch("DELETE FROM tombstones; UPDATE records SET status='interrupted', cache_key=NULL WHERE status IN ('capturing','recognizing','queued','translating');").map_err(db_error)?;
+        operations::recover_interrupted(&connection, clock())?;
         let mut db = Self {
             root,
             connection,
@@ -331,8 +380,20 @@ impl Database {
             return Ok(SaveOutcome::Dropped);
         }
         let image_failed = task.image_error.is_some();
+        let missing_asset = task
+            .source_segments
+            .iter()
+            .filter_map(|s| s.asset_id.as_deref())
+            .any(|asset| {
+                source::asset_name(&task.id, asset)
+                    .is_ok_and(|name| !self.root.join("images").join(name).is_file())
+            });
         let waiting_image = task.image_pending
-            || (task.has_image && !self.image_path(&task.id)?.is_file() && !image_failed);
+            || missing_asset
+            || (task.has_image
+                && task.source_segments.is_empty()
+                && !self.image_path(&task.id)?.is_file()
+                && !image_failed);
         task.save_state = if image_failed {
             SaveState::Failed
         } else if waiting_image {
@@ -341,16 +402,22 @@ impl Database {
             SaveState::Saved
         };
         task.save_error = task.image_error.clone();
-        let key = if task.status == Status::Completed {
+        let key = if cacheable_result(&task) {
             cache_key(&task)
         } else {
             None
         };
         let data = serde_json::to_string(&task).map_err(db_error)?;
         let status = status_name(task.status);
-        let changed = self.connection.execute("INSERT INTO records(id,created_at,expires_at,revision,status,cache_key,data) VALUES(?1,?2,?3,?4,?5,?6,?7)
+        let tx = self.connection.transaction().map_err(db_error)?;
+        let changed = tx.execute("INSERT INTO records(id,created_at,expires_at,revision,status,cache_key,data) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(id) DO UPDATE SET expires_at=excluded.expires_at,revision=excluded.revision,status=excluded.status,cache_key=excluded.cache_key,data=excluded.data
             WHERE excluded.revision >= records.revision", params![task.id,task.created_at,task.expires_at,task.revision,status,key,data]).map_err(db_error)?;
+        if changed > 0 {
+            source::save(&tx, &task)?;
+        }
+        tx.commit().map_err(db_error)?;
+        source::clean_files(self);
         if changed == 0 {
             Ok(SaveOutcome::Dropped)
         } else if image_failed {
@@ -380,7 +447,20 @@ impl Database {
         if self.settings.retention == Retention::Disabled {
             return Ok(None);
         }
-        self.connection.query_row("SELECT data,expires_at,status FROM records WHERE cache_key=?1 AND status='completed' AND (expires_at IS NULL OR expires_at>?2) ORDER BY created_at DESC LIMIT 1", params![key,(self.clock)()], read_row).optional().map_err(db_error)?.map(decode_row).transpose()
+        let mut query = self.connection.prepare("SELECT data,expires_at,status FROM records WHERE cache_key=?1 AND status='completed' AND (expires_at IS NULL OR expires_at>?2) ORDER BY created_at DESC").map_err(db_error)?;
+        let rows = query
+            .query_map(params![key, (self.clock)()], read_row)
+            .map_err(db_error)?;
+        for row in rows {
+            let task = decode_row(row.map_err(db_error)?)?;
+            // Revalidate old rows too: earlier versions could save a retained
+            // translation under an edited draft's key. Skip it without hiding
+            // an older, valid result for the same request.
+            if cacheable_result(&task) && cache_key(&task).as_deref() == Some(key) {
+                return Ok(Some(task));
+            }
+        }
+        Ok(None)
     }
 
     fn image(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
@@ -410,6 +490,7 @@ impl Database {
             // Queue even an absent row: its PNG may have arrived before metadata.
             tx.execute("INSERT OR IGNORE INTO cleanup_jobs VALUES(?1)", [id])
                 .map_err(db_error)?;
+            source::queue_removal(&tx, id)?;
             tx.execute("DELETE FROM records WHERE id=?1", [id])
                 .map_err(db_error)?;
         }
@@ -444,10 +525,11 @@ impl Database {
         }
         let json = serde_json::to_string(&settings).map_err(db_error)?;
         let tx = self.connection.transaction().map_err(db_error)?;
+        reliability::sync_configuration(&tx, &self.settings, &settings)?;
         tx.execute("INSERT INTO preferences(key,value) VALUES('settings',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [json]).map_err(db_error)?;
         match settings.retention {
             Retention::Disabled => {
-                tx.execute_batch("INSERT OR IGNORE INTO tombstones SELECT id FROM records; INSERT OR IGNORE INTO cleanup_jobs SELECT id FROM records; DELETE FROM records;").map_err(db_error)?;
+                tx.execute_batch("INSERT OR IGNORE INTO source_asset_cleanup SELECT path FROM source_assets; INSERT OR IGNORE INTO tombstones SELECT id FROM records; INSERT OR IGNORE INTO cleanup_jobs SELECT id FROM records; DELETE FROM records;").map_err(db_error)?;
                 for id in known_ids {
                     tx.execute("INSERT OR IGNORE INTO tombstones VALUES(?1)", [&id])
                         .map_err(db_error)?;
@@ -488,6 +570,7 @@ impl Database {
     }
 
     fn clean_files(&mut self) {
+        source::clean_files(self);
         let ids = (|| -> rusqlite::Result<Vec<String>> {
             let mut query = self
                 .connection
@@ -515,6 +598,7 @@ impl Database {
     }
 
     fn remove_orphans(&mut self) -> Result<(), String> {
+        source::remove_orphans(self)?;
         for entry in fs::read_dir(self.root.join("images")).map_err(db_error)? {
             let entry = entry.map_err(db_error)?;
             let path = entry.path();
@@ -547,6 +631,7 @@ fn decode_row((data, expiry, status): (String, Option<i64>, String)) -> Result<T
     if task.vocabulary_state == crate::tasks::VocabularyState::Extracting {
         task.vocabulary_state = crate::tasks::VocabularyState::Cancelled;
     }
+    task.ensure_source_segments();
     task.expires_at = expiry;
     task.status = serde_json::from_value(serde_json::Value::String(status)).map_err(db_error)?;
     if task.status == Status::Interrupted && task.error.is_none() {
@@ -761,5 +846,17 @@ mod tests {
         db.save_task(old.clone()).await.unwrap();
         assert!(db.cached(new_key).await.unwrap().is_none());
         assert!(db.task(old.id).await.unwrap().is_some());
+    }
+    #[test]
+    fn preserve_structure_isolates_translation_cache() {
+        let mut task = record();
+        let plain = cache_key(&task);
+        assert!(plain.is_some());
+        task.preserve_structure = true;
+        let structured = cache_key(&task);
+        assert!(structured.is_some());
+        assert_ne!(plain, structured);
+        task.preserve_structure = false;
+        assert_eq!(cache_key(&task), plain);
     }
 }

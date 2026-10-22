@@ -90,3 +90,45 @@ mod tests {
         assert!(notice_is_relevant("connection failed", true, true));
     }
 }
+
+#[cfg(test)]
+mod append_tests {
+    use super::*;
+    use std::cell::RefCell;
+    #[test]
+    fn fourth_optional_shortcut_conflict_rolls_back_all_new_bindings() {
+        let active = RefCell::new(vec![1, 2]);
+        let result = replace(
+            &[1, 2],
+            &[1, 2, 3, 4],
+            |key| {
+                if key == 4 {
+                    return Err("occupied".into());
+                }
+                active.borrow_mut().push(key);
+                Ok(())
+            },
+            |key| {
+                active.borrow_mut().retain(|value| *value != key);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(*active.borrow(), vec![1, 2]);
+    }
+    #[test]
+    fn disabling_optional_bindings_preserves_normal_capture() {
+        let active = RefCell::new(vec![1, 2, 3, 4]);
+        replace(
+            &[1, 2, 3, 4],
+            &[1, 2],
+            |_| panic!("already registered"),
+            |key| {
+                active.borrow_mut().retain(|value| *value != key);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*active.borrow(), vec![1, 2]);
+    }
+}

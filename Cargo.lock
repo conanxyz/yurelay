@@ -5361,6 +5361,7 @@ dependencies = [
  "cc",
  "security-framework",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

@@ -41,6 +41,11 @@ flowchart LR
 
 Reading mode displays paragraphs, headings, lists and code blocks. Switch to plain text, or copy the translation and Markdown separately. Hiding the window lets an active translation continue.
 
+- **Build a source draft.** Turn on Append to combine up to ten selections or screenshots, then review before translating. Conservative PDF line-break cleanup runs locally after capture by default, with Undo cleanup when it changed the text. Editing or changing the active draft pauses append mode.
+- **Read tables and formulas.** Apply a conservative OCR table layout when coordinates support it, compare saved images, and use local formula rendering with a plain-source fallback. The optional structure setting asks model translations to preserve columns, numbers, units and recognizable formulas; it cannot recover symbols missed by OCR.
+- **Explain or reply explicitly.** Select a fragment and generate a contextual explanation, or open Compose reply and enter your intent. Each has its own Stop action. Reply writing inherits the selected service and source language; enter only what you want to say. The model polishes your intent into a natural reply, with a separately displayed reference in your translation language. Copy reply copies only the reply and sends nothing to another app.
+
+
 <details>
 <summary>Watch the native walkthrough: preview → translate → look up → collect</summary>
 
@@ -63,6 +68,7 @@ For a sentence or paragraph, the system dictionary offers configured translation
 
 - Keep multiple source sentences and available meanings under one word; adding the same sentence again does not increase its count.
 - Add personal notes, track Learning / Mastered status and search words or contexts.
+- In Read source, learning words and short phrases can be highlighted locally. Click one to revisit saved contexts or mark it mastered; matching does not collect it again or increase its count.
 - Use UK / US pronunciation and slower playback when matching system voices are available.
 - Export **CSV, Markdown or Anki TSV** for further study.
 
@@ -73,6 +79,8 @@ For a sentence or paragraph, the system dictionary offers configured translation
 In **Settings → History**, search source or translation text and filter selections, screenshots and typed text. Review the source, edited text, saved screenshot and translation, copy content or reopen the result window.
 
 History defaults to **7 days**. Choose a custom duration, keep it forever or disable disk saving. Explicitly collected vocabulary is saved separately for longer-term study.
+
+Explanations and replies follow their parent record’s retention; standalone results follow the same duration setting. Assistant history keeps up to 40 operations within 32 MiB, with five previous attempts per operation. Sensitive results explicitly allowed for one request stay in memory. Restarting never resends unfinished requests.
 
 ![Native history view showing source filters, original text, translation and the option to reopen a result](docs/images/readme-history.png)
 
@@ -89,6 +97,10 @@ History defaults to **7 days**. Choose a custom duration, keep it forever or dis
 | Custom service | OpenAI-compatible endpoint + model; key if required |
 
 Open Settings → Services, choose a provider, configure it, test the connection, then set it as default and save. Presets include models such as Zhipu's `glm-4-flash-250414`; pricing, free allowances and availability depend on the provider. Connection tests send fixed sample text and may incur a charge.
+
+Connection verification is bound to the saved endpoint, model and credential revision, and expires after seven days. Automatic fallback is off by default. If enabled, all configured compatible services are eligible, with at most three attempts before any result text appears. Connection tests report status and are not a prerequisite for fallback. This can incur charges at more than one provider; explicitly allowed sensitive requests do not fall back automatically.
+
+Translation and reply prompts have separate editors in Settings → Prompts. Services inherit them by default and can use a custom override. Existing per-service translation prompts are retained.
 
 ## 🚀 Install and get started
 

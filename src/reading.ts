@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import { installMath, enhanceMath } from "./math";
 
 export function externalLink(value: string): string | null {
   try {
@@ -21,6 +22,7 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: false,
 });
+installMath(md);
 md.validateLink = (value) => externalLink(value) !== null;
 md.renderer.rules.image = (tokens, index) =>
   md.utils.escapeHtml(tokens[index].content || "");
@@ -50,15 +52,18 @@ const tags = [
   "tr",
   "th",
   "td",
+  "span",
 ];
-export function readingBlocks(text: string): string[] {
-  const clean = DOMPurify.sanitize(md.render(text), {
+export function readingBlocks(text: string, enhance = true): string[] {
+  const env = { formulas: [] };
+  const clean = DOMPurify.sanitize(md.render(text, env), {
     ALLOWED_TAGS: tags,
-    ALLOWED_ATTR: ["href", "title", "start"],
+    ALLOWED_ATTR: ["href", "title", "start", "data-local-math"],
     ALLOW_DATA_ATTR: false,
   });
   const template = document.createElement("template");
   template.innerHTML = clean;
+  enhanceMath(template.content, env.formulas, enhance);
   return Array.from(template.content.childNodes)
     .filter((n) => n.nodeType !== Node.TEXT_NODE || n.textContent?.trim())
     .map((n) =>
@@ -69,10 +74,12 @@ export function readingBlocks(text: string): string[] {
 }
 export function translationPlainText(text: string): string {
   const template = document.createElement("template");
-  template.innerHTML = readingBlocks(text).join("");
+  template.innerHTML = readingBlocks(text, false).join("");
   function walk(node: Node): string {
     if (!(node instanceof Element)) return node.textContent || "";
     const tag = node.tagName;
+    if (node.hasAttribute("data-math-source"))
+      return node.getAttribute("data-math-source") || "";
     if (tag === "BR") return "\n";
     if (tag === "PRE") return (node.textContent || "") + "\n\n";
     if (tag === "HR") return "\n";
@@ -187,4 +194,18 @@ export function highlightedReading(
     entry.node.replaceWith(fragment);
   }
   return roots.map((root) => root.innerHTML);
+}
+
+export function readingTableText(block: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = block;
+  for (const node of template.content.querySelectorAll("[data-math-source]"))
+    node.textContent = node.getAttribute("data-math-source") || "";
+  return Array.from(template.content.querySelectorAll("tr"))
+    .map((row) =>
+      Array.from(row.querySelectorAll("th,td"))
+        .map((cell) => cell.textContent?.trim() || "")
+        .join("\t"),
+    )
+    .join("\n");
 }

@@ -1,5 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 
+async function editableSource(page: Page) {
+  const edit = page.getByRole('button', {name:'Edit source',exact:true});
+  if (await edit.count() && await edit.isEnabled()) await edit.click();
+  return page.getByRole('textbox', {name:'Source text',exact:true});
+}
+
 async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='') {
   await page.addInitScript(({initialSelection, initialSourceLanguage}) => {
     const w = window as any;
@@ -46,6 +52,7 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
           if(w.deferGuidance)return new Promise(resolve=>w.guidanceResolvers.push({text:args.text,resolve}));
           return structuredClone(w.guidanceResponses[args.text] ?? {issue:null,profile_ids:[]});
         }
+        if(cmd==='source_update'){Object.assign(w.task,{edited_text:args.request.text,source_language:args.request.source_language,target_language:args.request.target_language,source_revision:(w.task.source_revision??0)+1,revision:w.task.revision+1});w.wire(snapshot());return structuredClone(w.task);}
         if(cmd==='vocabulary_list')return structuredClone(w.words);
         if(cmd==='vocabulary_lookup'){
           if(w.deferLookup)return new Promise((resolve,reject)=>w.lookupResolvers.push({words:args.words,resolve,reject}));
@@ -70,7 +77,7 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         if (cmd === 'subscribe') { w.wire = (m: unknown) => args.onEvent.onmessage(m); return 'fixture'; }
         if (cmd === 'translate_text') {
           const profile=w.settings.profiles.find((p:any)=>p.id===(args.profileId??w.settings.active_profile));
-          Object.assign(w.task,{id:'manual-fixture',profile:structuredClone(profile),status:'queued',original_text:args.text,edited_text:null,error:null,source_language:args.sourceLanguage,target_language:args.targetLanguage,revision:w.task.revision+1});
+          Object.assign(w.task,{id:'manual-fixture',source:'manual',profile:structuredClone(profile),status:'queued',original_text:args.text,edited_text:null,error:null,source_language:args.sourceLanguage,target_language:args.targetLanguage,revision:w.task.revision+1});
           w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
           return w.task.id;
         }
@@ -114,7 +121,7 @@ test('arrow reflects state; X and button toggle, retain result and detect edits'
   await toggle.click();
   await toggle.click();
   expect(await requests(page)).toBe(1);
-  const editor = page.getByRole('textbox', { name: 'Source text' });
+  const editor = (await editableSource(page));
   await editor.click();
   await page.keyboard.press('End');
   await page.keyboard.press('x');
@@ -162,7 +169,7 @@ test('source editing retains focus across app reactivation; language controls do
   await page.getByLabel('Translation language', { exact: true }).focus();
   await page.keyboard.press('x');
   expect(await requests(page)).toBe(0);
-  const editor = page.getByRole('textbox', { name: 'Source text' });
+  const editor = (await editableSource(page));
   await editor.click();
   await page.evaluate(() => { window.dispatchEvent(new Event('blur')); window.dispatchEvent(new Event('focus')); });
   await page.keyboard.press('x');
@@ -176,7 +183,7 @@ test('source editing retains focus across app reactivation; language controls do
 for (const source of ['selection', 'screenshot']) {
   test(`Escape hides a ${source} result while preserving the draft and active translation`, async ({ page }) => {
     await fixture(page);
-    const editor = page.getByRole('textbox', { name: 'Source text' });
+    const editor = (await editableSource(page));
     await editor.fill('Synthetic edited source');
     await page.evaluate(source => { (window as any).task.source = source; }, source);
     await page.locator('.disclosure-control').click();
@@ -205,7 +212,7 @@ test('Escape hides a ready result without translating and advertises its shortcu
   const hide = page.getByRole('button', { name: 'Hide', exact: true });
   await expect(hide).toHaveAttribute('aria-keyshortcuts', 'Escape');
   await expect(hide).toHaveAttribute('title', 'Hide (Esc)');
-  const editor = page.getByRole('textbox', { name: 'Source text' });
+  const editor = (await editableSource(page));
   await editor.fill('Unsubmitted synthetic draft');
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'hide_window').length)).toBe(1);
@@ -296,7 +303,7 @@ test('a failed second capture clears previous content; later captures select the
     const w = window as any;
     w.wire({ type: 'snapshot', snapshot: { revision: 4, tasks: [w.task] }, selected: null, notice: '请在其他应用中选中文字，再按划词快捷键。' });
   });
-  await expect(page.getByRole('textbox', { name: 'Source text' })).toHaveValue('');
+  await expect((await editableSource(page))).toHaveValue('');
   await expect(page.locator('.translation-prose')).toHaveCount(0);
   for (const source of ['The second selection.', 'The third selection.']) {
     await page.evaluate((text) => {
@@ -304,7 +311,7 @@ test('a failed second capture clears previous content; later captures select the
       const task = { ...w.task, id: text, status: 'ready', original_text: text, edited_text: null, translation: '', revision: 5 };
       w.wire({ type: 'snapshot', snapshot: { revision: 5, tasks: [w.task, task] }, selected: task.id, notice: null });
     }, source);
-    await expect(page.getByRole('textbox', { name: 'Source text' })).toHaveValue(source);
+    await expect((await editableSource(page))).toHaveValue(source);
     await expect(page.locator('#translation-body')).toHaveCount(0);
   }
 });
@@ -317,7 +324,7 @@ test('screenshot generation announces progress until source text is ready withou
     w.task={...w.task,id:'ocr-progress',source:'screenshot',status:'capturing',original_text:'',edited_text:null,translation:'',error:null,revision:2};
     w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
   });
-  const editor=page.getByRole('textbox',{name:'Source text'});
+  const editor=(await editableSource(page));
   await expect(editor).toHaveAttribute('readonly','');
   if(await page.locator('.source-processing').count()===0)await page.locator('.source-panel').screenshot({path:'artifacts/previews/screenshot-progress-before.png'});
   await expect(page.getByRole('status')).toHaveText('Preparing screenshot…');
@@ -337,6 +344,8 @@ test('screenshot generation announces progress until source text is ready withou
     const w=window as any;Object.assign(w.task,{status:'ready',original_text:'Yurelay screenshot OCR test.',revision:4});
     w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
   });
+  await expect(page.getByRole('textbox',{name:'Source reading',exact:true})).toHaveText('Yurelay screenshot OCR test.');
+  await editableSource(page);
   await expect(editor).toHaveValue('Yurelay screenshot OCR test.');
   await expect(editor).toHaveAttribute('aria-busy','false');
   await expect(editor).not.toHaveAttribute('readonly');
@@ -361,7 +370,7 @@ test('screenshot OCR failures remain visible while translation is collapsed with
   const toggle=page.locator('.disclosure-control');
   await expect(toggle).toHaveAttribute('aria-expanded','false');
   await expect(page.getByRole('alert')).toHaveText('Local text recognition failed. Try a smaller selection.');
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('');
+  await expect((await editableSource(page))).toHaveValue('');
   expect(await requests(page)).toBe(0);
   await toggle.click();
   await expect(page.getByRole('alert')).toHaveCount(1);
@@ -375,7 +384,7 @@ test('screenshot OCR failures remain visible while translation is collapsed with
     w.wire({type:'snapshot',snapshot:{revision:4,tasks:[w.task]},selected:w.task.id,notice:null});
   });
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('Yurelay screenshot OCR test.');
+  await expect((await editableSource(page))).toHaveValue('Yurelay screenshot OCR test.');
 });
 
 test('OCR loading keeps the keyboard focus ring visibly painted',async({page})=>{
@@ -391,7 +400,7 @@ test('OCR loading keeps the keyboard focus ring visibly painted',async({page})=>
   const frame=(await page.locator('.source-editor-frame').boundingBox())!;
   const clip={x:frame.x,y:frame.y+12,width:2,height:frame.height-24};
   const unfocused=await page.screenshot({clip});
-  const editor=page.getByRole('textbox',{name:'Source text'});
+  const editor=(await editableSource(page));
   for(let index=0;index<8 && !await editor.evaluate(el=>el===document.activeElement);index++)await page.keyboard.press('Tab');
   await expect(editor).toBeFocused();
   expect(await editor.evaluate(el=>el.matches(':focus-visible'))).toBe(true);
@@ -452,7 +461,7 @@ test('screenshot progress respects reduced motion, localization and narrow dark 
 test('a snapshot without an explicit selection starts blank and history opens only on selection', async ({page}) => {
   await fixture(page);
   await page.evaluate(()=>{const w=window as any;w.complete();w.wire({type:'snapshot',snapshot:{revision:5,tasks:[w.task]},selected:null,notice:null});});
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('');
+  await expect((await editableSource(page))).toHaveValue('');
   await expect(page.locator('.translation-prose')).toHaveCount(0);
   await expect(page.locator('.window-chrome img')).toHaveCount(0);
   await page.evaluate(()=>{const w=window as any;w.wire({type:'snapshot',snapshot:{revision:5,tasks:[w.task]},selected:w.task.id,notice:null});});
@@ -462,7 +471,7 @@ test('a snapshot without an explicit selection starts blank and history opens on
 
 test('cold bootstrap keeps saved history out of the translation window', async ({page}) => {
   await fixture(page,false);
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('');
+  await expect((await editableSource(page))).toHaveValue('');
   await expect(page.locator('.translation-prose')).toHaveCount(0);
   await expect(page.locator('.window-chrome img')).toHaveCount(0);
   expect(await requests(page)).toBe(0);
@@ -495,7 +504,7 @@ test('changing default service updates the current translation action', async ({
 test('sensitive snapshot shows only the mask; X cannot bypass explicit consent',async({page})=>{
  await fixture(page);
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{sensitive:'MNEMONIC',original_text:'',translation:'',revision:2});w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null})});
- await expect(page.getByRole('textbox',{name:'Source text'})).toHaveCount(0);
+ await expect((await editableSource(page))).toHaveCount(0);
  await expect(page.getByRole('alert')).toContainText('Possible sensitive information');await page.keyboard.press('x');expect(await requests(page)).toBe(0);
  await page.getByRole('button',{name:'Reveal source and translate'}).click();
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='resolve_sensitive').at(-1).args)).toEqual({id:'fixture',allow:true});
@@ -509,6 +518,7 @@ test('vocabulary cards collect once per context',async({page})=>{
  await fixture(page);await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{original_text:'A resilient team adapts to change.',status:'completed',translation:'坚韧的团队能够适应变化。',vocabulary:[{word:'resilient',surface:'resilient',phonetic:'/rɪˈzɪliənt/',pos:'adj.',dict_meaning:'坚韧',context_meaning:'坚韧的',context_sentence:'A resilient team adapts to change.',sentence_trans:'坚韧的团队能够适应变化。',difficulty:'B2'}],revision:2});w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null})});
  await page.locator('.disclosure-control').click();
  await page.setViewportSize({width:680,height:800});
+ await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
  await page.getByRole('button',{name:'Add',exact:true}).click();await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
  await page.evaluate(()=>{const w=window as any;w.words[0].status='mastered';w.emit('vocabulary-changed',null)});await page.getByRole('button',{name:'Learn again',exact:true}).click();await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
  await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary-cards.png'});
@@ -522,20 +532,21 @@ test('explicit sensitive consent expands the resulting translation without anoth
 });
 
 
-test('vocabulary automatically opens left once and preserves manual collapse for the same attempt',async({page})=>{
+test('candidate arrival stays collapsed and explicit expansion preserves manual collapse and reading width',async({page})=>{
  await fixture(page);await page.setViewportSize({width:460,height:800});await page.locator('.disclosure-control').click();
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'translating',extract_vocabulary:true,vocabulary_state:'none',translation:'译文',revision:2});w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});
  await expect(page.getByRole('button',{name:'Copy translation',exact:true})).toBeDisabled();await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'completed',vocabulary_state:'extracting',revision:3});w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});
  await expect(page.getByRole('button',{name:'Copy translation',exact:true})).toBeEnabled();await expect(page.locator('.translation-prose')).toHaveText('译文');const before=await page.locator('.translation-main').boundingBox();
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{vocabulary_state:'complete',vocabulary:Array.from({length:5},(_,i)=>({word:'word'+i,surface:'word'+i,phonetic:'',pos:'n.',context_meaning:'语境释义',context_sentence:'Sentence '+i,dict_meaning:'',sentence_trans:'',difficulty:'B2'})),revision:4});w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});
- await page.setViewportSize({width:680,height:800});await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();await expect(page.locator('.vocabulary-side-card')).toHaveCount(5);
+ await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeVisible();await expect(page.locator('.vocabulary-side-card')).toHaveCount(0);
+ await page.setViewportSize({width:680,height:800});await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();await expect(page.locator('.vocabulary-side-card')).toHaveCount(5);
  const after=await page.locator('.translation-main').boundingBox();expect(after!.width).toBe(before!.width);expect(after!.x).toBe(220);expect(Math.abs(after!.height-before!.height)).toBeLessThan(1);
  await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();await expect(page.locator('.vocabulary-sidebar')).toHaveClass(/collapsed/);await expect(page.locator('.vocabulary-side-card')).toHaveCount(0);
  await page.evaluate(()=>{const w=window as any;w.task.revision++;w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();await page.getByRole('button',{name:'View word0 meaning',exact:true}).click();await expect(page.locator('.vocabulary-row-detail')).toContainText('Sentence 0');
  await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary-left.png'});
- await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();await page.evaluate(()=>{const w=window as any;w.task.attempt++;w.task.revision++;w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();await page.evaluate(()=>{const w=window as any;w.task.attempt++;w.task.revision++;w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeVisible();
  await page.evaluate(()=>{const w=window as any;w.task.vocabulary=[];w.task.revision++;w.wire({type:'events',events:[{type:'changed',task:structuredClone(w.task)}]})});await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);expect(await requests(page)).toBe(1);
 });
 
@@ -569,10 +580,10 @@ test('stream updates preserve stable nodes and defer replacing selected text unt
 test('left vocabulary rail supports dark mode, scrolling and manual collapse without overlays',async({page})=>{
  await fixture(page);await page.emulateMedia({reducedMotion:'reduce'});await page.setViewportSize({width:620,height:700});
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'completed',translation:'Use OAuth2 for access.',vocabulary:[{word:'OAuth2',surface:'OAuth2',phonetic:'/invented/',pos:'term',context_meaning:'授权协议',dict_meaning:'通用授权框架',context_sentence:'Use OAuth2 for access.',sentence_trans:'使用 OAuth2 授权。',difficulty:'Term'}],revision:2});w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});document.documentElement.setAttribute('data-theme','dark')});
- await page.locator('.disclosure-control').click();await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();await expect(page.locator('.vocabulary-ipa')).toHaveCount(0);
+ await page.locator('.disclosure-control').click();await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();await expect(page.locator('.vocabulary-ipa')).toHaveCount(0);
  await page.getByRole('button',{name:'View OAuth2 meaning',exact:true}).click();await expect(page.locator('.vocabulary-row-detail')).toContainText('通用授权框架');
  const layout=await page.evaluate(()=>{const panel=document.querySelector('.vocabulary-sidebar')!;return {overflow:panel.scrollWidth>panel.clientWidth,pageOverflow:document.documentElement.scrollWidth>innerWidth,box:panel.getBoundingClientRect().toJSON(),main:document.querySelector('.translation-main')!.getBoundingClientRect().toJSON()}});expect(layout.overflow).toBe(false);expect(layout.pageOverflow).toBe(false);expect(layout.box.right).toBeLessThanOrEqual(layout.main.left);
- await page.getByRole('textbox',{name:'Source text'}).click();await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();
+ await (await editableSource(page)).click();await expect(page.getByRole('button',{name:'Collapse vocabulary',exact:true})).toBeVisible();
  await page.screenshot({path:'artifacts/previews/2026-10-15-vocabulary-left-dark.png'});
  await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeFocused();await expect(page.locator('.vocabulary-side-card')).toHaveCount(0);expect(await requests(page)).toBe(0);
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='hide_window'))).toEqual([]);
@@ -616,11 +627,12 @@ async function selectionFixture(page: Page) {
     w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});
   });
   await page.locator('.disclosure-control').click();
+  await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
   await expect(vocabularyCards(page)).toHaveCount(2);
 }
 
 async function selectSourceWord(page: Page, word: string) {
-  await page.getByRole('textbox',{name:'Source text'}).evaluate((el:HTMLTextAreaElement,selectedWord:string) => {
+  await (await editableSource(page)).evaluate((el:HTMLTextAreaElement,selectedWord:string) => {
     const start=el.value.indexOf(selectedWord);
     if(start<0)throw new Error('Synthetic selected word was not found');
     el.focus();el.setSelectionRange(start,start+selectedWord.length);
@@ -713,7 +725,7 @@ test('changing the source language discards a pending English vocabulary preview
 
 test('source selections preview at the top of the sidebar, deduplicate and save only on Add',async({page})=>{
   await selectionFixture(page);
-  const sourceBox=await page.getByRole('textbox',{name:'Source text'}).boundingBox();
+  const sourceBox=await (await editableSource(page)).boundingBox();
   await selectSourceWord(page,'team');
   await expect.poll(()=>cardWords(page)).toEqual(['team','resilient','adapts']);
   await expect(page.getByRole('button',{name:'Add to vocabulary',exact:true})).toHaveCount(0);
@@ -730,7 +742,7 @@ test('source selections preview at the top of the sidebar, deduplicate and save 
   expect((await previewRequests(page)).filter((call:any)=>call.args.selectionStart===12)).toHaveLength(1);
   await selectSourceWord(page,'change');
   await expect.poll(()=>cardWords(page)).toEqual(['change','team','resilient','adapts']);
-  const sourceAfter=await page.getByRole('textbox',{name:'Source text'}).boundingBox();
+  const sourceAfter=await (await editableSource(page)).boundingBox();
   expect(sourceAfter!.x).toBe(sourceBox!.x);expect(sourceAfter!.y).toBe(sourceBox!.y);
   expect(await requests(page)).toBe(0);
   const card=page.locator('.vocabulary-side-card[data-word="change"]');
@@ -753,6 +765,7 @@ test('sidebar lookup supports more than five words and clears only current looku
     w.wire({type:'snapshot',snapshot:{revision:2,tasks:[w.task]},selected:w.task.id,notice:null});
   });
   await page.locator('.disclosure-control').click();
+  await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
   await expect(vocabularyCards(page)).toHaveCount(5);
   await expect(page.getByRole('button',{name:'Saved (×1)',exact:true})).toHaveCount(5);
   await page.evaluate(()=>{(window as any).lookupFailure='Synthetic lookup failure';});
@@ -802,7 +815,7 @@ test('a newer source selection or task ignores a delayed preview from the previo
     w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:3},selected:w.task.id,notice:null});
     w.previewResolvers[0].resolve(w.previewResults.resilient);
   });
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue('A new source.');
+  await expect((await editableSource(page))).toHaveValue('A new source.');
   await expect(vocabularyCards(page)).toHaveCount(0);
   await expect(page.locator('.translation-word-highlight')).toHaveCount(0);
   expect(await requests(page)).toBe(0);
@@ -857,6 +870,7 @@ test('sidebar pronunciation disables an unavailable accent without claiming a se
     w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null});
   });
   await page.locator('.disclosure-control').click();
+  await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
   const card=page.locator('.vocabulary-side-card[data-word="resilient"]');
   await expect(card.locator('.vocabulary-ipa')).toHaveCount(1);
   await expect(card.getByRole('button',{name:'Play resilient (UK)',exact:true})).toBeDisabled();
@@ -869,7 +883,7 @@ test('sidebar pronunciation disables an unavailable accent without claiming a se
 
 test('clicking inside a source word previews its complete token without changing the source',async({page})=>{
   await selectionFixture(page);
-  const editor=page.getByRole('textbox',{name:'Source text'});
+  const editor=(await editableSource(page));
   await editor.evaluate((el:HTMLTextAreaElement)=>{
     el.focus();el.setSelectionRange(14,14);
     el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
@@ -881,7 +895,7 @@ test('clicking inside a source word previews its complete token without changing
 });
 
 
-test('an explicit source selection opens an empty or collapsed rail and a new attempt clears its preview',async({page})=>{
+test('source selection opens an empty rail, respects manual collapse, and resets on a new attempt',async({page})=>{
   await selectionFixture(page);
   await page.evaluate(()=>{
     const w=window as any;w.task.vocabulary=[];w.task.revision++;
@@ -893,6 +907,9 @@ test('an explicit source selection opens an empty or collapsed rail and a new at
   await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();
   await expect(vocabularyCards(page)).toHaveCount(0);
   await selectSourceWord(page,'change');
+  await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeVisible();
+  await expect(vocabularyCards(page)).toHaveCount(0);
+  await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
   await expect.poll(()=>cardWords(page)).toEqual(['change','team']);
   await page.evaluate(()=>{
     const w=window as any;w.task.attempt++;w.task.revision++;
@@ -999,7 +1016,7 @@ test('dictionary guidance switches only this query and waits for explicit transl
   expect(await requests(page)).toBe(0);
   await page.getByRole('button',{name:'Use this service',exact:true}).click();
   await expect(page.locator('.provider-name')).toHaveText('Configured translator');
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue(dictionarySentence);
+  await expect(page.getByRole('textbox',{name:'Source reading',exact:true})).toHaveText(dictionarySentence);
   await expect(page.getByRole('combobox',{name:'Translation language',exact:true})).toBeVisible();
   await expect(page.locator('.disclosure-control')).toBeFocused();
   expect(await requests(page)).toBe(0);
@@ -1031,13 +1048,13 @@ test('dictionary miss and stale guidance recover when the query changes',async({
   });
   await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toContainText('No matching dictionary entry was found.');
   await expect(page.getByText('No definition yet. Try again.',{exact:true})).toHaveCount(0);
-  await page.getByRole('textbox',{name:'Source text'}).fill('hello');
+  await (await editableSource(page)).fill('hello');
   await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toHaveCount(0);
   await expect(page.locator('.disclosure-control')).toBeEnabled();
   await page.evaluate(()=>(window as any).deferGuidance=true);
-  await page.getByRole('textbox',{name:'Source text'}).fill(dictionarySentence);
+  await (await editableSource(page)).fill(dictionarySentence);
   await expect.poll(()=>page.evaluate(()=>(window as any).guidanceResolvers.length)).toBe(1);
-  await page.getByRole('textbox',{name:'Source text'}).fill('good morning');
+  await (await editableSource(page)).fill('good morning');
   await expect.poll(()=>page.evaluate(()=>(window as any).guidanceResolvers.length)).toBe(2);
   await page.evaluate(()=>{const w=window as any;w.guidanceResolvers[1].resolve({issue:null,profile_ids:[]});});
   await expect(page.locator('.disclosure-control')).toBeEnabled();
@@ -1076,7 +1093,7 @@ test('dictionary alternatives work for a new manual draft and are cleared when a
     w.guidanceResponses[source]={issue:'sentence',profile_ids:['default']};
     w.emit('configuration-changed',structuredClone(w.settings));
   },dictionarySentence);
-  await page.getByRole('textbox',{name:'Source text'}).fill(dictionarySentence);
+  await (await editableSource(page)).fill(dictionarySentence);
   await page.getByRole('button',{name:'Use this service',exact:true}).click();
   expect(await requests(page)).toBe(0);
   await page.keyboard.press('x');
@@ -1105,7 +1122,7 @@ test('manual query service and languages survive focus and appearance refreshes'
     w.guidanceResponses[source]={issue:'sentence',profile_ids:['default']};
     w.emit('configuration-changed',structuredClone(w.settings));
   },dictionarySentence);
-  await page.getByRole('textbox',{name:'Source text'}).fill(dictionarySentence);
+  await (await editableSource(page)).fill(dictionarySentence);
   await page.getByRole('button',{name:'Use this service',exact:true}).click();
   await page.getByRole('combobox',{name:'Source language',exact:true}).selectOption('fr');
   await page.getByRole('combobox',{name:'Translation language',exact:true}).selectOption('de');
@@ -1115,7 +1132,7 @@ test('manual query service and languages survive focus and appearance refreshes'
   await expect(page.locator('.provider-name')).toHaveText('Chosen translator');
   await expect(page.getByRole('combobox',{name:'Source language',exact:true})).toHaveValue('fr');
   await expect(page.getByRole('combobox',{name:'Translation language',exact:true})).toHaveValue('de');
-  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue(dictionarySentence);
+  await expect((await editableSource(page))).toHaveValue(dictionarySentence);
   expect(await requests(page)).toBe(0);
   await page.locator('.disclosure-control').click();
   expect(await requests(page)).toBe(1);

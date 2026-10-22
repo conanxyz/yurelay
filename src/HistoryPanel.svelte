@@ -4,6 +4,7 @@
   import { imageEntrance, historyEntrance } from "./motion";
   import { invoke, isTauri, convertFileSrc } from "@tauri-apps/api/core";
   import { active, type Task } from "./types";
+  import type { HistorySummary } from "./history-types";
   import {
     text,
     statusName,
@@ -12,11 +13,13 @@
     type Locale,
   } from "./locale";
   import Icon from "./Icons.svelte";
+  import OperationHistory from "./OperationHistory.svelte";
+  import SourceSegmentList from "./SourceSegmentList.svelte";
   import TranslationContent from "./TranslationContent.svelte";
   import { translationPlainText } from "./reading";
   let { locale }: { locale: Locale } = $props();
   const t = (zh: string, en: string) => text(locale, zh, en);
-  let records = $state<Task[]>([]),
+  let records = $state<HistorySummary[]>([]),
     current = $state<Task | null>(null),
     query = $state(""),
     source = $state(""),
@@ -26,22 +29,25 @@
     error = $state(""),
     confirming = $state(false);
   let deleteDialog: HTMLDialogElement;
-  const day = (task: Task) =>
+  const day = (task: Pick<Task,"created_at">) =>
     new Date(task.created_at).toLocaleDateString(
       locale === "zh" ? "zh-CN" : "en-US",
       { month: "long", day: "numeric" },
     );
-  const time = (task: Task) =>
+  const time = (task: Pick<Task,"created_at">) =>
     new Date(task.created_at).toLocaleTimeString(
       locale === "zh" ? "zh-CN" : "en-US",
       { hour: "2-digit", minute: "2-digit" },
     );
-  const sourceName = (task: Task) =>
-    task.source === "screenshot"
-      ? t("截图", "Screenshot")
-      : task.source === "manual"
-        ? t("手动输入", "Typed text")
-        : t("划词", "Selection");
+  const sourceName = (task: HistorySummary | Task): string => {
+    const kinds = 'source_kinds' in task ? task.source_kinds : 'source_segments' in task ? task.source_segments?.map(segment => segment.kind) : undefined;
+    const sources = new Set(kinds?.length ? kinds : [task.source]);
+    if (sources.size > 1) return t("混合来源","Mixed sources");
+    const source = [...sources][0];
+    return source === "screenshot" ? t("截图","Screenshot") : source === "manual" ? t("手动输入","Typed text") : t("划词","Selection");
+  };
+  let attemptsOpen = $state(false);
+  let imageOpen = $state(false);
   function confirmDelete() {
     confirming = true;
     deleteDialog.showModal();
@@ -50,16 +56,18 @@
     confirming = false;
     deleteDialog.close();
   }
+  let operationHistoryRevision = $state(0);
   let generation = 0;
   let detailGeneration = 0;
   let disposed = false;
   async function load(reset = true) {
+    operationHistoryRevision++;
     const ticket = ++generation;
     loading = true;
     error = "";
     try {
       const rows = isTauri()
-        ? await invoke<Task[]>("search_history", {
+        ? await invoke<HistorySummary[]>("search_history", {
             query,
             source,
             offset: reset ? 0 : records.length,
@@ -77,6 +85,8 @@
   async function choose(id: string) {
     const ticket = ++detailGeneration;
     detailLoading = true;
+    attemptsOpen = false;
+    imageOpen = false;
     confirming = false;
     deleteDialog?.close();
     error = "";
@@ -113,13 +123,23 @@
   }
   onMount(() => {
     load();
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
-      load();
-      if (current) choose(current.id);
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => {
+        refreshTimer = undefined;
+        const selected = current;
+        const selectionTicket = detailGeneration;
+        await load();
+        if (disposed || !selected || detailLoading || selectionTicket !== detailGeneration || current?.id !== selected.id) return;
+        const summary = records.find(item => item.id === selected.id);
+        if (!summary || summary.revision !== selected.revision || summary.status !== selected.status) await choose(selected.id);
+      }, 24);
     };
     window.addEventListener("focus", refresh);
     const watcher = isTauri() ? listen("settings-focused", refresh) : null;
     return () => {
+      clearTimeout(refreshTimer);
       window.removeEventListener("focus", refresh);
       watcher?.then((off) => off());
       disposed = true;
@@ -165,6 +185,7 @@
       ></button
     >
   </form>
+  <OperationHistory {locale} onOpenSource={choose} revision={operationHistoryRevision}/>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <div class="history-workspace">
     <div class="history-tray">
@@ -294,12 +315,15 @@
                 )}{/if}</span
             >
           </div>
-          {#if current.has_image}<details class="history-image">
-              <summary>{t("查看截图", "View screenshot")}</summary><img
+          {#if (current.source_segments?.length ?? 0) > 1 || current.source_segments?.some(segment => segment.asset_id && segment.asset_id !== current!.id)}
+            <SourceSegmentList task={current} {locale}/>
+          {:else if current.has_image}<details class="history-image" bind:open={imageOpen}>
+              <summary>{t("查看截图", "View screenshot")}</summary>
+              {#if imageOpen}<img
                 use:imageEntrance
                 src={convertFileSrc(current.id, "yurelay-image")}
                 alt={t("保存的截图选区", "Saved screenshot selection")}
-              />
+              />{/if}
             </details>{/if}
           <section class="history-content-section">
             <h3>{t("原文", "Source")}</h3>
@@ -333,12 +357,12 @@
           {#if current.error}<p class="error history-detail-error" role="alert">
               {errorText(current.error, locale)}
             </p>{/if}
-          {#if current.past_attempts.length}<details class="history-attempts">
+          {#if current.past_attempts.length}<details class="history-attempts" bind:open={attemptsOpen}>
               <summary
                 >{t("之前的翻译", "Previous translations")}<span
                   >{current.past_attempts.length}</span
                 ></summary
-              >{#each current.past_attempts as attempt}<div
+              >{#if attemptsOpen}{#each current.past_attempts as attempt}<div
                   class="history-attempt"
                 >
                   <span
@@ -354,7 +378,7 @@
                     />{:else}<p class="history-text">
                       {t("无译文", "No translation")}
                     </p>{/if}
-                </div>{/each}
+                </div>{/each}{/if}
             </details>{/if}
           <footer class="history-detail-actions">
             <div>

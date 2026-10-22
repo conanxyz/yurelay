@@ -1,3 +1,4 @@
+import { workflowErrors } from "./workflow-errors";
 import type { Settings } from "./types";
 export type Locale = "zh" | "en";
 export function localeFor(settings: Settings): Locale {
@@ -58,6 +59,8 @@ export function languageName(value: string, locale: Locale) {
   }
 }
 const statuses: Record<string, [string, string]> = {
+  generating: ["正在生成", "Generating"],
+  blocked: ["等待确认", "Needs confirmation"],
   capturing: ["正在取词", "Capturing"],
   recognizing: ["正在识别", "Recognizing"],
   queued: ["等待翻译", "Queued"],
@@ -73,6 +76,7 @@ export function statusName(value: string, locale: Locale) {
   return statuses[value]?.[locale === "zh" ? 0 : 1] ?? value;
 }
 const errors: Record<string, string> = {
+  ...workflowErrors,
   "请输入有效的服务地址。": "Enter a valid service URL.",
   "请填写或选择模型。": "Enter or choose a model.",
   "两个快捷键不能相同。": "The two shortcuts must be different.",

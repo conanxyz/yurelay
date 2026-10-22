@@ -6,5 +6,6 @@ import "@fontsource/outfit/latin-600.css";
 import "./styles.css";
 import "./preferences.css";
 import "./yurelay-design.css";
+import "./workflow.css";
 
 mount(App, { target: document.getElementById("app")! });

@@ -330,7 +330,7 @@ static ADCaptureController *ADCaptureActive;
 - (void)keyDown:(NSEvent *)event { if (event.keyCode == 53) [self.controller cancel]; else [super keyDown:event]; }
 @end
 
-static NSString *ADOCRImage(CGImageRef image, NSError **error) {
+static NSString *ADOCRImageWithLayout(CGImageRef image, NSError **error, NSData **layout) {
     VNRecognizeTextRequest *request = [VNRecognizeTextRequest new];
     request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
     request.recognitionLanguages = @[@"zh-Hans", @"en-US"];
@@ -342,10 +342,16 @@ static NSString *ADOCRImage(CGImageRef image, NSError **error) {
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image options:@{}];
     if (![handler performRequests:@[request] error:error]) return nil;
     NSMutableArray<NSString *> *lines = [NSMutableArray new];
+    NSMutableArray *blocks = [NSMutableArray new];
     for (VNRecognizedTextObservation *obs in request.results) {
         VNRecognizedText *top = [obs topCandidates:1].firstObject;
-        if (top.string.length) [lines addObject:top.string];
+        if (top.string.length) {
+            [lines addObject:top.string];
+            CGRect box = obs.boundingBox;
+            [blocks addObject:@{@"text":top.string,@"confidence":@(top.confidence),@"x":@(box.origin.x),@"y":@(box.origin.y),@"width":@(box.size.width),@"height":@(box.size.height)}];
+        }
     }
+    if (layout) *layout = [NSJSONSerialization dataWithJSONObject:@{@"width":@(CGImageGetWidth(image)),@"height":@(CGImageGetHeight(image)),@"orientation":@1,@"blocks":blocks} options:0 error:nil];
     return [lines componentsJoinedByString:@"\n"];
 }
 
@@ -390,9 +396,12 @@ static dispatch_queue_t ADOCRQueue(void) {
     dispatch_group_async(group, ADOCRQueue(), ^{
         @autoreleasepool {
             NSError *error = nil;
-            NSString *text = ADOCRImage(image, &error);
-            if (text.length) [session text:2 value:text];
-            else [session text:6 value:error ? @"本地文字识别失败，请缩小选区后重试。" : @"选区中没有识别到文字。"];
+            NSData *layout = nil;
+            NSString *text = ADOCRImageWithLayout(image, &error, &layout);
+            if (text.length) { [session text:2 value:text]; if (layout) [session send:9 data:layout]; }
+            else {
+                [session text:6 value:error ? @"本地文字识别失败，请缩小选区后重试。" : @"选区中没有识别到文字。"];
+            }
         }
     });
     dispatch_group_async(group, queue, ^{
@@ -553,4 +562,24 @@ void ad_choose_export(const char *name, void *context, ADCallback callback) {
             [session end];
         }];
     });
+}
+
+// NSString ranges already use UTF-16; do not convert these offsets to UTF-8 bytes.
+size_t ad_token_ranges(const char *input, unsigned char *output, size_t capacity) {
+    @autoreleasepool {
+        NSString *text = [NSString stringWithUTF8String:input];
+        if (!text || text.length > 100000) return 0;
+        NLTagger *tagger = [[NLTagger alloc] initWithTagSchemes:@[NLTagSchemeLemma]];
+        tagger.string = text;
+        [tagger setLanguage:NLLanguageEnglish range:NSMakeRange(0,text.length)];
+        NSMutableArray *tokens = [NSMutableArray new];
+        [tagger enumerateTagsInRange:NSMakeRange(0,text.length) unit:NLTokenUnitWord scheme:NLTagSchemeLemma options:NLTaggerOmitWhitespace|NLTaggerOmitPunctuation usingBlock:^(NLTag tag, NSRange range, BOOL *stop) {
+            (void)stop;
+            NSString *surface = [text substringWithRange:range];
+            [tokens addObject:@{@"start_utf16":@(range.location),@"end_utf16":@(NSMaxRange(range)),@"surface":surface,@"lemma":tag ?: surface.lowercaseString}];
+        }];
+        NSData *data = [NSJSONSerialization dataWithJSONObject:tokens options:0 error:nil];
+        if (!data || data.length >= capacity) return 0;
+        memcpy(output,data.bytes,data.length); return data.length;
+    }
 }

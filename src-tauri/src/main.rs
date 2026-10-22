@@ -3,9 +3,12 @@
 mod capture;
 mod commands;
 mod placement;
+mod reliability_commands;
 mod settings_guard;
 mod shortcuts;
+mod source_commands;
 mod state;
+mod tray;
 
 use state::AppState;
 use std::sync::atomic::Ordering;
@@ -51,12 +54,18 @@ fn main() {
                         return;
                     };
                     let bindings = *app.state::<AppState>().bindings.lock().unwrap();
-                    if let Some((selection, screenshot)) = bindings {
-                        if *shortcut == selection {
-                            commands::start_capture_target(app.clone(), false, target);
-                        }
-                        if *shortcut == screenshot {
-                            commands::start_capture(app.clone(), true);
+                    if let Some((screenshot, append)) =
+                        bindings.and_then(|keys| keys.action(*shortcut))
+                    {
+                        if append {
+                            source_commands::start_capture_target(
+                                app.clone(),
+                                screenshot,
+                                target,
+                                source_commands::append_target(app),
+                            );
+                        } else {
+                            commands::start_capture_target(app.clone(), screenshot, target);
                         }
                     }
                 })
@@ -107,7 +116,7 @@ fn main() {
             }
             state::initialize_result_position(app.handle());
             state::show(app.handle(), false);
-            state::register_shortcuts(app.handle(), "Alt+D", "Alt+S");
+            state::register_shortcuts(app.handle(), "Alt+D", "Alt+S", None, None);
             let open = MenuItem::with_id(app, "show", "打开翻译窗口", true, None::<&str>)?;
             let capture = MenuItem::with_id(app, "capture", "截屏翻译", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
@@ -152,6 +161,8 @@ fn main() {
                             &handle,
                             &config.settings.selection_shortcut,
                             &config.settings.screenshot_shortcut,
+                            config.settings.append_selection_shortcut.as_deref(),
+                            config.settings.append_screenshot_shortcut.as_deref(),
                         );
                     }
                     Err(error) => state::notice(&handle, error),
@@ -226,6 +237,29 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::submit_operation,
+            commands::operation_list,
+            commands::cancel_operation,
+            commands::resolve_operation_sensitive,
+            reliability_commands::service_verifications,
+            reliability_commands::default_reply_prompt,
+            source_commands::source_update,
+            source_commands::source_clean_preview,
+            source_commands::source_clean_apply,
+            source_commands::source_clean_text,
+            source_commands::source_undo,
+            source_commands::source_undo_cleanup,
+            source_commands::source_restore,
+            source_commands::source_remove_last,
+            source_commands::source_layout_apply,
+            source_commands::source_encounters,
+            source_commands::source_assets,
+            source_commands::source_asset,
+            source_commands::source_pending,
+            source_commands::resolve_source_pending,
+            source_commands::set_append_mode,
+            source_commands::capture_append,
+            source_commands::capture_with_mode,
             commands::bootstrap,
             commands::default_translation_prompt,
             commands::resolve_sensitive,

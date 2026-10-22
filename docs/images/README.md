@@ -20,3 +20,16 @@ The `readme-*` files are captures of the native macOS application (Tauri / WKWeb
 - The README offers a static alternative for reduced-motion preferences. All media currently use the Chinese interface.
 
 The lighthouse and harbor examples are sample content, not real user reading history. Local dictionary text in the word detail comes from the Mac's enabled dictionary.
+
+
+## Reading workflow PR evidence
+
+`pr-reading-reply-light.png`, `pr-reading-narrow-dark.png`,
+`pr-reading-settings-simple.png` and `pr-reading-prompts-simple.png` are captured
+from the local Playwright fixtures. They show synthetic source text, model labels,
+reply output and settings, without real credentials or user history. These are
+browser layout checks, not evidence of macOS permissions or native capture APIs.
+
+The existing `readme-translation-light.png` provides the earlier interface example;
+its native demo provenance is documented above. The examples use different sample
+content and rendering environments, so they are not pixel or latency comparisons.

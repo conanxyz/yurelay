@@ -7,8 +7,10 @@
     readingBlocks,
     highlightedReading,
     highlightedText,
+    readingTableText,
     type TextHighlight,
   } from "./reading";
+  import { ensureMath } from "./math";
   import Icon from "./Icons.svelte";
   let {
     text,
@@ -16,6 +18,7 @@
     identity = "",
     streaming = false,
     plain = false,
+    controls = true,
     highlights = [],
   }: {
     text: string;
@@ -23,10 +26,13 @@
     identity?: string;
     streaming?: boolean;
     plain?: boolean;
+    controls?: boolean;
     highlights?: TextHighlight[];
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   let mode = $state<"read" | "plain">("read");
+  let mathEnabled = $state(true);
+  let pendingPaint = false;
   let shown = $state(""),
     blocks = $state<string[]>([]),
     error = $state("");
@@ -49,7 +55,11 @@
   function paint() {
     timer = undefined;
     const changedIdentity = renderedIdentity !== identity;
-    if (selecting() && !changedIdentity) return;
+    if (selecting() && !changedIdentity) {
+      pendingPaint = true;
+      return;
+    }
+    pendingPaint = false;
     if (changedIdentity) {
       if (selecting()) window.getSelection()?.removeAllRanges();
       renderedIdentity = identity;
@@ -73,8 +83,18 @@
       scroller.scrollHeight - top - scroller.clientHeight > 12;
     const paintedIdentity = identity;
     shown = text;
+    const mathText = text;
+    if (mathEnabled && text.includes("$"))
+      void ensureMath(text).then(() => {
+        if (text !== mathText || identity !== paintedIdentity) return;
+        if (selecting()) {
+          pendingPaint = true;
+          return;
+        }
+        blocks = plain ? [] : readingBlocks(text, mathEnabled);
+      });
     try {
-      blocks = plain ? [] : readingBlocks(text);
+      blocks = plain ? [] : readingBlocks(text, mathEnabled);
     } catch {
       blocks = [];
       mode = "plain";
@@ -105,8 +125,16 @@
     identity;
     plain;
     streaming;
+    mathEnabled;
     untrack(schedule);
   });
+  async function copyTable(block: string) {
+    try {
+      await invoke("copy_text", { text: readingTableText(block) });
+    } catch (e) {
+      error = String(e);
+    }
+  }
   async function copyMarkdown() {
     try {
       await invoke("copy_text", { text });
@@ -116,7 +144,7 @@
   }
   onMount(() => {
     const selection = () => {
-      if (!selecting() && shown !== text) schedule();
+      if (!selecting() && (shown !== text || pendingPaint)) schedule();
     };
     const open = async (e: Event) => {
       const anchor = (e.target as Element)?.closest("a");
@@ -146,7 +174,7 @@
 </script>
 
 <div class="translation-reader">
-  {#if !plain}<div class="reader-tools">
+  {#if !plain && controls}<div class="reader-tools">
       <div
         class="reader-mode"
         aria-label={t("译文显示方式", "Translation display")}
@@ -158,6 +186,12 @@
           >{t("纯文本", "Plain text")}</button
         >
       </div>
+      {#if text.includes("$")}<button
+          class="math-toggle"
+          aria-pressed={mathEnabled}
+          onclick={() => (mathEnabled = !mathEnabled)}
+          >{t("公式排版", "Math layout")}</button
+        >{/if}
       <button
         class="reader-copy-markdown icon-button"
         disabled={streaming}
@@ -176,6 +210,12 @@
           >{:else}{part.text}{/if}{/each}{:else}{#each highlightedBlocks as block, i (i)}<div
           class="reading-block"
         >
+          {#if block.includes("<table>")}<button
+              class="table-copy"
+              disabled={streaming}
+              onclick={() => copyTable(block)}
+              >{t("复制表格", "Copy table")}</button
+            >{/if}
           {@html block}
         </div>{/each}{/if}
   </div>

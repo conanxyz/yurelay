@@ -45,5 +45,5 @@ export function imageEntrance(node: HTMLElement) {
   return entrance(node, [node], { transform: 'scale(.985)', opacity: .7 }, 200, node.closest('.history-detail'));
 }
 export function historyEntrance(node: HTMLElement) {
-  return entrance(node, [node], { transform: 'translateY(10px)', opacity: .6 }, 800, node.closest('.settings-content'));
+  return entrance(node, [node], { transform: 'translateY(10px)', opacity: .6 }, 160, node.closest('.settings-content'));
 }

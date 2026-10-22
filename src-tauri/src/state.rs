@@ -43,7 +43,7 @@ pub struct AppState {
     pub root: PathBuf,
     pub locale: Mutex<String>,
     pub engine: OnceCell<Arc<Engine>>,
-    pub bindings: Mutex<Option<(Shortcut, Shortcut)>>,
+    pub bindings: Mutex<Option<ShortcutBindings>>,
     pub shortcut_recording: AtomicBool,
     pub captures: crate::capture::CaptureGate,
     pub pressed_shortcuts: Mutex<HashMap<u32, crate::capture::ShortcutPress>>,
@@ -113,6 +113,28 @@ pub async fn engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                 Some(Arc::new(PlatformDictionary)),
             )
             .await?;
+            let operation_app = app.clone();
+            let operation_engine = engine.clone();
+            let mut operation_events = engine.operations.subscribe();
+            tauri::async_runtime::spawn(async move {
+                use tauri::Emitter;
+                loop {
+                    match operation_events.recv().await {
+                        Ok(record) => {
+                            let _ = operation_app.emit("operation-changed", record);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            for record in operation_engine
+                                .operations
+                                .records(None, operation_engine.now())
+                            {
+                                let _ = operation_app.emit("operation-changed", record);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
             let observer_app = app.clone();
             let observing = engine.clone();
             tauri::async_runtime::spawn(async move {
@@ -169,17 +191,61 @@ pub async fn engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
         .cloned()
 }
 
-pub fn parse_shortcuts(selection: &str, screenshot: &str) -> Result<(Shortcut, Shortcut), String> {
-    let a: Shortcut = selection
-        .parse()
-        .map_err(|_| "划词快捷键格式无效，例如 Alt+D。")?;
-    let b: Shortcut = screenshot
-        .parse()
-        .map_err(|_| "截图快捷键格式无效，例如 Alt+S。")?;
-    if a == b {
-        return Err("两个快捷键不能相同。".into());
+#[derive(Debug, Clone, Copy)]
+pub struct ShortcutBindings {
+    pub selection: Shortcut,
+    pub screenshot: Shortcut,
+    pub append_selection: Option<Shortcut>,
+    pub append_screenshot: Option<Shortcut>,
+}
+impl ShortcutBindings {
+    pub fn keys(self) -> Vec<Shortcut> {
+        [
+            Some(self.selection),
+            Some(self.screenshot),
+            self.append_selection,
+            self.append_screenshot,
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
-    for shortcut in [&a, &b] {
+    pub fn action(self, key: Shortcut) -> Option<(bool, bool)> {
+        if key == self.selection {
+            Some((false, false))
+        } else if key == self.screenshot {
+            Some((true, false))
+        } else if Some(key) == self.append_selection {
+            Some((false, true))
+        } else if Some(key) == self.append_screenshot {
+            Some((true, true))
+        } else {
+            None
+        }
+    }
+}
+pub fn parse_shortcuts(
+    selection: &str,
+    screenshot: &str,
+    append_selection: Option<&str>,
+    append_screenshot: Option<&str>,
+) -> Result<ShortcutBindings, String> {
+    let parse = |value: &str| {
+        value
+            .parse::<Shortcut>()
+            .map_err(|_| "快捷键格式无效，例如 Alt+D。".to_string())
+    };
+    let bindings = ShortcutBindings {
+        selection: parse(selection)?,
+        screenshot: parse(screenshot)?,
+        append_selection: append_selection.map(parse).transpose()?,
+        append_screenshot: append_screenshot.map(parse).transpose()?,
+    };
+    let keys = bindings.keys();
+    for (index, shortcut) in keys.iter().enumerate() {
+        if keys[..index].contains(shortcut) {
+            return Err("捕获与追加快捷键不能重复。".into());
+        }
         if !shortcut
             .mods
             .intersects(Modifiers::ALT | Modifiers::CONTROL | Modifiers::SUPER)
@@ -187,10 +253,15 @@ pub fn parse_shortcuts(selection: &str, screenshot: &str) -> Result<(Shortcut, S
             return Err("快捷键至少需要 Option/Alt、Control 或 Command 修饰键。".into());
         }
     }
-    Ok((a, b))
+    Ok(bindings)
 }
-
-pub fn register_shortcuts(app: &AppHandle, selection: &str, screenshot: &str) -> ShortcutReport {
+pub fn register_shortcuts(
+    app: &AppHandle,
+    selection: &str,
+    screenshot: &str,
+    append_selection: Option<&str>,
+    append_screenshot: Option<&str>,
+) -> ShortcutReport {
     if app
         .state::<AppState>()
         .shortcut_recording
@@ -202,23 +273,20 @@ pub fn register_shortcuts(app: &AppHandle, selection: &str, screenshot: &str) ->
         };
     }
     let result = (|| {
-        let (a, b) = parse_shortcuts(selection, screenshot)?;
+        let bindings = parse_shortcuts(selection, screenshot, append_selection, append_screenshot)?;
         let previous = *app.state::<AppState>().bindings.lock().unwrap();
         let old: Vec<_> = previous
             .into_iter()
-            .flat_map(|(a, b)| [a, b])
+            .flat_map(ShortcutBindings::keys)
             .filter(|key| app.global_shortcut().is_registered(*key))
             .collect();
         crate::shortcuts::replace(
             &old,
-            &[a, b],
+            &bindings.keys(),
             |key| {
-                app.global_shortcut().register(key).map_err(|_| {
-                    format!(
-                        "快捷键 {} 无法注册，可能已被其他应用占用。释放键位后可重新注册。",
-                        if key == a { selection } else { screenshot }
-                    )
-                })
+                app.global_shortcut()
+                    .register(key)
+                    .map_err(|_| "快捷键无法注册，可能已被其他应用占用；原有键位保持生效。".into())
             },
             |key| {
                 app.global_shortcut()
@@ -226,7 +294,7 @@ pub fn register_shortcuts(app: &AppHandle, selection: &str, screenshot: &str) ->
                     .map_err(|_| "无法更新快捷键，请重启应用。".into())
             },
         )?;
-        *app.state::<AppState>().bindings.lock().unwrap() = Some((a, b));
+        *app.state::<AppState>().bindings.lock().unwrap() = Some(bindings);
         Ok::<_, String>(())
     })();
     let report = match result {
@@ -316,7 +384,7 @@ pub fn notice(app: &AppHandle, message: String) {
 pub fn update_tray(app: &AppHandle) {
     let count = app.state::<AppState>().unread.lock().unwrap().len();
     let en = app.state::<AppState>().locale.lock().unwrap().as_str() == "en";
-    if let Some(tray) = app.tray_by_id("yurelay") {
+    crate::tray::with_tray(app, move |tray| {
         let _ = tray.set_title(if count > 0 { Some("•") } else { None });
         let _ = tray.set_tooltip(Some(if count > 0 {
             if en {
@@ -329,7 +397,7 @@ pub fn update_tray(app: &AppHandle) {
         } else {
             "Yurelay · 翻译窗口".into()
         }));
-    }
+    });
 }
 
 pub fn show_settings(app: &AppHandle) {
@@ -362,10 +430,10 @@ pub fn localize_menus(app: &AppHandle, settings: &yurelay_core::config::Settings
     if let Ok(items) = items {
         let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
             items.iter().map(|item| item as _).collect();
-        if let Ok(menu) = Menu::with_items(app, &refs)
-            && let Some(tray) = app.tray_by_id("yurelay")
-        {
-            let _ = tray.set_menu(Some(menu));
+        if let Ok(menu) = Menu::with_items(app, &refs) {
+            crate::tray::with_tray(app, move |tray| {
+                let _ = tray.set_menu(Some(menu));
+            });
         }
     }
     if let Some(menu) = app.menu()
@@ -552,5 +620,24 @@ mod window_tests {
             true
         });
         assert!(snapshot.expanded);
+    }
+}
+
+#[cfg(test)]
+mod append_shortcut_tests {
+    use super::*;
+    #[test]
+    fn optional_keys_are_disabled_by_default_and_all_four_are_distinct() {
+        let defaults = parse_shortcuts("Alt+D", "Alt+S", None, None).unwrap();
+        assert_eq!(defaults.keys().len(), 2);
+        let all =
+            parse_shortcuts("Alt+D", "Alt+S", Some("Shift+Alt+D"), Some("Shift+Alt+S")).unwrap();
+        assert_eq!(all.keys().len(), 4);
+        assert_eq!(
+            all.action(all.append_screenshot.unwrap()),
+            Some((true, true))
+        );
+        assert!(parse_shortcuts("Alt+D", "Alt+S", Some("Alt+D"), None).is_err());
+        assert!(parse_shortcuts("Alt+D", "Alt+S", Some("Shift+A"), None).is_err());
     }
 }

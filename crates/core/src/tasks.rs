@@ -3,6 +3,7 @@
 //! Mutation, snapshot creation, and subscription registration share one short
 //! critical section. This prevents lost updates when a window is recreated.
 
+mod source_state;
 use crate::config::{Profile, Retention};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -68,6 +69,16 @@ pub struct Timings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PastAttempt {
+    #[serde(default)]
+    pub preserve_structure: bool,
+    #[serde(default)]
+    pub failure: Option<crate::reliability::FailureSummary>,
+    #[serde(default = "legacy_attempt_reason")]
+    pub reason: String,
+    #[serde(default)]
+    pub source_revision: Option<u64>,
+    #[serde(default)]
+    pub source_text: Option<String>,
     pub number: u32,
     pub profile: Profile,
     pub status: Status,
@@ -90,6 +101,26 @@ pub enum VocabularyState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
+    #[serde(default)]
+    pub preserve_structure: bool,
+    #[serde(default)]
+    pub failure: Option<crate::reliability::FailureSummary>,
+    #[serde(default)]
+    pub source_revision: u64,
+    #[serde(default)]
+    pub source_segments: Vec<crate::source::SourceSegment>,
+    #[serde(default)]
+    pub source_history: Vec<crate::source::SourceSnapshot>,
+    #[serde(skip)]
+    pub source_undo: Vec<crate::source::SourceSnapshot>,
+    #[serde(default, skip_deserializing)]
+    pub can_undo_cleanup: bool,
+    #[serde(skip)]
+    pub cleanup_undo: Option<(u64, String)>,
+    #[serde(default)]
+    pub translation_source_revision: Option<u64>,
+    #[serde(default)]
+    pub translation_source_text: Option<String>,
     #[serde(default)]
     pub extract_vocabulary: bool,
     #[serde(default)]
@@ -132,11 +163,37 @@ pub struct Task {
     pub past_attempts: Vec<PastAttempt>,
 }
 
+fn legacy_attempt_reason() -> String {
+    "manual_retry".into()
+}
 fn legacy_prompt_version() -> u32 {
     1
 }
 
 impl Task {
+    pub fn source_snapshot(&self) -> crate::source::SourceSnapshot {
+        crate::source::SourceSnapshot {
+            source_revision: self.source_revision,
+            original_text: self.original_text.clone(),
+            edited_text: self.edited_text.clone(),
+            source_language: self.source_language.clone(),
+            target_language: self.target_language.clone(),
+            segments: self.source_segments.clone(),
+        }
+    }
+    pub fn ensure_source_segments(&mut self) {
+        if self.source_segments.is_empty() && !self.original_text.is_empty() {
+            self.source_segments.push(crate::source::SourceSegment {
+                id: self.id.clone(),
+                kind: self.source,
+                original_text: self.original_text.clone(),
+                captured_at: self.created_at,
+                asset_id: self.has_image.then(|| self.id.clone()),
+                ocr_layout: None,
+            });
+        }
+    }
+
     pub fn sentence_translation(&self, attempt: u32, source: &str, sentence: &str) -> String {
         if self.attempt != attempt
             || self.status != Status::Completed
@@ -149,12 +206,34 @@ impl Task {
     }
     pub fn content_bytes(&self) -> usize {
         self.original_text.len()
+            + self.cleanup_undo.as_ref().map_or(0, |(_, text)| text.len())
             + self.edited_text.as_ref().map_or(0, String::len)
+            + self
+                .source_segments
+                .iter()
+                .map(|s| {
+                    s.original_text.len()
+                        + s.ocr_layout.as_ref().map_or(0, |layout| {
+                            layout.blocks.iter().map(|b| b.text.len()).sum::<usize>()
+                        })
+                })
+                .sum::<usize>()
+            + self
+                .source_history
+                .iter()
+                .map(crate::source::SourceSnapshot::content_bytes)
+                .sum::<usize>()
+            + self
+                .source_undo
+                .iter()
+                .map(crate::source::SourceSnapshot::content_bytes)
+                .sum::<usize>()
+            + self.translation_source_text.as_ref().map_or(0, String::len)
             + self.translation.len()
             + self
                 .past_attempts
                 .iter()
-                .map(|a| a.translation.len())
+                .map(|a| a.translation.len() + a.source_text.as_ref().map_or(0, String::len))
                 .sum::<usize>()
     }
     pub fn query_text(&self) -> &str {
@@ -286,6 +365,16 @@ impl TaskBook {
         }
         inner.revision += 1;
         let task = Task {
+            preserve_structure: false,
+            failure: None,
+            source_revision: 0,
+            can_undo_cleanup: false,
+            cleanup_undo: None,
+            source_segments: vec![],
+            source_history: vec![],
+            source_undo: vec![],
+            translation_source_revision: None,
+            translation_source_text: None,
             extract_vocabulary: true,
             vocabulary_state: VocabularyState::None,
             sensitive: None,
@@ -354,6 +443,8 @@ impl TaskBook {
         // A saved acknowledgement belongs to one revision, not future changes.
         // Reset before mutation so set_save_state can explicitly acknowledge the
         // current revision without having its value overwritten afterward.
+        let previous_source = task.source_snapshot();
+        let previous_status = task.status;
         let previous_save_state = task.save_state;
         if task.save_state == SaveState::Saved {
             task.save_state = SaveState::Pending;
@@ -361,6 +452,34 @@ impl TaskBook {
         if !mutate(task) {
             task.save_state = previous_save_state;
             return None;
+        }
+        if previous_source.original_text != task.original_text
+            || previous_source.edited_text != task.edited_text
+            || previous_source.source_language != task.source_language
+            || previous_source.target_language != task.target_language
+        {
+            if !previous_source.original_text.is_empty() && task.sensitive.is_none() {
+                task.source_history.push(previous_source.clone());
+                if task.source_history.len() > 6 {
+                    task.source_history.remove(0);
+                }
+            }
+            task.source_revision = task.source_revision.saturating_add(1);
+        }
+        if task
+            .cleanup_undo
+            .as_ref()
+            .is_some_and(|(revision, _)| *revision != task.source_revision)
+        {
+            task.cleanup_undo = None;
+        }
+        task.can_undo_cleanup = task.cleanup_undo.is_some();
+        if task.status == Status::Queued
+            && (previous_status != Status::Queued
+                || task.source_revision != previous_source.source_revision)
+        {
+            task.translation_source_revision = Some(task.source_revision);
+            task.translation_source_text = Some(task.query_text().into());
         }
         inner.revision += 1;
         let revision = inner.revision;
@@ -384,6 +503,10 @@ impl TaskBook {
         self.update(id, None, now, |t| {
             t.profile = profile;
             t.original_text.clear();
+            t.source_segments.clear();
+            t.source_history.clear();
+            t.source_undo.clear();
+            t.translation_source_text = None;
             t.edited_text = None;
             t.translation.clear();
             t.vocabulary.clear();
@@ -410,6 +533,15 @@ impl TaskBook {
             t.sensitive = None;
             t.original_text = text;
             t.status = Status::Ready;
+            true
+        })
+    }
+    pub fn set_structure(&self, id: &str, enabled: bool, now: i64) -> Option<Task> {
+        self.update(id, None, now, |task| {
+            if task.status != Status::Queued {
+                return false;
+            }
+            task.preserve_structure = enabled;
             true
         })
     }
@@ -565,6 +697,14 @@ impl TaskBook {
             if !matches!(t.status, Status::Capturing | Status::Recognizing) {
                 return false;
             }
+            t.source_segments = vec![crate::source::SourceSegment {
+                id: Uuid::new_v4().to_string(),
+                kind: t.source,
+                original_text: text.clone(),
+                captured_at: now,
+                asset_id: (t.source == Source::Screenshot).then(|| t.id.clone()),
+                ocr_layout: None,
+            }];
             t.original_text = text;
             t.status = Status::Queued;
             t.timings.source_ms = Some(elapsed_ms);
@@ -608,7 +748,9 @@ impl TaskBook {
             if task.status != Status::Ready {
                 return false;
             }
-            task.edited_text = edited.filter(|text| text != &task.original_text);
+            if let Some(edited) = edited {
+                task.edited_text = (edited != task.original_text).then_some(edited);
+            }
             task.status = Status::Queued;
             task.prompt_version = crate::provider::PROMPT_VERSION;
             true
@@ -697,6 +839,7 @@ impl TaskBook {
                 return false;
             }
             t.status = Status::Translating;
+            t.failure = None;
             t.timings.queue_ms = Some(queue_ms);
             true
         })
@@ -817,6 +960,11 @@ impl TaskBook {
                 t.past_attempts.remove(0);
             }
             t.past_attempts.push(PastAttempt {
+                preserve_structure: t.preserve_structure,
+                failure: t.failure.take(),
+                reason: "manual_retry".into(),
+                source_revision: t.translation_source_revision,
+                source_text: t.translation_source_text.clone(),
                 number: t.attempt,
                 profile: t.profile.clone(),
                 status: t.status,
@@ -895,6 +1043,7 @@ impl TaskBook {
     pub fn restore(&self, tasks: Vec<Task>, now: i64) {
         let mut inner = self.inner.lock().unwrap();
         for mut task in tasks {
+            task.ensure_source_segments();
             if task.expired(now) || inner.tasks.contains_key(&task.id) {
                 continue;
             }
@@ -1247,5 +1396,43 @@ mod tests {
                 .sentence_translation(1, dictionary.query_text(), dictionary.query_text())
                 .is_empty()
         );
+    }
+    #[test]
+    fn preserve_structure_is_queued_only_archived_and_legacy_default_off() {
+        let book = TaskBook::new(Retention::Disabled, 12);
+        let task = book
+            .create(Source::Selection, Profile::default(), "zh-Hans".into(), 0)
+            .unwrap();
+        assert!(!task.preserve_structure);
+        assert!(book.set_structure(&task.id, true, 1).is_none());
+        let queued = book
+            .recognized(&task.id, "Synthetic source paragraph.".into(), 0, 2)
+            .unwrap()
+            .unwrap();
+        let enabled = book.set_structure(&task.id, true, 3).unwrap();
+        assert!(enabled.preserve_structure);
+        assert_eq!(enabled.source_revision, queued.source_revision);
+        book.start(&task.id, 1, 0, 4).unwrap();
+        assert!(book.set_structure(&task.id, false, 5).is_none());
+        book.append(&task.id, 1, "Synthetic translation.", 0, 6)
+            .unwrap();
+        book.finish(&task.id, 1, 0, 7).unwrap();
+        let retried = book.retry(&task.id, None, 8).unwrap().unwrap();
+        assert!(retried.preserve_structure);
+        assert!(retried.past_attempts[0].preserve_structure);
+        let disabled = book.set_structure(&task.id, false, 9).unwrap();
+        assert!(!disabled.preserve_structure);
+        assert!(disabled.past_attempts[0].preserve_structure);
+        let mut legacy = serde_json::to_value(disabled).unwrap();
+        legacy.as_object_mut().unwrap().remove("preserve_structure");
+        for attempt in legacy["past_attempts"].as_array_mut().unwrap() {
+            attempt
+                .as_object_mut()
+                .unwrap()
+                .remove("preserve_structure");
+        }
+        let restored: Task = serde_json::from_value(legacy).unwrap();
+        assert!(!restored.preserve_structure);
+        assert!(!restored.past_attempts[0].preserve_structure);
     }
 }
