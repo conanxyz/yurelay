@@ -1,6 +1,17 @@
 import { test, expect, type Page } from '@playwright/test';
 import { defaults } from '../../src/types';
 
+test('authorizing an existing key preserves unsaved service edits and never saves a new key', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByRole('button',{name:'Services',exact:true}).click();
+  await page.getByLabel('Service name',{exact:true}).fill('Unsaved synthetic service name');
+  await page.getByRole('button',{name:'Authorize saved key',exact:true}).click();
+  await expect(page.getByText('Saved key access authorized',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Service name',{exact:true})).toHaveValue('Unsaved synthetic service name');
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='authorize_saved_credential').map((c:any)=>c.args))).toEqual([{profileId:'default'}]);
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration').length)).toBe(0);
+});
+
 async function settingsFixture(page: Page, delayLoad = false, initialName = 'Custom service', withBackup = false) {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 1100, height: 820 });
@@ -77,6 +88,23 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
   await expect(page.getByLabel('Settings navigation')).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>(window as any).calls.some((c:any)=>c.cmd==='settings_guard_ready'))).toBe(true);
 }
+
+test('auto-hide starts enabled and an explicit opt-out can be reverted or saved', async ({ page }) => {
+  await settingsFixture(page);
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+  const autoHide = page.getByRole('checkbox', {
+    name: 'Hide the translation window when another app gains focus', exact: true,
+  });
+  await expect(autoHide).toBeChecked();
+  await autoHide.uncheck();
+  expect(await page.evaluate(() => (window as any).settings.auto_hide)).toBe(true);
+  await page.getByRole('button', { name: 'Revert', exact: true }).click();
+  await expect(autoHide).toBeChecked();
+  await autoHide.uncheck();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).settings.auto_hide)).toBe(false);
+  await expect(autoHide).not.toBeChecked();
+});
 
 test('default source and target languages sit side by side and save together', async ({ page }) => {
   await settingsFixture(page);

@@ -289,7 +289,7 @@ impl Engine {
         let mut budget = crate::reliability::DispatchBudget::default();
         let initial_profile_id = record.profile.id.clone();
         let mut pending_failure: Option<provider::Error> = None;
-        for dispatch in profiles {
+        for mut dispatch in profiles {
             if cancel.is_cancelled() {
                 break;
             }
@@ -299,6 +299,16 @@ impl Engine {
                     .await
             {
                 continue;
+            }
+            if dispatch.profile.id != initial_profile_id {
+                let ready = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => false,
+                    ready = self.prepare_backup(&mut dispatch, true) => ready,
+                };
+                if !ready {
+                    continue;
+                }
             }
             if !budget.begin(&dispatch.profile.id) {
                 break;

@@ -25,8 +25,14 @@ impl yurelay_core::engine::LocalDictionary for PlatformDictionary {
 }
 pub struct PlatformCredentials;
 impl Credentials for PlatformCredentials {
+    fn exists(&self, id: &str) -> Result<bool, String> {
+        yurelay_platform::credential_exists(id)
+    }
     fn read(&self, id: &str) -> Result<Option<String>, String> {
-        yurelay_platform::read_credential(id)
+        yurelay_platform::read_credential(id, false)
+    }
+    fn read_for_update(&self, id: &str) -> Result<Option<String>, String> {
+        yurelay_platform::read_credential(id, true)
     }
     fn write(&self, id: &str, value: Option<&str>) -> Result<(), String> {
         yurelay_platform::write_credential(id, value)
@@ -50,9 +56,7 @@ pub struct AppState {
     pub settings_guard: crate::settings_guard::SettingsGuard,
     pub recording_epoch: AtomicU64,
     pub shortcut_report: Mutex<ShortcutReport>,
-    pub visible: AtomicBool,
-    pub focused: AtomicBool,
-    pub hidden_epoch: AtomicU64,
+    pub window_lifecycle: Arc<Mutex<crate::window_lifecycle::WindowLifecycle>>,
     pub selected: Mutex<Option<String>>,
     pub notice: Mutex<Option<String>>,
     pub subscriber: Mutex<Option<(String, CancellationToken)>>,
@@ -81,9 +85,9 @@ impl AppState {
             settings_guard: crate::settings_guard::SettingsGuard::default(),
             recording_epoch: AtomicU64::new(0),
             shortcut_report: Mutex::new(ShortcutReport::default()),
-            visible: AtomicBool::new(true),
-            focused: AtomicBool::new(true),
-            hidden_epoch: AtomicU64::new(0),
+            window_lifecycle: Arc::new(Mutex::new(
+                crate::window_lifecycle::WindowLifecycle::default(),
+            )),
             selected: Mutex::new(None),
             notice: Mutex::new(None),
             subscriber: Mutex::new(None),
@@ -158,8 +162,8 @@ pub async fn engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                                 && finished.insert((task.id.clone(), task.attempt))
                             {
                                 let state = observer_app.state::<AppState>();
-                                let reading = state.visible.load(Ordering::Relaxed)
-                                    && state.focused.load(Ordering::Relaxed)
+                                let reading = state.window_lifecycle.lock().unwrap().reading();
+                                let reading = reading
                                     && state.selected.lock().unwrap().as_deref()
                                         == Some(task.id.as_str());
                                 if !reading {
@@ -351,7 +355,7 @@ pub fn request_settings_close(app: &AppHandle, intent: crate::settings_guard::In
 
 pub fn show(app: &AppHandle, focus: bool) {
     let state = app.state::<AppState>();
-    state.visible.store(true, Ordering::Relaxed);
+    state.window_lifecycle.lock().unwrap().show();
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         if focus {
@@ -361,13 +365,64 @@ pub fn show(app: &AppHandle, focus: bool) {
     state.resync.notify_one();
 }
 
+pub fn begin_capture(app: &AppHandle) -> crate::window_lifecycle::CaptureEpoch {
+    app.state::<AppState>()
+        .window_lifecycle
+        .lock()
+        .unwrap()
+        .capture_started()
+}
+
 pub fn hide(app: &AppHandle) {
-    release_temporary_top(app);
-    let state = app.state::<AppState>();
-    state.visible.store(false, Ordering::Relaxed);
-    state.hidden_epoch.fetch_add(1, Ordering::Relaxed);
+    app.state::<AppState>()
+        .window_lifecycle
+        .lock()
+        .unwrap()
+        .hide();
+    dismiss_result_window(app, None);
+}
+
+pub fn hide_after_blur(app: &AppHandle, ticket: crate::window_lifecycle::BlurTicket) {
+    dismiss_result_window(app, Some(ticket));
+}
+
+fn dismiss_result_window(app: &AppHandle, blur: Option<crate::window_lifecycle::BlurTicket>) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        let app = app.clone();
+        let handle = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            // A screenshot overlay or Settings can take key-window focus while
+            // this app remains active. That is not switching to another app.
+            // Query before taking the lifecycle lock: AppKit may reenter us.
+            #[cfg(target_os = "macos")]
+            let external_focus = blur.is_some()
+                && yurelay_platform::selection_target()
+                    .is_some_and(|pid| pid != std::process::id() as i32);
+            #[cfg(not(target_os = "macos"))]
+            let external_focus = true;
+            let should_hide = {
+                let state = app.state::<AppState>();
+                let mut lifecycle = state.window_lifecycle.lock().unwrap();
+                match blur {
+                    // Check after the UI queue delay, not before dispatching it.
+                    Some(ticket) => lifecycle.auto_hide(ticket, external_focus),
+                    None => !lifecycle.visible(),
+                }
+            };
+            if !should_hide {
+                return;
+            }
+            release_temporary_top(&app);
+            #[cfg(target_os = "macos")]
+            if let Ok(pointer) = handle.ns_window() {
+                // SAFETY: this closure runs on the main thread with a live window.
+                unsafe {
+                    yurelay_platform::dismiss_window(pointer);
+                }
+                return;
+            }
+            let _ = handle.hide();
+        });
     }
 }
 
@@ -571,15 +626,34 @@ pub fn remember_result_position(app: &AppHandle, mut position: [i32; 2]) {
     });
 }
 
-pub fn present_capture(app: &AppHandle) {
+pub fn present_capture(app: &AppHandle, epoch: crate::window_lifecycle::CaptureEpoch) {
     let state = app.state::<AppState>();
-    state.temporary_top.store(true, Ordering::Relaxed);
+    if !state
+        .window_lifecycle
+        .lock()
+        .unwrap()
+        .present_capture(epoch)
+    {
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_always_on_top(true);
-        let _ = window.unminimize();
-        let _ = window.show();
+        let app = app.clone();
         let handle = window.clone();
         let _ = window.run_on_main_thread(move || {
+            let state = app.state::<AppState>();
+            // An explicit hide after dispatch must also cancel this queued show.
+            if !state
+                .window_lifecycle
+                .lock()
+                .unwrap()
+                .capture_is_current(epoch)
+            {
+                return;
+            }
+            state.temporary_top.store(true, Ordering::Relaxed);
+            let _ = handle.set_always_on_top(true);
+            let _ = handle.unminimize();
+            let _ = handle.show();
             #[cfg(target_os = "macos")]
             if let Ok(pointer) = handle.ns_window() {
                 // SAFETY: this closure executes on the main thread, window is live.
@@ -590,7 +664,6 @@ pub fn present_capture(app: &AppHandle) {
             let _ = handle.set_focus();
         });
     }
-    state.visible.store(true, Ordering::Relaxed);
     state.resync.notify_one();
 }
 

@@ -353,9 +353,12 @@ test("reply remains local until Generate; streaming copy excludes back-translati
     .getByRole("textbox", { name: "Reply intent" })
     .fill("Thank them for the examples.");
   await expect(page.getByRole("dialog").getByRole("combobox")).toHaveCount(0);
-  await page
-    .getByLabel("Service for this query", { exact: true })
-    .selectOption("second");
+  await page.evaluate(() => {
+    const w = window as any;
+    w.settings.active_profile = "second";
+    w.emit("configuration-changed", structuredClone(w.settings));
+  });
+  await expect(page.locator(".service-identity")).toContainText("Second model");
   await page
     .getByLabel("Translation language", { exact: true })
     .selectOption("fr");
@@ -603,6 +606,50 @@ test("late encounter matches cannot mark an edited source and pending captures e
   await expect(await editableSource(page)).toHaveValue("Changed source.");
   expect(await remote(page)).toEqual([]);
 });
+
+test("main translation uses the configured default without a next-service selector", async ({ page }) => {
+  await setup(page);
+  await expect(page.getByLabel("Service for this query", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.settings.active_profile = "second";
+    w.emit("configuration-changed", structuredClone(w.settings));
+  });
+  await expect(page.locator(".service-identity")).toContainText("Second model");
+  expect(await remote(page)).toEqual([]);
+  await page.locator(".disclosure-control").click();
+  expect((await remote(page))[0].args.profileId).toBe("second");
+});
+
+for (const restored of [false, true]) {
+  test(`automatic fallback keeps its result visible and retries the primary service (${restored ? "restored" : "live"})`, async ({ page }) => {
+    await setup(page);
+    await page.locator(".disclosure-control").click();
+    await page.evaluate((restored) => {
+      const w = window as any;
+      w.task.past_attempts = [{
+        number: 1, status: "failed", translation: "", reason: "failover",
+        profile: structuredClone(w.settings.profiles[0]),
+      }];
+      Object.assign(w.task, {
+        id: restored ? "restored-fallback" : w.task.id,
+        status: "completed", attempt: 2,
+        profile: structuredClone(w.settings.profiles[1]),
+        translation: "Synthetic fallback translation.",
+        translation_source_revision: w.task.source_revision,
+        revision: w.task.revision + 1,
+      });
+      w.update();
+    }, restored);
+    await expect(page.locator(".service-identity")).toContainText("Second model");
+    await expect(page.locator("#translation-body")).toContainText("Synthetic fallback translation.");
+    await expect(page.getByText("Previous result", { exact: false })).toHaveCount(0);
+    await page.getByRole("button", { name: "Translate again", exact: true }).click();
+    const request = (await remote(page)).at(-1);
+    expect(request.args.profileId ?? "first").toBe("first");
+    expect(await page.evaluate(() => (window as any).settings.active_profile)).toBe("first");
+  });
+}
 
 test("math enhancement is local and safe, preserves formula source on copy and keeps code and prices literal", async ({
   page,
@@ -959,7 +1006,7 @@ test("a late source checkpoint preserves newer local edits", async ({
 });
 
 for (const change of ["edit", "append"] as const) {
-  test(`committed source ${change} marks the previous translation stale until explicit X`, async ({ page }) => {
+  test(`committed source ${change} marks the previous translation stale until explicit D/S`, async ({ page }) => {
     await setup(page);
     await page.evaluate(() => {
       const w = window as any;
@@ -992,10 +1039,10 @@ for (const change of ["edit", "append"] as const) {
     await expect(source).toHaveText(text);
     await expect(page.locator(".previous-translation")).toContainText("Prior synthetic translation.");
     await expect(page.getByRole("region", { name: "Translation", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Translate and expand (X)", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Translate and expand (D / S)", exact: true })).toBeEnabled();
     expect(await remote(page)).toEqual([]);
     await source.focus();
-    await page.keyboard.press("x");
+    await page.keyboard.press("s");
     await expect.poll(() => remote(page).then((calls) => calls.length)).toBe(1);
     expect((await remote(page))[0]).toMatchObject({
       cmd: "retry_task",
@@ -1025,7 +1072,7 @@ test("legacy translations remain readable and first-time drafts wait for explici
     w.update();
   });
   await expect(page.locator(".previous-translation")).toContainText("Legacy synthetic translation.");
-  await expect(page.getByRole("button", { name: "Translate and expand (X)", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Translate and expand (D / S)", exact: true })).toBeEnabled();
   expect(await remote(page)).toEqual([]);
 });
 

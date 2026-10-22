@@ -31,7 +31,6 @@
   import SourceToolbar from "./SourceToolbar.svelte";
   import SourceReadingView from "./SourceReadingView.svelte";
   import SourceSegmentList from "./SourceSegmentList.svelte";
-  import ServicePicker from "./ServicePicker.svelte";
   import AssistantOperations from "./AssistantOperations.svelte";
   let sourceEditing = $state(false);
   let sourceEditBusy = $state(false);
@@ -125,6 +124,13 @@
     resizing = $state(false),
     submitting = $state(false),
     draft = $state("");
+  let credentialChecking = $state(false);
+  let credentialAuthorizing = $state(false);
+  let credentialDialogError = $state("");
+  let credentialDialog: HTMLDialogElement;
+  let pendingCredential = $state<{ profileId: string; context: string } | null>(
+    null,
+  );
   let sourceLanguage = $state(""),
     targetOverride = $state<string | null>(null),
     detected = $state<string | null>(null),
@@ -192,6 +198,8 @@
       !current?.sensitive &&
       (!current || !active(current)) &&
       !submitting &&
+      !credentialChecking &&
+      !credentialAuthorizing &&
       !(localDictionary && (dictionaryPending || dictionaryGuidance?.issue)),
   );
   // UI affordance only; preview and collection are validated again in core.
@@ -222,10 +230,26 @@
       ? current.error
       : null,
   );
+  function attemptStartProfile(task: Task) {
+    let profile = task.profile;
+    // Consecutive fallback entries belong to this request, not a user changing
+    // the selected service. Earlier manual attempts start a different request.
+    for (let i = task.past_attempts.length - 1; i >= 0; i--) {
+      const previous = task.past_attempts[i];
+      if (previous.reason !== "failover" || !previous.profile) break;
+      profile = previous.profile;
+    }
+    return profile;
+  }
+  const requestStartProfile = $derived(
+    current ? attemptStartProfile(current) : null,
+  );
   let changed = $derived(
     !!current &&
-      (service?.id !== current.profile.id ||
-        service?.revision !== current.profile.revision ||
+      ((!active(current) &&
+        !current.sensitive &&
+        (service?.id !== requestStartProfile?.id ||
+          service?.revision !== requestStartProfile?.revision)) ||
         (!!current.translation &&
           (current.translation_source_revision ?? 0) !==
             (current.source_revision ?? 0)) ||
@@ -323,11 +347,17 @@
         current.status,
       ),
   );
+  const shownService = $derived(
+    current && attempted && !changed ? current.profile : service,
+  );
   let showResult = $derived(
     disclosed && !dictionaryHint && (submitting || (attempted && !changed)),
   );
   let toggleDisabled = $derived(
     !!current?.sensitive ||
+      credentialChecking ||
+      credentialAuthorizing ||
+      (!!current && ["capturing", "recognizing"].includes(current.status)) ||
       (localDictionary && (dictionaryPending || !!dictionaryGuidance?.issue)) ||
       (!current && !draft.trim()) ||
       (!submitting &&
@@ -451,15 +481,15 @@
   });
   let triggerLabel = $derived(
     dictionaryNotFound
-      ? t("重新查询（X）", "Look up again (X)")
+      ? t("重新查询（D / S）", "Look up again (D / S)")
       : showResult
         ? localDictionary
           ? t("收起释义", "Collapse definition")
           : t("收起译文", "Collapse translation")
         : !current || waiting || changed
           ? localDictionary
-            ? t("查询并展开（X）", "Look up and expand (X)")
-            : t("翻译并展开（X）", "Translate and expand (X)")
+            ? t("查询并展开（D / S）", "Look up and expand (D / S)")
+            : t("翻译并展开（D / S）", "Translate and expand (D / S)")
           : localDictionary
             ? t("展开释义", "Expand definition")
             : t("展开译文", "Expand translation"),
@@ -524,13 +554,15 @@
         !pendingManualProfile ||
         current?.profile.id !== pendingManualProfile
       ) {
-        profileOverride =
-          current &&
-          (current.sensitive ||
-            !["ready", "original_only", "capturing", "recognizing"].includes(
-              current.status,
-            ))
-            ? current.profile.id
+        // New captures use the configured default. Existing results retain
+        // their requested primary service, never an automatic fallback choice.
+        profileOverride = current?.sensitive
+          ? current.profile.id
+          : current &&
+              !["ready", "original_only", "capturing", "recognizing"].includes(
+                current.status,
+              )
+            ? attemptStartProfile(current).id
             : null;
       }
       pendingManualProfile = null;
@@ -711,14 +743,35 @@
   }
   async function translate() {
     if (!canStart) return;
+    const context = translationContext();
+    const profileId = service?.id ?? profileOverride;
+    credentialChecking = true;
+    try {
+      const required = await invoke<boolean>(
+        "credential_authorization_required",
+        { profileId },
+      );
+      if (context !== translationContext()) return;
+      if (required && service) {
+        pendingCredential = { profileId: service.id, context };
+        credentialDialogError = "";
+        credentialDialog.showModal();
+        return;
+      }
+    } catch (e) {
+      error = String(e);
+      return;
+    } finally {
+      credentialChecking = false;
+    }
     if (!current) {
       submitting = true;
-      pendingManualProfile = profileOverride;
+      pendingManualProfile = profileId;
       await action("translate_text", {
         text: draft,
         sourceLanguage: sourceLanguage || null,
         targetLanguage,
-        profileId: profileOverride,
+        profileId,
       });
       submitting = false;
       return;
@@ -734,9 +787,62 @@
       editedText: draft,
       sourceLanguage: sourceLanguage || null,
       targetLanguage,
-      profileId: profileOverride,
+      profileId,
     });
     if ((error || !isTauri()) && current?.id === id) submitting = false;
+  }
+  function translationContext() {
+    return JSON.stringify([
+      current?.id,
+      current?.source_revision,
+      draft,
+      service?.id,
+      service?.revision,
+      sourceLanguage,
+      targetLanguage,
+    ]);
+  }
+  function cancelCredentialAuthorization() {
+    if (credentialAuthorizing) return;
+    pendingCredential = null;
+    credentialDialog.close();
+  }
+  $effect(() => {
+    const context = translationContext();
+    if (pendingCredential && pendingCredential.context !== context) {
+      pendingCredential = null;
+      credentialDialog?.close();
+    }
+  });
+  async function authorizeAndContinue() {
+    const request = pendingCredential;
+    if (
+      !request ||
+      credentialAuthorizing ||
+      request.context !== translationContext()
+    )
+      return;
+    credentialAuthorizing = true;
+    credentialDialogError = "";
+    let resume = false;
+    try {
+      await invoke("authorize_saved_credential", {
+        profileId: request.profileId,
+      });
+      if (
+        pendingCredential === request &&
+        request.context === translationContext()
+      ) {
+        pendingCredential = null;
+        credentialDialog.close();
+        resume = true;
+      }
+    } catch (e) {
+      credentialDialogError = errorText(String(e), locale);
+    } finally {
+      credentialAuthorizing = false;
+    }
+    if (resume) await translate();
   }
   function toggleTranslation() {
     if (toggleDisabled) return;
@@ -789,7 +895,11 @@
       document.activeElement?.closest(editing)
     )
       return;
-    if (event.key.toLowerCase() === "x" && !toggleDisabled) {
+    if (
+      ["d", "s"].includes(event.key.toLowerCase()) &&
+      draft.trim() &&
+      !toggleDisabled
+    ) {
       event.preventDefault();
       toggleTranslation();
     }
@@ -1165,36 +1275,27 @@
               {errorText(current.image_error, locale)}
             </p>{/if}
         </section>
-        <ServicePicker
-          profiles={settings.profiles}
-          selected={profileOverride ?? settings.active_profile}
-          {locale}
-          disabled={!!current && (active(current) || !!current.sensitive)}
-          onChange={(id) => {
-            profileOverride = id;
-            error = "";
-          }}
-        />
         <div class="service-strip">
           <div
             class="service-identity"
-            title={`${service?.name ?? ""} · ${service?.model ?? ""}`}
+            title={`${shownService?.name ?? ""} · ${shownService?.model ?? ""}`}
           >
             <span class="provider-mark"
-              >{#if service}<ProviderLogo
-                  provider={service.provider}
+              >{#if shownService}<ProviderLogo
+                  provider={shownService.provider}
                   size={18}
                 />{/if}</span
-            ><span class="provider-name" title={service?.name}
-              >{service
-                ? serviceName(service, locale)
+            ><span class="provider-name" title={shownService?.name}
+              >{shownService
+                ? serviceName(shownService, locale)
                 : t("未配置服务", "No service")}</span
-            ><span class="model-name" title={service?.model}
-              >{service?.provider === "system_dictionary"
+            ><span class="model-name" title={shownService?.model}
+              >{shownService?.provider === "system_dictionary"
                 ? t("本机词典", "Local dictionary")
-                : service?.provider === "youdao"
+                : shownService?.provider === "youdao"
                   ? t("文本翻译", "Text translation")
-                  : service?.model || t("选择模型", "Choose a model")}</span
+                  : shownService?.model ||
+                    t("选择模型", "Choose a model")}</span
             >
           </div>
           <div class="translation-controls">
@@ -1239,7 +1340,7 @@
               aria-label={triggerLabel}
               aria-expanded={showResult}
               aria-controls="translation-body"
-              aria-keyshortcuts="X"
+              aria-keyshortcuts="D S"
               disabled={toggleDisabled}
               onclick={toggleTranslation}
               ><Icon name="chevron" size={15} /></button
@@ -1280,8 +1381,8 @@
               </div>
               <p class="dictionary-guidance-detail">
                 {t(
-                  "切换仅用于当前查询；确认后按 X 或点击翻译按钮开始。",
-                  "This changes only the current query. Then press X or click Translate to start.",
+                  "切换仅用于当前查询；确认后按 D / S 或点击翻译按钮开始。",
+                  "This changes only the current query. Then press D / S or click Translate to start.",
                 )}
               </p>
             {:else if !dictionaryPending}
@@ -1312,6 +1413,15 @@
               >
                 {errorText(current.error, locale)}
               </p>{/if}
+            {#if current?.error?.includes("密钥需要授权") || current?.error?.includes("API Key 需要系统钥匙串授权")}
+              <button
+                class="subtle-button"
+                disabled={!canStart}
+                onclick={translate}
+              >
+                {t("授权已保存密钥", "Authorize saved key")}
+              </button>
+            {/if}
             {#if current?.translation && !submitting}<TranslationContent
                 text={current.translation}
                 {locale}
@@ -1417,8 +1527,48 @@
                   "检查原文后开始翻译",
                   "Review the source before translating",
                 )}</span
-          ><kbd>X</kbd>
+          ><kbd>D / S</kbd>
         </div>{/if}
     </main>
   </div>
 </div>
+
+<dialog
+  bind:this={credentialDialog!}
+  class="keychain-dialog"
+  aria-labelledby="keychain-title"
+  aria-describedby="keychain-description"
+  oncancel={(event) => {
+    event.preventDefault();
+    cancelCredentialAuthorization();
+  }}
+>
+  <div class="close-dialog-core">
+    <h2 id="keychain-title">
+      {t("授权读取已保存的 API Key", "Authorize saved API key")}
+    </h2>
+    <p id="keychain-description">
+      {t(
+        "你的 API Key 已加密保存在 macOS 系统钥匙串中，无需重新填写。继续后将由 macOS 请求访问授权；若提示输入密码，请输入钥匙串密码，通常是 Mac 登录密码。",
+        "Your API key is encrypted in macOS Keychain. You do not need to enter it again. macOS will request access next; if asked for a password, use your keychain password, usually your Mac login password.",
+      )}
+    </p>
+    {#if credentialDialogError}<p class="dialog-error" role="alert">
+        {credentialDialogError}
+      </p>{/if}
+    <div class="close-dialog-actions">
+      <button
+        disabled={credentialAuthorizing}
+        onclick={cancelCredentialAuthorization}>{t("取消", "Cancel")}</button
+      >
+      <button
+        class="primary"
+        disabled={credentialAuthorizing}
+        onclick={authorizeAndContinue}
+        >{credentialAuthorizing
+          ? t("等待系统授权…", "Waiting for authorization…")
+          : t("授权并继续", "Authorize and continue")}</button
+      >
+    </div>
+  </div>
+</dialog>

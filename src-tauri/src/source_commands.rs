@@ -249,6 +249,7 @@ pub fn start_capture_target(
         .shortcut_recording
         .load(Ordering::SeqCst);
     captures.start(recording, screenshot, selection_target, |permit| {
+        let epoch = state::begin_capture(&app);
         let permissions = yurelay_platform::permissions();
         if screenshot && !permissions.screen || !screenshot && !permissions.accessibility {
             state::notice(
@@ -260,7 +261,7 @@ pub fn start_capture_target(
                 }
                 .into(),
             );
-            state::show(&app, true);
+            state::present_capture(&app, epoch);
             return;
         }
         let mut native = yurelay_platform::start_for_target(screenshot, selection_target);
@@ -288,17 +289,19 @@ pub fn start_capture_target(
             }
             if let Some(error) = error {
                 state::notice(&app, error);
-                state::show(&app, true);
+                state::present_capture(&app, epoch);
                 return;
             }
             let Some(text) = text else {
                 state::notice(&app, "没有识别到文字，原稿未改变。".into());
+                state::present_capture(&app, epoch);
                 return;
             };
             let engine = match state::engine(&app).await {
                 Ok(engine) => engine,
                 Err(error) => {
                     state::notice(&app, error);
+                    state::present_capture(&app, epoch);
                     return;
                 }
             };
@@ -339,7 +342,7 @@ pub fn start_capture_target(
                 Ok(None) => state::notice(&app, "新片段待确认，原安全稿保持不变。".into()),
                 Err(error) => state::notice(&app, error),
             }
-            state::show(&app, true);
+            state::present_capture(&app, epoch);
         });
     });
 }

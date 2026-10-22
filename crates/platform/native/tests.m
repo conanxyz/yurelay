@@ -5,6 +5,124 @@
 #import "ocr_pipeline_cases.m"
 
 
+// These fakes exercise the production dismissal helper without changing the
+// real application's focus or visibility.
+@interface ADDismissTestWindow : NSObject
+@property(nonatomic, getter=isVisible) BOOL visible;
+@property(nonatomic, getter=isMiniaturized) BOOL miniaturized;
+@property(nonatomic) BOOL canBecomeKeyWindow;
+@property(nonatomic) BOOL canBecomeMainWindow;
+@property(nonatomic) NSUInteger orderOutCount;
+@property(nonatomic) NSMutableArray<NSString *> *events;
+@property(nonatomic, copy) void (^onOrderOut)(void);
+- (void)orderOut:(id)sender;
+@end
+@implementation ADDismissTestWindow
+- (void)orderOut:(id)sender {
+    self.orderOutCount++;
+    self.visible = NO;
+    [self.events addObject:@"orderOut"];
+    if (self.onOrderOut) self.onOrderOut();
+}
+@end
+
+@interface ADDismissTestApplication : NSObject
+@property(nonatomic, getter=isActive) BOOL active;
+@property(nonatomic, copy) NSArray<ADDismissTestWindow *> *windows;
+@property(nonatomic) NSUInteger hideCount;
+@property(nonatomic) NSMutableArray<NSString *> *events;
+- (void)hide:(id)sender;
+@end
+@implementation ADDismissTestApplication
+- (void)hide:(id)sender {
+    self.hideCount++;
+    self.active = NO;
+    [self.events addObject:@"hide"];
+}
+@end
+
+static void ADDismissCheck(const char *name, BOOL passed, BOOL *allPassed) {
+    printf("Window dismissal %s passed=%s\n", name, passed ? "true" : "false");
+    if (!passed) *allPassed = NO;
+}
+
+static BOOL ADTestWindowDismissal(void) {
+    BOOL passed = YES;
+    ADDismissTestWindow *result = [ADDismissTestWindow new];
+    result.visible = YES;
+    ADDismissTestApplication *application = [ADDismissTestApplication new];
+    application.active = YES;
+    application.windows = @[result];
+    application.events = result.events = [NSMutableArray new];
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("last-result-releases-application", !result.visible && !application.active && application.hideCount == 1 && [application.events isEqualToArray:@[@"orderOut", @"hide"]], &passed);
+
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("repeated-dismiss-does-not-hide-again", result.orderOutCount == 2 && application.hideCount == 1, &passed);
+    result.visible = YES;
+    application.active = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("next-result-can-release-application-again", !result.visible && !application.active && application.hideCount == 2, &passed);
+
+    application.active = NO;
+    application.hideCount = 0;
+    result.visible = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("already-inactive-preserves-other-app-focus", !result.visible && !application.active && application.hideCount == 0, &passed);
+
+    ADDismissTestWindow *settings = [ADDismissTestWindow new];
+    settings.visible = YES;
+    settings.canBecomeKeyWindow = YES;
+    settings.canBecomeMainWindow = YES;
+    application.windows = @[result, settings];
+    application.active = YES;
+    result.visible = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("visible-settings-or-overlay-stays-visible", !result.visible && settings.visible && settings.orderOutCount == 0 && application.active && application.hideCount == 0, &passed);
+
+    settings.visible = NO;
+    settings.miniaturized = YES;
+    result.visible = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("miniaturized-settings-is-not-hidden", !result.visible && settings.miniaturized && settings.orderOutCount == 0 && application.active && application.hideCount == 0, &passed);
+
+    settings.miniaturized = NO;
+    result.visible = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("hidden-settings-does-not-retain-focus", !result.visible && !application.active && application.hideCount == 1, &passed);
+
+    application.active = YES;
+    application.hideCount = 0;
+    result.visible = YES;
+    __weak ADDismissTestApplication *weakApplication = application;
+    result.onOrderOut = ^{ weakApplication.active = NO; };
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("deactivated-during-dismiss-does-not-hide-app", !result.visible && !application.active && application.hideCount == 0, &passed);
+
+    // AppKit's tray creates visible NSStatusBarWindows that cannot receive
+    // keyboard/main-window focus. They must not keep a dismissed app active.
+    result.onOrderOut = nil;
+    ADDismissTestWindow *statusBar = [ADDismissTestWindow new];
+    statusBar.visible = YES;
+    application.windows = @[result, statusBar];
+    application.active = YES;
+    application.hideCount = 0;
+    result.visible = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("visible-status-bar-does-not-retain-focus", !result.visible && !application.active && application.hideCount == 1, &passed);
+
+    ADDismissTestWindow *overlay = [ADDismissTestWindow new];
+    overlay.visible = YES;
+    overlay.canBecomeKeyWindow = YES;
+    application.windows = @[result, statusBar, overlay];
+    application.active = YES;
+    application.hideCount = 0;
+    result.visible = YES;
+    ADDismissWindow((NSWindow *)result, (NSApplication *)application);
+    ADDismissCheck("key-only-capture-overlay-retains-focus", !result.visible && overlay.visible && application.active && application.hideCount == 0, &passed);
+    return passed;
+}
+
 // NSPasteboard is a class cluster that refuses subclass allocation. This fake
 // implements only the read-only selectors consumed by the backup helper.
 @interface ADBackupTestPasteboard : NSObject
@@ -197,6 +315,7 @@ int main(void) {
             printf("Lemma %s -> %s passed=%s\n",[fixture[0] UTF8String],lemma.UTF8String,passed?"true":"false");
             if(!passed)return 1;
         }
+        if (!ADTestWindowDismissal()) return 1;
         [NSApplication sharedApplication];
         if (getenv("YURELAY_OCR_MATRIX")) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{ exit(ADRunOCRPipelineMatrix()); });
