@@ -1,0 +1,609 @@
+/* Compact nested surfaces share the existing sage and dark-green palette. */
+.source-workflow-toolbar,
+.assistant-entrypoints,
+.workflow-actions,
+.workflow-fields,
+.operation-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.source-workflow-toolbar {
+  padding: 6px 14px 8px;
+  gap: 5px;
+}
+.source-workflow-toolbar button,
+.source-workflow-toolbar select,
+.assistant-entrypoints button {
+  font-size: 11px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--panel-tint);
+  color: var(--muted);
+  min-height: 28px;
+}
+.source-workflow-toolbar button[aria-pressed="true"],
+.assistant-entrypoints button[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.source-version {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.source-more {
+  position: relative;
+}
+.source-more summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 3px 8px;
+  color: var(--muted);
+}
+.source-more > div {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  display: grid;
+  min-width: 175px;
+  padding: 5px;
+  background: var(--surface);
+  box-shadow: 0 5px 22px rgb(20 50 30 / 0.09);
+  border-radius: 12px;
+  z-index: 2;
+}
+.workflow-note {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 6px 14px 10px;
+}
+.workflow-tray {
+  margin: 10px 0;
+  padding: 5px;
+  border-radius: 17px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.workflow-core {
+  padding: 13px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 75%, transparent);
+  min-width: 0;
+}
+.workflow-core header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.workflow-core h2 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0;
+}
+.workflow-core label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  margin: 10px 0;
+}
+.workflow-core textarea,
+.workflow-core select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel-tint);
+  border: 0;
+  border-radius: 8px;
+  padding: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+.workflow-core textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.6;
+}
+.workflow-core p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.workflow-core pre,
+.operation-attempts pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.workflow-fields > label {
+  flex: 1;
+  min-width: 125px;
+}
+.workflow-core .workflow-checkbox {
+  display: flex;
+  align-items: center;
+}
+.workflow-actions {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+.workflow-core button {
+  border: 0;
+  border-radius: 9px;
+  padding: 7px 10px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.workflow-core button.primary {
+  background: var(--accent);
+  color: var(--surface);
+}
+.workflow-core .icon-button {
+  padding: 0;
+  background: transparent;
+}
+.assistant-entrypoints {
+  padding: 9px 14px 12px;
+}
+.assistant-drawer {
+  margin: 10px 0 0;
+}
+.assistant-drawer:focus {
+  outline: none;
+}
+.query-service-picker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 14px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.query-service-picker select {
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
+  padding: 5px 7px;
+  font-size: 12px;
+  background: var(--panel-tint);
+  color: var(--ink);
+  border: 0;
+  border-radius: 7px;
+}
+.query-service-picker small {
+  font-size: 10px;
+}
+.assistant-drawer .query-service-picker {
+  padding: 0;
+}
+.assistant-drawer .reference-language {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.assistant-drawer .reference-language select {
+  max-width: 65%;
+}
+.selection-excerpt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow: auto;
+  background: var(--panel-tint);
+  padding: 8px;
+  border-radius: 8px;
+}
+.operation-output {
+  margin-top: 15px;
+  padding-top: 12px;
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.operation-meta {
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+}
+.operation-output .translation-prose {
+  padding: 8px 0;
+}
+.operation-output .reader-tools {
+  padding-inline: 0;
+}
+.back-translation,
+.operation-attempts {
+  font-size: 12px;
+  margin: 10px 0;
+}
+.back-translation summary,
+.operation-attempts summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.stale-result {
+  margin: 8px 0;
+  color: var(--accent);
+}
+.source-reading-view {
+  padding: 13px 16px 16px;
+  font-size: var(--reading-size, 16px);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 100px;
+  user-select: text;
+}
+.encounter-word {
+  display: inline !important;
+  font: inherit !important;
+  line-height: inherit !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 3px !important;
+  color: inherit !important;
+  background: color-mix(in srgb, var(--accent) 9%, transparent) !important;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 4px;
+  user-select: text;
+}
+.source-segments {
+  margin: 5px 14px 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.source-segments li {
+  padding: 5px 0;
+}
+.source-segments li small {
+  display: block;
+  white-space: pre-wrap;
+}
+.source-segments img {
+  display: block;
+  max-width: 100%;
+  max-height: 250px;
+  object-fit: contain;
+  margin: 8px 0;
+  border-radius: 9px;
+}
+.source-segments button {
+  font-size: 11px;
+  margin-right: 5px;
+}
+.failover-list {
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.failover-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.failover-list li > span {
+  flex: 1;
+}
+.failover-list button {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.verification-state {
+  font-size: 11px;
+  color: var(--muted);
+}
+.verification-state[data-state="verified"] {
+  color: var(--accent);
+}
+.workflow-tray button,
+.assistant-entrypoints button,
+.source-workflow-toolbar button {
+  transition:
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 160ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.workflow-tray button:active,
+.assistant-entrypoints button:active,
+.source-workflow-toolbar button:active {
+  transform: scale(0.98);
+}
+.markdown-reading .reading-block:has(table),
+.markdown-reading .katex-display {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.markdown-reading .katex {
+  font-size: 1.05em;
+}
+.math-source {
+  white-space: pre-wrap;
+}
+@container reading-main (max-width:480px) {
+  .query-service-picker {
+    flex-wrap: wrap;
+  }
+  .query-service-picker select {
+    flex-basis: 60%;
+  }
+  .workflow-core {
+    padding: 10px;
+  }
+  .workflow-fields {
+    display: block;
+  }
+  .source-workflow-toolbar {
+    padding-inline: 8px;
+  }
+  .assistant-entrypoints {
+    padding-inline: 8px;
+  }
+  .source-workflow-toolbar select {
+    max-width: 115px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-tray *,
+  .assistant-entrypoints *,
+  .source-workflow-toolbar * {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
+.previous-translation {
+  margin: 8px 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.previous-translation summary {
+  cursor: pointer;
+}
+.previous-translation .translation-prose {
+  color: var(--ink);
+  padding-inline: 0;
+}
+.encounter-context {
+  margin-inline: 14px;
+}
+.encounter-context blockquote {
+  margin: 10px 0;
+  padding: 8px 12px;
+  background: var(--panel-tint);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.failover-choices .workflow-checkbox {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.failover-choices small {
+  margin-left: auto;
+}
+.optional-shortcuts {
+  font-size: 12px;
+  margin-top: 10px;
+}
+.optional-shortcuts summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.translation-main {
+  container-type: inline-size;
+  container-name: reading-main;
+}
+.saved-word-contexts {
+  margin: 10px 0;
+  font-size: 11px;
+}
+.saved-word-contexts summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.saved-word-context + .saved-word-context {
+  margin-top: 12px;
+}
+.saved-word-context time {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+}
+.mastered-control {
+  margin-top: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.query-service-picker,
+.workflow-core .reference-language,
+.workflow-core .workflow-checkbox,
+.failover-choices .workflow-checkbox {
+  flex-direction: row;
+}
+.workflow-core .workflow-checkbox input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+}
+.reader-tools .math-toggle,
+.translation-prose .table-copy {
+  font-size: 10px;
+  border: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 7px;
+  padding: 4px 7px;
+}
+.reader-tools .math-toggle[aria-pressed="false"] {
+  background: transparent;
+  color: var(--muted);
+}
+.translation-prose .table-copy {
+  display: block;
+  margin-left: auto;
+  margin-bottom: 5px;
+}
+
+.operation-history {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-tint);
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+.operation-history > summary {
+  cursor: pointer;
+  color: var(--ink);
+}
+.operation-history-list {
+  max-height: 420px;
+  overflow: auto;
+}
+.operation-history-record {
+  padding: 10px 0;
+}
+.operation-history-record > summary {
+  cursor: pointer;
+  color: var(--ink);
+}
+.operation-history-record > summary small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 4px;
+}
+.operation-history-record .operation-output {
+  margin: 10px 0;
+  padding: 10px;
+  background: var(--surface);
+  border-radius: 10px;
+}
+.history-operation-source {
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+.source-workflow-toolbar select {
+  width: auto;
+  max-width: 160px;
+  flex: 0 1 auto;
+}
+/* Everyday reading keeps configuration out of the main flow. */
+.source-edit-control {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.source-workflow-toolbar {
+  padding-block: 2px 6px;
+}
+.append-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+.source-workflow-toolbar .undo-cleanup {
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+}
+.global-prompts .section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+.global-prompts h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+.prompt-kind-switch {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--panel-tint);
+}
+.prompt-kind-switch button {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 7px 12px;
+}
+.prompt-kind-switch button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.global-prompts textarea,
+.service-prompt-references textarea {
+  width: 100%;
+  font: inherit;
+  line-height: 1.65;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel-tint);
+  border: 0;
+  border-radius: 9px;
+  padding: 12px;
+  resize: vertical;
+}
+.global-prompts textarea {
+  margin: 10px 0;
+  min-height: 300px;
+  max-height: 52dvh;
+}
+.service-prompt-references {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+.service-prompt-references > label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.service-prompt-references select {
+  max-width: 62%;
+  min-width: 150px;
+}
+.service-prompt-references .inline-action {
+  justify-self: start;
+  padding: 4px 0;
+  font-size: 11px;
+}
+@container reading-main (max-width:480px) {
+  .source-workflow-toolbar {
+    padding-inline: 14px;
+  }
+}
+@media (max-width: 600px) {
+  .service-prompt-references > label {
+    flex-wrap: wrap;
+  }
+  .service-prompt-references select {
+    width: 100%;
+    max-width: none;
+  }
+}

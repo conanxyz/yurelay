@@ -39,6 +39,7 @@ pub struct Profile {
     pub model: String,
     pub app_id: String,
     pub custom_prompt: String,
+    pub custom_reply_prompt: String,
     pub streaming: bool,
     pub temperature: f32,
     pub revision: u64,
@@ -55,6 +56,7 @@ impl Default for Profile {
             model: String::new(),
             app_id: String::new(),
             custom_prompt: String::new(),
+            custom_reply_prompt: String::new(),
             streaming: true,
             temperature: 0.2,
             revision: 0,
@@ -203,6 +205,14 @@ pub struct Settings {
     pub auto_hide: bool,
     pub font_size: u16,
     pub max_concurrency: u8,
+    pub append_selection_shortcut: Option<String>,
+    pub append_screenshot_shortcut: Option<String>,
+    pub auto_clean: bool,
+    pub encounter_highlight: bool,
+    pub preserve_structure: bool,
+    pub translation_prompt: String,
+    pub reply_prompt: String,
+    pub failover: crate::reliability::FailoverSettings,
 }
 
 impl Default for Settings {
@@ -224,6 +234,14 @@ impl Default for Settings {
             auto_hide: false,
             font_size: 16,
             max_concurrency: 2,
+            append_selection_shortcut: None,
+            append_screenshot_shortcut: None,
+            auto_clean: true,
+            encounter_highlight: true,
+            preserve_structure: false,
+            translation_prompt: String::new(),
+            reply_prompt: String::new(),
+            failover: Default::default(),
         }
     }
 }
@@ -252,6 +270,19 @@ pub fn same_translation_language(source: &str, target: &str) -> bool {
 }
 
 impl Settings {
+    /// Capture resolved prompt preferences with the request. Empty service
+    /// overrides inherit the global setting; empty global values use built-ins.
+    pub fn resolved_profile(&self, profile: &Profile) -> Profile {
+        let mut profile = profile.clone();
+        if profile.custom_prompt.trim().is_empty() {
+            profile.custom_prompt = self.translation_prompt.clone();
+        }
+        if profile.custom_reply_prompt.trim().is_empty() {
+            profile.custom_reply_prompt = self.reply_prompt.clone();
+        }
+        profile
+    }
+
     pub fn ui_locale(&self) -> &str {
         match self.ui_language.as_str() {
             "zh" => "zh",
@@ -298,9 +329,12 @@ impl Settings {
         if !(12..=28).contains(&self.font_size) {
             return Err("字号须介于 12 和 28 之间。".into());
         }
+        if self.translation_prompt.len() > 32000 || self.reply_prompt.len() > 32000 {
+            return Err("全局提示词过长。".into());
+        }
         let mut ids = std::collections::HashSet::new();
         for p in &self.profiles {
-            if p.custom_prompt.len() > 32000 {
+            if p.custom_prompt.len() > 32000 || p.custom_reply_prompt.len() > 32000 {
                 return Err("自定义提示词过长。".into());
             }
             if p.name.len() > 240
@@ -322,6 +356,19 @@ impl Settings {
                 p.request_url()?;
             }
         }
+        // profile_ids remains readable for older settings files, but automatic
+        // backup now uses every configured compatible service in saved order.
+        for shortcut in [
+            &self.append_selection_shortcut,
+            &self.append_screenshot_shortcut,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if shortcut.trim().is_empty() || shortcut.len() > 128 {
+                return Err("追加快捷键无效。".into());
+            }
+        }
         Ok(())
     }
 }
@@ -329,6 +376,42 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_prompts_preserve_legacy_customization_and_explicit_cleanup_preference() {
+        let old:Settings=serde_json::from_str(r#"{"auto_clean":false,"profiles":[{"custom_prompt":"Legacy style"}],"failover":{"enabled":true,"profile_ids":["removed","removed"]}}"#).unwrap();
+        assert!(!old.auto_clean);
+        assert!(old.validate().is_ok());
+        assert_eq!(
+            old.resolved_profile(&old.profiles[0]).custom_prompt,
+            "Legacy style"
+        );
+        let mut settings = Settings {
+            translation_prompt: "Global translation".into(),
+            reply_prompt: "Global reply".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            settings
+                .resolved_profile(&settings.profiles[0])
+                .custom_prompt,
+            "Global translation"
+        );
+        assert_eq!(
+            settings
+                .resolved_profile(&settings.profiles[0])
+                .custom_reply_prompt,
+            "Global reply"
+        );
+        settings.profiles[0].custom_reply_prompt = "Local reply".into();
+        assert_eq!(
+            settings
+                .resolved_profile(&settings.profiles[0])
+                .custom_reply_prompt,
+            "Local reply"
+        );
+        assert!(settings.profiles[0].custom_prompt.is_empty());
+    }
 
     #[test]
     fn local_dictionary_and_youdao_have_distinct_configuration_contracts() {
@@ -438,6 +521,15 @@ mod tests {
         }
         let settings: Settings = serde_json::from_str(r#"{"target_language":"简体中文"}"#).unwrap();
         assert!(settings.skip_same_language);
+        assert!(!settings.failover.enabled);
+        assert!(settings.failover.profile_ids.is_empty());
+        assert!(settings.append_selection_shortcut.is_none());
+        assert!(settings.append_screenshot_shortcut.is_none());
+        assert!(settings.auto_clean);
+        assert!(settings.translation_prompt.is_empty());
+        assert!(settings.reply_prompt.is_empty());
+        assert!(settings.encounter_highlight);
+        assert!(!settings.preserve_structure);
         assert_eq!(settings.ui_locale(), "zh");
         assert_eq!(settings.profiles[0].provider, Provider::Custom);
         let en = Settings {

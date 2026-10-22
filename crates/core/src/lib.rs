@@ -11,5 +11,8 @@ pub mod sse;
 pub mod storage;
 pub mod tasks;
 
+pub mod operations;
+pub mod reliability;
 pub mod sensitive;
+pub mod source;
 pub mod vocabulary;

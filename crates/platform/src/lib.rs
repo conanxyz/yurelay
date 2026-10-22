@@ -3,6 +3,8 @@
 use serde::Serialize;
 use tokio::sync::mpsc;
 
+mod language;
+pub use language::{OcrBlock, OcrLayout, TokenRange, token_ranges};
 mod pronunciation;
 pub use pronunciation::{
     DictionaryDetails, SpeechVoice, lookup_dictionary_details, speak_word, speech_voices,
@@ -19,6 +21,7 @@ pub enum NativeEvent {
     Captured,
     Image(Vec<u8>),
     Text(String),
+    Layout(OcrLayout),
     Error(String),
     OcrError(String),
     ImageError(String),
@@ -37,6 +40,11 @@ mod macos {
         fn ad_permissions() -> u32;
         fn ad_set_locale(english: bool);
         pub(super) fn ad_dictionary_lookup(
+            input: *const c_char,
+            output: *mut u8,
+            capacity: usize,
+        ) -> usize;
+        pub(super) fn ad_token_ranges(
             input: *const c_char,
             output: *mut u8,
             capacity: usize,
@@ -89,6 +97,10 @@ mod macos {
                 6 => NativeEvent::OcrError(String::from_utf8_lossy(bytes).into_owned()),
                 7 => NativeEvent::ImageError(String::from_utf8_lossy(bytes).into_owned()),
                 8 => NativeEvent::Captured,
+                9 => match serde_json::from_slice(bytes) {
+                    Ok(layout) => NativeEvent::Layout(layout),
+                    Err(_) => return,
+                },
                 _ => return,
             };
             let _ = tx.send(event);

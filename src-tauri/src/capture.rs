@@ -1,12 +1,19 @@
 //! Admission and lifetime of native capture requests, shared by all entrances.
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Clone, Default)]
 pub struct CaptureGate {
     active: Arc<AtomicBool>,
+    append: Arc<Mutex<Option<AppendTarget>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AppendTarget {
+    pub task_id: String,
+    pub expected_revision: u64,
 }
 
 pub struct CapturePermit(Arc<AtomicBool>);
@@ -23,6 +30,13 @@ impl Drop for CapturePermit {
 }
 
 impl CaptureGate {
+    pub fn append_target(&self) -> Option<AppendTarget> {
+        self.append.lock().unwrap().clone()
+    }
+    pub fn set_append_target(&self, target: Option<AppendTarget>) {
+        *self.append.lock().unwrap() = target;
+    }
+
     pub fn shortcut_press(&self, target: Option<i32>) -> ShortcutPress {
         if self.active.load(Ordering::Acquire) {
             ShortcutPress::Ignored

@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { defaults } from '../../src/types';
 
-async function settingsFixture(page: Page, delayLoad = false, initialName = 'Custom service') {
+async function settingsFixture(page: Page, delayLoad = false, initialName = 'Custom service', withBackup = false) {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 1100, height: 820 });
   await page.addInitScript((initial) => {
@@ -16,6 +16,7 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
     w.settings.profiles[0].name = initial.initialName;
     w.settings.profiles[0].model = 'fixture-model';
     w.settings.profiles[0].endpoint = 'https://fixture.example/v1';
+    if(initial.withBackup)w.settings.profiles.push({...structuredClone(w.settings.profiles[0]),id:'backup',name:'Backup service',model:'backup-model'});
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     let callback = 0;
     const callbacks: Record<number, Function> = {}, events: Record<string, number> = {};
@@ -43,9 +44,15 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
         if (cmd === 'save_configuration') {
           if (w.failSave) throw 'Fixture save failed';
           w.settings = structuredClone(args.settings);
+          if(w.invalidateVerificationsOnSave)w.verifications=[];
           for(const [id,value] of Object.entries(args.apiKeyUpdates??{})) {if(value===null)w.savedKeys=w.savedKeys.filter((key:string)=>key!==id);else if(!w.savedKeys.includes(id))w.savedKeys.push(id);}
           return { configuration: config(), shortcuts: { registered: true, error: null } };
         }
+        if(cmd==='remove_task'){w.records=w.records.filter((r:any)=>r.id!==args.id);w.operations=(w.operations??[]).filter((o:any)=>o.task_id!==args.id);return null;}
+        if(cmd==='default_reply_prompt')return 'Use the source context to express the user intent in natural language for a native reader. Never invent facts or commitments.';
+        if(cmd==='operation_list')return structuredClone(w.operations??[]);
+        if(cmd==='service_verifications')return structuredClone(w.verifications??[]);
+        if(cmd==='test_connection'){if(w.receiptOnTest&&JSON.stringify(args.profile)===JSON.stringify(w.settings.profiles.find((p:any)=>p.id===args.profile.id))&&!args.keyOverride)w.verifications=[{profile_id:args.profile.id,state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];return {first_content_ms:1,total_ms:2};}
         if (cmd === 'permissions') return structuredClone(w.permissions);
         if(cmd==='vocabulary_list')return structuredClone(w.vocabulary);
         if(cmd==='fetch_models')return [{id:'fixture/free-model:free',free:true},{id:'fixture/zero-input-paid-output',free:false},{id:'fixture/unknown',free:null}];
@@ -63,7 +70,7 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
         return null;
       },
     };
-  }, { settings: structuredClone(defaults), delayLoad, initialName });
+  }, { settings: structuredClone(defaults), delayLoad, initialName, withBackup });
   await page.goto('/?window=settings');
   if(delayLoad){await expect.poll(()=>page.evaluate(()=>(window as any).calls.some((c:any)=>c.cmd==='settings_guard_ready'))).toBe(true);return;}
   await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
@@ -338,11 +345,12 @@ test('service search supports Chinese English and pinyin; panes align and prompt
  await search.fill('');
  const panes=await page.evaluate(()=>['.service-list','.service-editor-tray'].map(q=>document.querySelector(q)!.getBoundingClientRect().toJSON()));expect(panes[0].height).toBe(panes[1].height);expect(panes[0].y).toBe(panes[1].y);
  await expect(page.locator('.provider-logo')).toHaveCount(13);
- const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
+ await page.getByLabel('Translation prompt source',{exact:true}).selectOption('custom');
+ const prompt=page.getByRole('textbox',{name:'Service translation prompt',exact:true});await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
  await prompt.fill('Translate into {{target_lang}} with concise technical wording.');
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.provider==='zhipu').custom_prompt)).toContain('{{target_lang}}');
- await page.getByRole('button',{name:'Use default',exact:true}).click();await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
+ await page.getByLabel('Translation prompt source',{exact:true}).selectOption('global');await expect(prompt).toHaveCount(0);
  await page.screenshot({path:'artifacts/previews/2026-10-15-services-prompts.png'});
 });
 
@@ -401,21 +409,65 @@ test('free defaults, tier labels and live OpenRouter filtering retain exact mode
  await page.screenshot({path:'artifacts/previews/2026-10-15-free-model-catalog.png'});
 });
 
-test('compact prompt preview switches local modes without changing settings',async({page})=>{
- await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
- const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).toHaveValue(/Mode: sentence translation/);
- await expect(prompt).not.toHaveValue(/Safety Fallback|context_sentence|sentence_trans|dict_meaning/);
- await page.getByRole('button',{name:'Dictionary mode',exact:true}).click();await expect(prompt).toHaveValue(/Mode: dictionary lookup/);await expect(prompt).not.toHaveValue(/Mode: sentence translation/);
+test('shared translation and reply prompts save independently and services inherit or override them',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Prompts',exact:true}).click();
+ const translation=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(translation).toHaveValue(/Mode: sentence translation/);
+ await page.screenshot({path:'artifacts/previews/reading-workflow-prompts-simple.png'});
  await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
- await page.getByRole('button',{name:'Sentence mode',exact:true}).click();await expect(prompt).toHaveValue(/Mode: sentence translation/);
- await prompt.fill('Keep domain terms precise.');await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.profiles[0].custom_prompt)).toBe('Keep domain terms precise.');
- await page.getByRole('button',{name:'Use default',exact:true}).click();await expect(prompt).toHaveValue(/---VOCAB_JSON---/);
+ await translation.fill('Keep domain terms precise.');await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.translation_prompt)).toBe('Keep domain terms precise.');
+ await page.getByRole('button',{name:'Reply writing',exact:true}).click();const reply=page.getByRole('textbox',{name:'Reply prompt',exact:true});await expect(reply).toHaveValue(/native reader/);await reply.fill('Polish the intended reply without inventing facts.');await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).settings.reply_prompt)).toBe('Polish the intended reply without inventing facts.');expect(await page.evaluate(()=>(window as any).settings.profiles[0].custom_prompt??'')).toBe('');
+ await page.getByRole('button',{name:'Services',exact:true}).click();await expect(page.getByLabel('Translation prompt source')).toHaveValue('global');await expect(page.getByLabel('Reply prompt source')).toHaveValue('global');await expect(page.getByRole('textbox',{name:'Service translation prompt'})).toHaveCount(0);
+ await page.getByLabel('Reply prompt source').selectOption('custom');const custom=page.getByRole('textbox',{name:'Service reply prompt'});await expect(custom).toHaveValue('Polish the intended reply without inventing facts.');await custom.fill('This service uses a concise reply.');await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.profiles[0].custom_reply_prompt)).toBe('This service uses a concise reply.');
+ await page.getByLabel('Reply prompt source').selectOption('global');await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.profiles[0].custom_reply_prompt)).toBe('');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['submit_operation','test_connection','translate_text','retry_task'].includes(c.cmd)))).toEqual([]);
 });
+
+for (const kind of ['Translation', 'Reply'] as const) {
+  test(`${kind} prompt source follows saved and reverted settings without closing an empty draft`, async ({ page }) => {
+    await settingsFixture(page, false, 'Custom service', true);
+    await page.getByRole('button', { name: 'Services', exact: true }).click();
+    const selector = page.getByLabel(`${kind} prompt source`, { exact: true });
+    const editor = page.getByRole('textbox', { name: `Service ${kind.toLowerCase()} prompt`, exact: true });
+    const save = page.getByRole('button', { name: 'Save changes', exact: true });
+    const revert = page.getByRole('button', { name: 'Revert', exact: true });
+    const prompt = `Synthetic saved custom ${kind.toLowerCase()} instructions.`;
+    await selector.selectOption('custom');
+    await editor.fill(prompt);
+    await save.click();
+    await expect(selector).toHaveValue('custom');
+    await selector.selectOption('global');
+    await revert.click();
+    await expect(selector).toHaveValue('custom');
+    await expect(editor).toHaveValue(prompt);
+
+    await page.locator('.service-list').getByRole('button', { name: /Backup service/ }).click();
+    await expect(selector).toHaveValue('global');
+    await page.locator('.service-list').getByRole('button', { name: /Custom service/ }).click();
+    await expect(selector).toHaveValue('custom');
+    await expect(editor).toHaveValue(prompt);
+    await editor.fill('');
+    await expect(selector).toHaveValue('custom');
+    await expect(editor).toBeVisible();
+    await editor.fill('Synthetic replacement instructions.');
+    await expect(editor).toHaveValue('Synthetic replacement instructions.');
+    await editor.fill('');
+    await save.click();
+    await expect(selector).toHaveValue('global');
+    await expect(editor).toHaveCount(0);
+
+    await selector.selectOption('custom');
+    await editor.fill('Unsaved custom instructions.');
+    await revert.click();
+    await expect(selector).toHaveValue('global');
+    await expect(editor).toHaveCount(0);
+  });
+}
 
 
 test('automatic vocabulary switch saves and pure-translation preview has no metadata contract',async({page})=>{
  await settingsFixture(page);const toggle=page.getByRole('checkbox',{name:/Automatically extract vocabulary/});await expect(toggle).toBeChecked();await toggle.uncheck();await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.auto_vocabulary)).toBe(false);
- await page.getByRole('button',{name:'Services',exact:true}).click();const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).not.toHaveValue(/---VOCAB_JSON---|Extract 2|"meaning"/);await expect(prompt).toHaveValue(/Return only/);
+ await page.getByRole('button',{name:'Prompts',exact:true}).click();const prompt=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(prompt).not.toHaveValue(/---VOCAB_JSON---|Extract 2|"meaning"/);await expect(prompt).toHaveValue(/Return only/);
 });
 
 
@@ -586,4 +638,39 @@ test('permission recovery stays readable in narrow and dark settings without cov
       await page.screenshot({path:`artifacts/previews/2026-10-16-permission-recovery-${width}-${theme}.png`});
     }
   }
+});
+
+test('one fallback switch uses configured services and saves with optional append shortcuts without probing',async({page})=>{
+ await settingsFixture(page,false,'Custom service',true);
+ await page.getByRole('checkbox',{name:/Automatic fallback services/}).check();
+ await expect(page.locator('.failover-choices,.failover-list')).toHaveCount(0);
+ await expect(page.getByRole('checkbox',{name:/Automatically tidy PDF line breaks/})).toBeChecked();
+ await page.screenshot({path:'artifacts/previews/reading-workflow-settings-simple.png'});
+ const order=await page.locator('.guard-setting input').evaluateAll(nodes=>nodes.map(node=>node.parentElement?.textContent??''));expect(order[0]).toContain('Automatic fallback services');expect(order[1]).toContain('Automatically extract vocabulary');
+ await page.getByText('Optional append shortcuts',{exact:true}).click();await page.getByLabel('Append selection shortcut').fill('Alt+Shift+D');await page.getByLabel('Append screenshot shortcut').fill('Alt+Shift+S');await page.getByLabel('Append screenshot shortcut').blur();
+ expect(await page.evaluate(()=>(window as any).settings.failover)).toEqual({enabled:false,profile_ids:[]});
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['test_connection','retry_task','submit_operation','translate_text'].includes(c.cmd)))).toEqual([]);
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).settings.failover)).toEqual({enabled:true,profile_ids:[]});expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('default');
+ expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
+});
+
+test('service receipts identify saved configuration and never mark a changed draft as verified',async({page})=>{
+ await settingsFixture(page);await page.evaluate(()=>{const w=window as any;w.receiptOnTest=true;w.invalidateVerificationsOnSave=true;w.verifications=[{profile_id:'default',state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];});
+ await page.getByRole('button',{name:'Services',exact:true}).click();await expect(page.locator('.service-editor .verification-state')).toContainText('passed a translation transport test');
+ await page.getByLabel('Model',{exact:true}).fill('changed-model');await expect(page.locator('.service-editor .verification-state')).toContainText('unsaved changes');
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();await expect(page.locator('.service-editor .verification-state')).toContainText('do not apply to this draft');expect(await page.evaluate(()=>(window as any).settings.profiles[0].model)).toBe('fixture-model');
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();await expect(page.locator('.service-editor .verification-state')).toContainText('unverified');
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();await expect(page.locator('.service-editor .verification-state')).toContainText('passed a translation transport test');
+});
+
+test('standalone reply history is readable and copyable without attaching it to a draft or releasing sensitive operations',async({page})=>{
+ await settingsFixture(page);await page.evaluate(()=>{const w=window as any;const base={request_id:'saved-request',task_id:null,source_revision:0,kind:'reply',status:'completed',primary_text:'A safely saved standalone reply.',back_translation:'已保存的独立回复。',back_translation_state:'complete',profile:w.settings.profiles[0],attempt:1,attempts:[],error:null,sensitive:null,output_language:'en',reference_language:'zh-Hans',created_at:1700000000000,updated_at:1700000000000,revision:1};w.operations=[{...base,id:'standalone'},{...base,id:'blocked',status:'blocked',primary_text:'',back_translation:'',sensitive:'API_SECRET'},{...base,id:'associated',task_id:'record-0',primary_text:'Associated result.'}];});
+ await page.getByRole('button',{name:'History',exact:true}).click();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='operation_list'))).toEqual([]);
+ await page.getByText('Explanation and reply history',{exact:true}).click();await expect(page.locator('.operation-history-record')).toHaveCount(3);await page.locator('.operation-history-record>summary').first().click();await expect(page.locator('.operation-history')).toContainText('A safely saved standalone reply.');
+ await page.locator('.operation-history-record').first().getByRole('button',{name:'Copy reply',exact:true}).click();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toBe('A safely saved standalone reply.');
+ await page.locator('.operation-history-record>summary').nth(1).click();await expect(page.locator('.operation-history-record').nth(1)).toContainText('original draft');await expect(page.locator('.operation-history').getByRole('button',{name:'Allow this request'})).toHaveCount(0);
+ await page.locator('.operation-history-record>summary').nth(2).click();await page.getByRole('button',{name:'View associated source'}).click();await expect(page.locator('.history-detail')).toContainText('Record 0: A complete source');
+ await page.getByRole('button',{name:'Delete record',exact:true}).click();await page.getByRole('button',{name:'Delete permanently',exact:true}).click();await expect(page.locator('.operation-history-record')).toHaveCount(2);await expect(page.locator('.operation-history')).not.toContainText('Associated result.');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['submit_operation','retry_task','translate_text','resolve_operation_sensitive'].includes(c.cmd)))).toEqual([]);
 });

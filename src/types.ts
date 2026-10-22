@@ -20,6 +20,7 @@ export type Profile = {
   model: string;
   app_id?: string;
   custom_prompt?: string;
+  custom_reply_prompt?: string;
   streaming: boolean;
   temperature: number;
   revision: number;
@@ -35,6 +36,14 @@ export type Settings = {
   skip_same_language: boolean;
   sensitive_guard: boolean;
   auto_vocabulary: boolean;
+  append_selection_shortcut?: string | null;
+  append_screenshot_shortcut?: string | null;
+  auto_clean?: boolean;
+  translation_prompt?: string;
+  reply_prompt?: string;
+  preserve_structure?: boolean;
+  encounter_highlight?: boolean;
+  failover?: { enabled: boolean; profile_ids: string[] };
   retention: { mode: "disabled" | "days" | "forever"; days?: number };
   selection_shortcut: string;
   screenshot_shortcut: string;
@@ -47,7 +56,27 @@ export type Configuration = {
   has_keys: string[];
   credential_errors: Record<string, string>;
 };
+export type FailureSummary = {
+  class:
+    | "cancelled"
+    | "configuration"
+    | "connection"
+    | "timeout"
+    | "rate_limit"
+    | "server"
+    | "quota"
+    | "authentication"
+    | "protocol";
+  status?: number | null;
+  provider_code?: string | null;
+  retry_after_seconds?: number | null;
+};
 export type Task = {
+  failure?: FailureSummary | null;
+  source_revision?: number;
+  can_undo_cleanup?: boolean;
+  translation_source_revision?: number | null;
+  source_segments?: SourceSegment[];
   extract_vocabulary?: boolean;
   vocabulary_state?:
     "none" | "disabled" | "extracting" | "complete" | "cancelled" | "failed";
@@ -129,6 +158,14 @@ export const defaults: Settings = {
   skip_same_language: true,
   sensitive_guard: true,
   auto_vocabulary: true,
+  append_selection_shortcut: null,
+  append_screenshot_shortcut: null,
+  auto_clean: true,
+  translation_prompt: "",
+  reply_prompt: "",
+  preserve_structure: false,
+  encounter_highlight: true,
+  failover: { enabled: false, profile_ids: [] },
   retention: { mode: "days", days: 7 },
   selection_shortcut: "Alt+D",
   screenshot_shortcut: "Alt+S",
@@ -185,3 +222,82 @@ export type VocabularyPreview = {
   translation_highlights: TranslationHighlight[];
 };
 export type SpeechVoice = { locale: string; available: boolean };
+
+export type SourceSegment = {
+  id: string;
+  kind: string;
+  original_text: string;
+  captured_at: number;
+  asset_id?: string | null;
+  ocr_layout?: unknown;
+};
+export type SourceAsset = { id: string; segment_id: string; legacy: boolean };
+export type SourceEncounter = {
+  start_utf16: number;
+  end_utf16: number;
+  item_id: string;
+  word: string;
+  surface: string;
+};
+export type ServiceVerification = {
+  profile_id: string;
+  state: "untested" | "verified" | "expired" | "changed" | "failed";
+  tested_at: number | null;
+  expires_at: number | null;
+  tested_capability: "translation_transport";
+};
+export type OperationRecord = {
+  id: string;
+  request_id: string;
+  task_id: string | null;
+  source_revision: number;
+  kind: "explain" | "reply";
+  status:
+    "queued" | "generating" | "completed" | "stopped" | "failed" | "blocked";
+  primary_text: string;
+  back_translation: string;
+  back_translation_state:
+    "none" | "pending" | "complete" | "failed" | "cancelled";
+  profile: Profile;
+  attempt: number;
+  attempts: {
+    number: number;
+    profile: Profile;
+    status: string;
+    error: string | null;
+    reason: string;
+    partial_text: string;
+    source_revision?: number;
+    back_translation?: string;
+    failure?: FailureSummary | null;
+  }[];
+  error: string | null;
+  sensitive: Task["sensitive"];
+  output_language: string;
+  reference_language: string;
+  created_at: number;
+  updated_at: number;
+  revision: number;
+  save_state?: string;
+  save_error?: string | null;
+  failure?: FailureSummary | null;
+  memory_only?: boolean;
+};
+export type OperationRequest = {
+  request_id: string;
+  previous_operation_id?: string | null;
+  kind: "explain" | "reply";
+  source_text: string;
+  task_id?: string | null;
+  source_revision?: number | null;
+  profile_id?: string | null;
+  source_language?: string | null;
+  target_language: string;
+  selection_start?: number | null;
+  selection_end?: number | null;
+  context_scope?: "paragraph" | "full";
+  intent?: string;
+  tone?: "default" | "professional" | "casual" | "concise";
+  reply_language?: string | null;
+  include_back_translation?: boolean;
+};

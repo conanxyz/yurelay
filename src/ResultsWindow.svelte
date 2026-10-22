@@ -27,6 +27,82 @@
     languageName,
     languages,
   } from "./locale";
+  import PendingCaptures from "./PendingCaptures.svelte";
+  import SourceToolbar from "./SourceToolbar.svelte";
+  import SourceReadingView from "./SourceReadingView.svelte";
+  import SourceSegmentList from "./SourceSegmentList.svelte";
+  import ServicePicker from "./ServicePicker.svelte";
+  import AssistantOperations from "./AssistantOperations.svelte";
+  let sourceEditing = $state(false);
+  let sourceEditBusy = $state(false);
+  let sourceImageOpen = $state(false);
+  let sourceEditor = $state<HTMLTextAreaElement>();
+  async function toggleSourceEdit() {
+    if (!current || active(current) || current.sensitive || sourceEditBusy)
+      return;
+    if (!sourceEditing) {
+      sourceEditing = true;
+      await tick();
+      sourceEditor?.focus({ preventScroll: true });
+      return;
+    }
+    sourceEditBusy = true;
+    const id = current.id;
+    try {
+      if (
+        draft !== (current.edited_text ?? current.original_text) ||
+        sourceLanguage !== (current.source_language ?? "")
+      ) {
+        const updated = await invoke<Task>("source_update", {
+          request: {
+            task_id: id,
+            expected_revision: current.source_revision ?? 0,
+            text: draft,
+            source_language: sourceLanguage,
+            target_language: targetLanguage,
+          },
+        });
+        updateSource(updated);
+      }
+      if (current?.id === id) sourceEditing = false;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      sourceEditBusy = false;
+    }
+  }
+  let explanationSelection = $state<{ start: number; end: number } | null>(
+    null,
+  );
+  let manuallyCollapsed = false;
+  function updateSource(task: Task, choose = false) {
+    const known = tasks.find((item) => item.id === task.id);
+    if (!known || known.revision <= task.revision)
+      tasks = [...tasks.filter((item) => item.id !== task.id), task];
+    if (choose) selected = task.id;
+  }
+  function chooseSourceRange(start: number, end: number) {
+    explanationSelection = { start, end };
+    const word = draft.slice(start, end).trim();
+    if (
+      vocabularyEligible &&
+      word &&
+      word.length <= 128 &&
+      word.split(/\s+/u).length <= 3
+    ) {
+      const request = {
+        word,
+        sourceText: draft,
+        selectionStart: start,
+        selectionEnd: end,
+        taskId: !changed && current?.status === "completed" ? current.id : null,
+        attempt:
+          !changed && current?.status === "completed" ? current.attempt : null,
+      };
+      selectedRequest = request;
+      requestPreview(request, true);
+    }
+  }
   import ProviderLogo from "./ProviderLogo.svelte";
   import VocabularySidebar from "./VocabularySidebar.svelte";
   import TranslationContent from "./TranslationContent.svelte";
@@ -55,6 +131,13 @@
     disclosed = $state(false);
   let content: HTMLElement;
   let current = $derived(tasks.find((task) => task.id === selected));
+  const usesSourceAssets = $derived(
+    !!current &&
+      ((current.source_segments?.length ?? 0) > 1 ||
+        current.source_segments?.some(
+          (segment) => !!segment.asset_id && segment.asset_id !== current.id,
+        )),
+  );
   type DictionaryGuidance = {
     issue: "sentence" | "too_long" | null;
     profile_ids: string[];
@@ -80,12 +163,11 @@
       if (identity !== vocabularyIdentity) {
         vocabularyIdentity = identity;
         vocabularyAutoShown = false;
+        manuallyCollapsed = false;
         vocabularyOpen = false;
       }
-      if (ready && !vocabularyAutoShown) {
-        vocabularyAutoShown = true;
-        vocabularyOpen = true;
-      }
+      // Candidate arrival never expands the reading sidebar.
+      void ready;
     });
   });
   let waiting = $derived(
@@ -144,6 +226,9 @@
     !!current &&
       (service?.id !== current.profile.id ||
         service?.revision !== current.profile.revision ||
+        (!!current.translation &&
+          (current.translation_source_revision ?? 0) !==
+            (current.source_revision ?? 0)) ||
         draft !== (current.edited_text ?? current.original_text) ||
         sourceLanguage !== (current.source_language ?? "") ||
         targetLanguage !== current.target_language),
@@ -413,17 +498,28 @@
     pendingAttempt = 0;
   let draftId: string | null = null;
   let sourceVersion = "";
+  let lastSourceText = "";
   let trigger: HTMLButtonElement;
   $effect(() => {
     const version = `${current?.id}:${current?.original_text}:${current?.edited_text}`;
     if (version !== sourceVersion) {
       sourceVersion = version;
       clearSelection();
-      draft = current?.edited_text ?? current?.original_text ?? "";
+      const nextText = current?.edited_text ?? current?.original_text ?? "";
+      // A committed snapshot may arrive after a newer local edit. Keep that edit.
+      if (
+        (current?.id ?? "") !== draftId ||
+        draft === lastSourceText ||
+        draft === nextText
+      )
+        draft = nextText;
+      lastSourceText = nextText;
     }
     const nextDraftId = current?.id ?? "";
     if (nextDraftId !== draftId) {
       draftId = nextDraftId;
+      sourceEditing = current?.source === "manual";
+      sourceImageOpen = false;
       if (
         !pendingManualProfile ||
         current?.profile.id !== pendingManualProfile
@@ -452,6 +548,7 @@
     }
   });
   function clearSelection() {
+    explanationSelection = null;
     selectedRequest = null;
     activeWord = "";
     selectionHighlights = [];
@@ -464,6 +561,10 @@
     const el = event.currentTarget as HTMLTextAreaElement;
     if (document.activeElement !== el) return;
     const word = el.value.slice(el.selectionStart, el.selectionEnd).trim();
+    const explicitRange = word
+      ? { start: el.selectionStart, end: el.selectionEnd }
+      : null;
+    explanationSelection = explicitRange;
     if (
       !vocabularyEligible ||
       !word ||
@@ -473,6 +574,7 @@
       !/^[\p{Script=Latin}\x21-\x7e\s’‘–—]+$/u.test(word)
     ) {
       clearSelection();
+      explanationSelection = explicitRange;
       return;
     }
     const request = {
@@ -552,7 +654,7 @@
     activeWord = wordKey;
     selectionHighlights = result.translation_highlights ?? [];
     highlightTranslation = translation;
-    if (reveal) {
+    if (reveal && !manuallyCollapsed) {
       vocabularyOpen = true;
       vocabularyAutoShown = true;
     }
@@ -658,7 +760,7 @@
   }
   function keydown(event: KeyboardEvent) {
     const editing =
-      'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"]';
+      'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]:not([aria-readonly="true"]),[role="combobox"]';
     if (
       !!document.querySelector("dialog[open]") ||
       event.defaultPrevented ||
@@ -842,7 +944,10 @@
         sourceText={draft}
         {sourceLanguage}
         open={sidebarWidth > 40}
-        onToggle={() => (vocabularyOpen = !vocabularyOpen)}
+        onToggle={() => {
+          vocabularyOpen = !vocabularyOpen;
+          if (!vocabularyOpen) manuallyCollapsed = true;
+        }}
       />{/key}{/if}
   <div class="translation-main">
     <div class="window-chrome" onpointerdown={drag} role="presentation">
@@ -901,6 +1006,12 @@
       {#if captureFailure}<p class="inline-feedback" role="alert">
           {errorText(captureFailure, locale)}
         </p>{/if}
+      <PendingCaptures
+        task={current}
+        {draft}
+        {locale}
+        onUpdate={(task, choose) => updateSource(task, choose)}
+      />
       <div class="reading-sheet">
         <section class="source-panel" aria-label={t("原文", "Source")}>
           <div class="reading-caption">
@@ -924,6 +1035,21 @@
                   >{language[locale === "zh" ? 1 : 2]}</option
                 >{/each}
             </select>
+            {#if current && !current.sensitive && !sourceProcessing && draft.trim()}<button
+                class="icon-button source-edit-control"
+                aria-label={sourceEditing
+                  ? t("完成编辑", "Finish editing")
+                  : t("编辑原文", "Edit source")}
+                title={sourceEditing
+                  ? t("完成编辑", "Finish editing")
+                  : t("编辑原文", "Edit source")}
+                disabled={active(current) || sourceEditBusy}
+                onclick={toggleSourceEdit}
+                ><Icon
+                  name={sourceEditing ? "check" : "edit"}
+                  size={14}
+                /></button
+              >{/if}
           </div>
           {#if current?.sensitive}
             <div class="sensitive-mask" role="alert">
@@ -962,55 +1088,93 @@
               </div>
             </div>
           {:else}
-            {#if current?.has_image}<details class="source-image">
-                <summary>{t("查看截图", "View screenshot")}</summary><img
-                  use:imageEntrance
-                  src={convertFileSrc(current.id, "yurelay-image")}
-                  alt={t("原始截图选区", "Original screenshot selection")}
-                />
+            {#if current}<SourceToolbar
+                task={current}
+                {draft}
+                {sourceLanguage}
+                {targetLanguage}
+                {locale}
+                onUpdate={updateSource}
+              />{#if usesSourceAssets}<SourceSegmentList
+                  task={current}
+                  {locale}
+                  editable={!active(current)}
+                  onUpdate={updateSource}
+                />{/if}{/if}
+            {#if current?.has_image && !usesSourceAssets}<details
+                class="source-image"
+                ontoggle={(event) =>
+                  (sourceImageOpen = event.currentTarget.open)}
+              >
+                <summary>{t("查看截图", "View screenshot")}</summary
+                >{#if sourceImageOpen}<img
+                    use:imageEntrance
+                    src={convertFileSrc(current.id, "yurelay-image")}
+                    alt={t("原始截图选区", "Original screenshot selection")}
+                  />{/if}
               </details>{/if}
-            <div class="source-editor-frame">
-              <textarea
-                class="source-editor"
-                aria-label={t("原文内容", "Source text")}
-                aria-busy={sourceProcessing}
-                aria-describedby={sourceProcessing
-                  ? "source-processing-status"
-                  : undefined}
-                bind:value={draft}
-                readonly={!!current && active(current)}
-                onselect={captureSelection}
-                onmouseup={selectWordAtCaret}
-                oninput={clearSelection}
-                placeholder={sourceProcessing
-                  ? ""
-                  : t(
-                      "选中文字或截取屏幕区域…",
-                      "Select text or capture a screen region…",
-                    )}
-                spellcheck="false"></textarea>
-              {#if sourceProcessing}<div
-                  class="source-processing"
-                  id="source-processing-status"
-                  role="status"
-                  aria-live="polite"
-                >
-                  <LoadingSpinner size={20} />
-                  <span
-                    >{current?.status === "capturing"
-                      ? t("正在准备截图…", "Preparing screenshot…")
-                      : t(
-                          "正在识别截图文字…",
-                          "Recognizing screenshot text…",
-                        )}</span
+            {#if !sourceEditing && current && !sourceProcessing && !!draft.trim()}
+              <SourceReadingView
+                task={current}
+                text={draft}
+                {locale}
+                enabled={settings.encounter_highlight !== false &&
+                  vocabularyEligible}
+                onSelect={chooseSourceRange}
+              />
+            {:else}<div class="source-editor-frame">
+                <textarea
+                  class="source-editor"
+                  bind:this={sourceEditor!}
+                  aria-label={t("原文内容", "Source text")}
+                  aria-busy={sourceProcessing}
+                  aria-describedby={sourceProcessing
+                    ? "source-processing-status"
+                    : undefined}
+                  bind:value={draft}
+                  readonly={!!current && active(current)}
+                  onselect={captureSelection}
+                  onmouseup={selectWordAtCaret}
+                  oninput={clearSelection}
+                  placeholder={sourceProcessing
+                    ? ""
+                    : t(
+                        "选中文字或截取屏幕区域…",
+                        "Select text or capture a screen region…",
+                      )}
+                  spellcheck="false"></textarea>
+                {#if sourceProcessing}<div
+                    class="source-processing"
+                    id="source-processing-status"
+                    role="status"
+                    aria-live="polite"
                   >
-                </div>{/if}
-            </div>
+                    <LoadingSpinner size={20} />
+                    <span
+                      >{current?.status === "capturing"
+                        ? t("正在准备截图…", "Preparing screenshot…")
+                        : t(
+                            "正在识别截图文字…",
+                            "Recognizing screenshot text…",
+                          )}</span
+                    >
+                  </div>{/if}
+              </div>{/if}
           {/if}
           {#if current?.image_error}<p class="inline-feedback">
               {errorText(current.image_error, locale)}
             </p>{/if}
         </section>
+        <ServicePicker
+          profiles={settings.profiles}
+          selected={profileOverride ?? settings.active_profile}
+          {locale}
+          disabled={!!current && (active(current) || !!current.sensitive)}
+          onChange={(id) => {
+            profileOverride = id;
+            error = "";
+          }}
+        />
         <div class="service-strip">
           <div
             class="service-identity"
@@ -1206,6 +1370,39 @@
                 >
               </div>{/if}
           </section>{/if}
+        {#if changed && current?.translation && !active(current)}<details
+            class="previous-translation"
+            open
+          >
+            <summary
+              >{t("上一版结果", "Previous result")} · {current.profile.name} · v{current.translation_source_revision ??
+                current.source_revision ??
+                0}</summary
+            >
+            <p class="workflow-note">
+              {t(
+                "原文、语言或服务已变更；此结果不会自动更新。",
+                "The source, language or service changed. This result is retained until you explicitly translate again.",
+              )}
+            </p>
+            <TranslationContent
+              text={current.translation}
+              {locale}
+              identity={`${current.id}:${current.attempt}:previous`}
+            />
+          </details>{/if}
+        <AssistantOperations
+          {locale}
+          task={current}
+          sourceText={draft}
+          {sourceLanguage}
+          {targetLanguage}
+          detectedLanguage={detected}
+          {settings}
+          profileId={profileOverride ?? settings.active_profile}
+          selection={explanationSelection}
+          onProfileChange={(id) => (profileOverride = id)}
+        />
         <span class="sr-only" role="status" aria-hidden={sourceProcessing}
           >{current ? statusName(current.status, locale) : ""}</span
         >

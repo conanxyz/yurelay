@@ -17,17 +17,20 @@
     primaryCode,
     errorText,
   } from "./locale";
+  import ServiceVerificationBadge from "./ServiceVerificationBadge.svelte";
+  import PromptSettings from "./PromptSettings.svelte";
+  import ServicePromptReferences from "./ServicePromptReferences.svelte";
+  import ReliabilitySettings from "./ReliabilitySettings.svelte";
+  let verificationVersion = $state(0);
   import ProviderLogo from "./ProviderLogo.svelte";
   import VocabularyPanel from "./VocabularyPanel.svelte";
   import promptTemplate from "../crates/core/data/translation-prompt.txt?raw";
-  import wordRules from "../crates/core/data/translation-word.txt?raw";
   import passageRules from "../crates/core/data/translation-passage.txt?raw";
   import outputFormat from "../crates/core/data/vocabulary-format.txt?raw";
   import translationOnly from "../crates/core/data/translation-only-format.txt?raw";
-  let promptMode = $state<"word" | "passage">("passage");
   let defaultPrompt = $derived.by(() => {
     const extract = settings.auto_vocabulary !== false;
-    const rules = (promptMode === "word" ? wordRules : passageRules).trim();
+    const rules = passageRules.trim();
     return promptTemplate
       .replace("{{mode_rules}}", extract ? rules : rules.split("\n")[0])
       .replace(
@@ -56,8 +59,35 @@
   import ShortcutRecorder from "./ShortcutRecorder.svelte";
   import { listen } from "@tauri-apps/api/event";
   type Nav =
-    "translation" | "services" | "vocabulary" | "history" | "appearance";
+    | "translation"
+    | "services"
+    | "prompts"
+    | "vocabulary"
+    | "history"
+    | "appearance";
   let nav = $state<Nav>("translation");
+  let replyPromptTemplate = $state(""),
+    replyPromptLoading = $state(false),
+    replyPromptError = $state("");
+  let replyPromptLoaded = false;
+  $effect(() => {
+    if (
+      !["prompts", "services"].includes(nav) ||
+      replyPromptLoaded ||
+      !isTauri()
+    )
+      return;
+    replyPromptLoaded = true;
+    replyPromptLoading = true;
+    invoke<string>("default_reply_prompt")
+      .then((value) => {
+        replyPromptTemplate = typeof value === "string" ? value : "";
+      })
+      .catch((e) => {
+        replyPromptError = errorText(e, locale);
+      })
+      .finally(() => (replyPromptLoading = false));
+  });
   let settings = $state<Settings>(structuredClone(defaults));
   let saved = $state(JSON.stringify(defaults));
   type CloseRequest = { id: number; intent: "close" | "quit" };
@@ -178,6 +208,16 @@
       ],
     },
     {
+      id: "prompts",
+      icon: "edit",
+      zh: "提示词",
+      en: "Prompts",
+      description: [
+        "集中调整翻译和回复的表达方式。",
+        "Set shared instructions for translation and reply writing.",
+      ],
+    },
+    {
       id: "vocabulary",
       icon: "book",
       zh: "生词本",
@@ -294,6 +334,16 @@
   function keyOverride() {
     return selected in keys ? (keys[selected] ?? "") : null;
   }
+  async function testService(key: string | null) {
+    try {
+      await invoke("test_connection", {
+        profile: $state.snapshot(profile),
+        keyOverride: key,
+      });
+    } finally {
+      verificationVersion++;
+    }
+  }
   async function save() {
     return await run(async () => {
       const result = await invoke<{
@@ -307,6 +357,7 @@
       settings = structuredClone(result.configuration.settings);
       saved = JSON.stringify(settings);
       historyVersion++;
+      verificationVersion++;
       keys = {};
       shortcutError = result.shortcuts.error;
       message = "";
@@ -514,6 +565,67 @@
           >
             {#if nav === "translation"}
               <fieldset class="form-section guard-setting" disabled={busy}>
+                <ReliabilitySettings bind:settings {locale} />
+                <label class="extraction-setting"
+                  ><input
+                    type="checkbox"
+                    bind:checked={settings.auto_vocabulary}
+                  /><span
+                    >{t(
+                      "自动提炼生词",
+                      "Automatically extract vocabulary",
+                    )}<small class="subtle"
+                      >{t(
+                        "英语原文的生词候选会留在侧栏，主动收录后才进入生词本。",
+                        "English vocabulary candidates stay in the sidebar and enter your vocabulary only when you save them.",
+                      )}</small
+                    ></span
+                  ></label
+                >
+                <label class="extraction-setting"
+                  ><input
+                    type="checkbox"
+                    checked={settings.auto_clean !== false}
+                    onchange={(e) =>
+                      (settings.auto_clean = e.currentTarget.checked)}
+                  /><span
+                    >{t(
+                      "自动整理 PDF 断行",
+                      "Automatically tidy PDF line breaks",
+                    )}<small class="subtle"
+                      >{t(
+                        "捕获后合并明显的句中换行，保留段落、列表和代码；本机处理，可撤销。",
+                        "After capture, join obvious breaks inside sentences while keeping paragraphs, lists and code. Local and reversible.",
+                      )}</small
+                    ></span
+                  ></label
+                >
+                <label class="toggle"
+                  ><input
+                    type="checkbox"
+                    checked={settings.encounter_highlight !== false}
+                    onchange={(e) =>
+                      (settings.encounter_highlight = e.currentTarget.checked)}
+                  /><span
+                    >{t(
+                      "标记学习中的表达",
+                      "Highlight learning vocabulary",
+                    )}</span
+                  ></label
+                >
+                <label class="toggle"
+                  ><input
+                    type="checkbox"
+                    checked={settings.preserve_structure === true}
+                    onchange={(e) =>
+                      (settings.preserve_structure = e.currentTarget.checked)}
+                  /><span
+                    >{t(
+                      "保留表格与公式结构",
+                      "Preserve table and formula structure",
+                    )}</span
+                  ></label
+                >
                 <label class="toggle"
                   ><input
                     type="checkbox"
@@ -523,20 +635,6 @@
                       "敏感信息本地拦截保护",
                       "Local sensitive-data protection",
                     )}</span
-                  ></label
-                >
-                <label class="extraction-setting"
-                  ><input
-                    type="checkbox"
-                    bind:checked={settings.auto_vocabulary}
-                  /><span
-                    >{t(
-                      "自动提炼生词",
-                      "Automatically extract vocabulary",
-                    )}<small class="subtle">{t(
-                        "仅适用于英语原文；点击译文不会收录生词。",
-                        "English source text only; clicking the translation does not add vocabulary.",
-                      )}</small></span
                   ></label
                 >
               </fieldset>
@@ -625,6 +723,45 @@
                         }}
                       />
                     </div>
+                    <details class="optional-shortcuts">
+                      <summary
+                        >{t(
+                          "可选追加快捷键",
+                          "Optional append shortcuts",
+                        )}</summary
+                      >
+                      <p class="subtle">
+                        {t(
+                          "默认不注册额外快捷键。留空停用，保存后生效。",
+                          "No extra shortcuts are registered by default. Leave empty to disable; save to apply.",
+                        )}
+                      </p>
+                      <label
+                        >{t("追加划词", "Append selection")}<input
+                          aria-label={t(
+                            "追加划词快捷键",
+                            "Append selection shortcut",
+                          )}
+                          value={settings.append_selection_shortcut ?? ""}
+                          onchange={(e) =>
+                            (settings.append_selection_shortcut =
+                              e.currentTarget.value.trim() || null)}
+                          placeholder="Alt+Shift+D"
+                        /></label
+                      ><label
+                        >{t("追加截图", "Append screenshot")}<input
+                          aria-label={t(
+                            "追加截图快捷键",
+                            "Append screenshot shortcut",
+                          )}
+                          value={settings.append_screenshot_shortcut ?? ""}
+                          onchange={(e) =>
+                            (settings.append_screenshot_shortcut =
+                              e.currentTarget.value.trim() || null)}
+                          placeholder="Alt+Shift+S"
+                        /></label
+                      >
+                    </details>
                     {#if recordingField}<span
                         class="recording-status"
                         role="status"
@@ -778,43 +915,43 @@
                   >
                   <div class="service-scroll">
                     {#each serviceEntries(settings.profiles, settings.active_profile, serviceQuery) as entry}
-                    {#if entry.profile}
-                      {@const item = entry.profile}
-                      <button
-                        class="service-item"
-                        disabled={busy || closeSaving}
-                        aria-pressed={selected === item.id}
-                        onclick={() => {
-                          selected = item.id;
-                          if (
-                            !item.model.trim() &&
-                            presetFor(item.provider).model
-                          )
-                            item.model = presetFor(item.provider).model;
-                          models = [];
-                          error = "";
-                          message = "";
-                        }}
-                      >
-                        <span class="service-symbol"
-                          ><ProviderLogo provider={item.provider} /></span
+                      {#if entry.profile}
+                        {@const item = entry.profile}
+                        <button
+                          class="service-item"
+                          disabled={busy || closeSaving}
+                          aria-pressed={selected === item.id}
+                          onclick={() => {
+                            selected = item.id;
+                            if (
+                              !item.model.trim() &&
+                              presetFor(item.provider).model
+                            )
+                              item.model = presetFor(item.provider).model;
+                            models = [];
+                            error = "";
+                            message = "";
+                          }}
                         >
-                        <span
-                          ><strong>{serviceName(item, locale)}</strong><small
-                            >{item.provider === "system_dictionary"
-                              ? t("本机可用", "On this Mac")
-                              : configured(item)
-                                ? t("已配置", "Configured")
-                                : t("待配置", "Not configured")}</small
-                          ></span
-                        >
-                        {#if item.id === settings.active_profile}<span
-                            class="service-default-tag"
-                            >{t("默认", "Default")}</span
-                          >{/if}
-                      </button>
-                    {:else}
-                      {@const preset = entry.preset}
+                          <span class="service-symbol"
+                            ><ProviderLogo provider={item.provider} /></span
+                          >
+                          <span
+                            ><strong>{serviceName(item, locale)}</strong><small
+                              >{item.provider === "system_dictionary"
+                                ? t("本机可用", "On this Mac")
+                                : configured(item)
+                                  ? t("已配置", "Configured")
+                                  : t("待配置", "Not configured")}</small
+                            ></span
+                          >
+                          {#if item.id === settings.active_profile}<span
+                              class="service-default-tag"
+                              >{t("默认", "Default")}</span
+                            >{/if}
+                        </button>
+                      {:else}
+                        {@const preset = entry.preset}
                         <button
                           class="service-item available-service"
                           disabled={busy ||
@@ -872,6 +1009,15 @@
                         >{t("设为默认", "Use by default")}</button
                       >
                     </div>
+                    <ServiceVerificationBadge
+                      {profile}
+                      savedProfile={configuration.settings.profiles.find(
+                        (p) => p.id === profile.id,
+                      )}
+                      keyChanged={profile.id in keys}
+                      revision={verificationVersion}
+                      {locale}
+                    />
                     {#if profile.provider === "system_dictionary"}
                       <div class="dictionary-note">
                         <span class="preference-symbol"
@@ -894,10 +1040,7 @@
                         <button
                           onclick={() =>
                             run(async () => {
-                              await invoke("test_connection", {
-                                profile: $state.snapshot(profile),
-                                keyOverride: null,
-                              });
+                              await testService(null);
                               message = t(
                                 "系统词典查询成功",
                                 "System dictionary lookup succeeded",
@@ -1033,10 +1176,7 @@
                         <button
                           onclick={() =>
                             run(async () => {
-                              await invoke("test_connection", {
-                                profile: $state.snapshot(profile),
-                                keyOverride: keyOverride(),
-                              });
+                              await testService(keyOverride());
                               message = t(
                                 "连接成功，服务已返回测试结果。",
                                 "Connected. The service returned a test result.",
@@ -1168,56 +1308,15 @@
                           </div>
                         </details>{/if}
                     {/if}
-                    {#if usesModel(profile.provider)}
-                      <section
-                        class="prompt-settings"
-                        aria-label={t("翻译提示词", "Translation prompt")}
-                      >
-                        <div class="section-heading">
-                          <h3>{t("翻译提示词", "Translation prompt")}</h3>
-                          <button
-                            type="button"
-                            disabled={!profile.custom_prompt}
-                            onclick={() => (profile.custom_prompt = "")}
-                            >{t("恢复默认", "Use default")}</button
-                          >
-                        </div>
-                        {#if !profile.custom_prompt?.trim()}<div
-                            class="prompt-mode-switch"
-                            aria-label={t(
-                              "默认提示词模式",
-                              "Default prompt mode",
-                            )}
-                          >
-                            <button
-                              type="button"
-                              aria-pressed={promptMode === "passage"}
-                              onclick={() => (promptMode = "passage")}
-                              >{t("段落模式", "Sentence mode")}</button
-                            ><button
-                              type="button"
-                              aria-pressed={promptMode === "word"}
-                              onclick={() => (promptMode = "word")}
-                              >{t("词典模式", "Dictionary mode")}</button
-                            >
-                          </div>{/if}
-                        <textarea
-                          class:default-prompt={!profile.custom_prompt?.trim()}
-                          aria-label={t("翻译提示词", "Translation prompt")}
-                          value={profile.custom_prompt?.trim()
-                            ? profile.custom_prompt
-                            : defaultPrompt}
-                          oninput={(e) =>
-                            (profile.custom_prompt = e.currentTarget.value)}
-                          spellcheck="false"
-                          rows="12"></textarea>
-                        <small class="subtle"
-                          >{t(
-                            "支持 {{target_lang}}；Yurelay 本地选择模式，并保留六字段生词协议。",
-                            "Supports {{target_lang}}. Yurelay selects the mode locally and preserves the six-field vocabulary protocol.",
-                          )}</small
-                        >
-                      </section>{/if}
+                    {#if usesModel(profile.provider)}<ServicePromptReferences
+                        {profile}
+                        {settings}
+                        {locale}
+                        defaultTranslation={defaultPrompt}
+                        defaultReply={replyPromptTemplate}
+                        onOpenPrompts={() => (nav = "prompts")}
+                        onChange={(field, value) => (profile[field] = value)}
+                      />{/if}
                     <div class="service-secondary-actions">
                       {#if profile.provider !== "system_dictionary"}<button
                           onclick={() => (keys[selected] = null)}
@@ -1231,6 +1330,15 @@
                   </fieldset>
                 </div>
               </div>
+            {:else if nav === "prompts"}
+              <PromptSettings
+                bind:settings
+                {locale}
+                defaultTranslation={defaultPrompt}
+                defaultReply={replyPromptTemplate}
+                replyLoading={replyPromptLoading}
+                replyError={replyPromptError}
+              />
             {:else if nav === "vocabulary"}
               <VocabularyPanel {locale} />
             {:else if nav === "history"}

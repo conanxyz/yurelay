@@ -1,3 +1,6 @@
+mod operations;
+mod source_workflow;
+
 use crate::{
     config::{Profile, Retention, Settings},
     provider::{self, TranslationClient},
@@ -26,6 +29,11 @@ pub trait LocalDictionary: Send + Sync + 'static {
     fn lookup(&self, text: &str) -> Result<String, String>;
 }
 type Secret = Arc<Zeroizing<String>>;
+pub(crate) struct DispatchProfile {
+    pub profile: Profile,
+    pub key: Secret,
+    pub credential_error: Option<String>,
+}
 
 fn query_profile<'a>(
     settings: &'a Settings,
@@ -47,6 +55,20 @@ struct LiveConfig {
     errors: BTreeMap<String, String>,
 }
 
+fn dispatch_ready(live: &LiveConfig, profile: &Profile, generation: bool) -> bool {
+    profile.provider != crate::config::Provider::SystemDictionary
+        && (!generation || crate::reliability::supports_generation(profile))
+        && profile.validate().is_ok()
+        && !live.errors.contains_key(&profile.id)
+        && provider::configured_credentials(
+            profile,
+            live.keys
+                .get(&profile.id)
+                .map(|key| key.as_str())
+                .unwrap_or(""),
+        )
+}
+
 #[derive(Clone, Serialize)]
 pub struct Configuration {
     pub settings: Settings,
@@ -59,6 +81,7 @@ pub struct CaptureHandle {
     key: Secret,
     credential_error: Option<String>,
     weight: u32,
+    preserve_structure: bool,
 }
 
 #[derive(Default)]
@@ -105,6 +128,39 @@ impl ImagePool {
     }
 }
 
+fn image_cache_entries(task: &Task) -> Vec<(&str, String)> {
+    let mut entries: Vec<_> = task
+        .source_segments
+        .iter()
+        .filter_map(|segment| segment.asset_id.as_deref())
+        .map(|asset| {
+            let key = if asset == task.id {
+                task.id.clone()
+            } else {
+                format!("{}--{asset}", task.id)
+            };
+            (asset, key)
+        })
+        .collect();
+    if entries.is_empty() && task.has_image {
+        entries.push((&task.id, task.id.clone()));
+    }
+    entries
+}
+
+fn protected_image_keys(tasks: &[Task]) -> HashSet<String> {
+    tasks
+        .iter()
+        .filter(|task| !task.status.is_terminal())
+        .flat_map(|task| {
+            // The first PNG may arrive after this snapshot, before its source
+            // segment/has_image fields are set. Reserve its legacy key as well.
+            std::iter::once(task.id.clone())
+                .chain(image_cache_entries(task).into_iter().map(|(_, key)| key))
+        })
+        .collect()
+}
+
 struct PendingSensitive {
     text: Zeroizing<String>,
     languages: Option<(Option<String>, String)>,
@@ -117,8 +173,11 @@ fn fingerprint(text: &str) -> String {
 }
 
 pub struct Engine {
+    source_pending: Mutex<HashMap<String, source_workflow::PendingSource>>,
+    pub operations: crate::operations::OperationHub,
     sensitive_guard: AtomicBool,
     auto_vocabulary: AtomicBool,
+    auto_clean: AtomicBool,
     pending_sensitive: Mutex<HashMap<String, PendingSensitive>>,
     approved_sensitive: Mutex<HashMap<String, String>>,
     pending_images: Mutex<HashMap<String, Vec<u8>>>,
@@ -133,6 +192,8 @@ pub struct Engine {
     images: Mutex<ImagePool>,
     mutations: tokio::sync::Mutex<()>,
     permits: Arc<Semaphore>,
+    metadata_permits: Arc<Semaphore>,
+    verification_blocks: Mutex<HashSet<String>>,
     wake: Arc<Notify>,
     closing: AtomicBool,
 }
@@ -180,8 +241,11 @@ impl Engine {
         let book = TaskBook::new(settings.retention, 12);
         book.restore(storage.history(20, 0).await?, clock());
         let engine = Arc::new(Self {
+            source_pending: Mutex::new(HashMap::new()),
+            operations: crate::operations::OperationHub::default(),
             sensitive_guard: AtomicBool::new(settings.sensitive_guard),
             auto_vocabulary: AtomicBool::new(settings.auto_vocabulary),
+            auto_clean: AtomicBool::new(settings.auto_clean),
             pending_sensitive: Mutex::new(HashMap::new()),
             approved_sensitive: Mutex::new(HashMap::new()),
             pending_images: Mutex::new(HashMap::new()),
@@ -201,6 +265,8 @@ impl Engine {
             images: Mutex::new(ImagePool::default()),
             mutations: tokio::sync::Mutex::new(()),
             permits: Arc::new(Semaphore::new(2)),
+            metadata_permits: Arc::new(Semaphore::new(1)),
+            verification_blocks: Mutex::new(HashSet::new()),
             wake: Arc::new(Notify::new()),
             closing: AtomicBool::new(false),
         });
@@ -281,14 +347,15 @@ impl Engine {
         source: Source,
         profile_id: Option<&str>,
     ) -> Result<CaptureHandle, String> {
-        self.cancel_vocabulary_jobs();
         let _guard = self.mutations.lock().await;
         if self.closing.load(Ordering::Relaxed) {
             return Err("应用正在退出。".into());
         }
         self.trim();
         let live = self.live.read().await;
-        let profile = query_profile(&live.settings, profile_id)?.clone();
+        let profile = live
+            .settings
+            .resolved_profile(query_profile(&live.settings, profile_id)?);
         let key = live
             .keys
             .get(&profile.id)
@@ -314,6 +381,7 @@ impl Engine {
             key,
             credential_error,
             weight,
+            preserve_structure: live.settings.preserve_structure,
         })
     }
 
@@ -362,12 +430,17 @@ impl Engine {
             .recognized(&handle.id, text, elapsed_ms, (self.clock)())
         {
             Ok(Some(task)) => {
+                let task = self
+                    .book
+                    .set_structure(&task.id, handle.preserve_structure, self.now())
+                    .unwrap_or(task);
                 let image = self.pending_images.lock().unwrap().remove(&task.id);
                 if let Some(bytes) = image {
                     self.accept_image(&task.id, bytes)
                 }
                 if task.source != Source::Manual {
                     self.book.ready(&task.id, detected, (self.clock)());
+                    self.source_auto_clean_capture(&task.id);
                     self.persist_later(task.id);
                     return;
                 }
@@ -639,158 +712,257 @@ impl Engine {
             self.persist(&task.id).await;
             return;
         }
-        let queue_start = tokio::time::Instant::now();
-        let permit = tokio::select! { biased; _ = cancel.cancelled() => return, permit = self.permits.clone().acquire_many_owned(weight) => permit };
-        let Ok(acquired) = permit else {
-            return;
+        let sensitive = self
+            .approved_sensitive
+            .lock()
+            .unwrap()
+            .contains_key(&task.id)
+            || crate::sensitive::detect(task.query_text()).is_some();
+        let mut profiles = self
+            .dispatch_profiles(&task.profile, sensitive, false)
+            .await
+            .into_iter();
+        let _ = profiles.next(); // The initial key was captured with the submitted request.
+        let mut profile = DispatchProfile {
+            profile: task.profile.clone(),
+            key,
+            credential_error: None,
         };
-        if self.guard_text(
-            &task.id,
-            task.query_text(),
-            Some((task.source_language.clone(), task.target_language.clone())),
-            task.detected_language.clone(),
-            &task.profile,
-        ) {
-            return;
-        }
-        if self
-            .book
-            .start(
+        let mut task = task.clone();
+        let extract_requested = task.extract_vocabulary;
+        let mut budget = crate::reliability::DispatchBudget::default();
+        let mut attempt_count = 0;
+        let queue_start = tokio::time::Instant::now();
+        let acquired = tokio::select! {biased;_=cancel.cancelled()=>return,permit=tokio::time::timeout_at(budget.deadline,self.permits.clone().acquire_many_owned(weight))=>match permit {Ok(Ok(permit))=>permit,_=>{self.book.fail(&task.id,task.attempt,provider::Error::Timeout.to_string(),self.now());self.persist(&task.id).await;return;}}};
+        let mut permit = Some(acquired);
+        loop {
+            if cancel.is_cancelled() {
+                break;
+            }
+            if !budget.begin(&profile.profile.id) {
+                self.book.fail(
+                    &task.id,
+                    task.attempt,
+                    provider::Error::Timeout.to_string(),
+                    self.now(),
+                );
+                break;
+            }
+            let Some(updated) = self
+                .book
+                .set_extraction(&task.id, extract_requested, self.now())
+            else {
+                break;
+            };
+            task = updated;
+            attempt_count += 1;
+            if self.guard_text(
+                &task.id,
+                task.query_text(),
+                Some((task.source_language.clone(), task.target_language.clone())),
+                task.detected_language.clone(),
+                &profile.profile,
+            ) {
+                break;
+            }
+            if self
+                .book
+                .start(
+                    &task.id,
+                    task.attempt,
+                    queue_start.elapsed().as_millis() as u64,
+                    self.now(),
+                )
+                .is_none()
+            {
+                break;
+            }
+            let append = |text: &str, ms| match self.book.append(
                 &task.id,
                 task.attempt,
-                queue_start.elapsed().as_millis() as u64,
-                (self.clock)(),
-            )
-            .is_none()
-        {
-            return;
-        }
-        let mut permit = Some(acquired);
-        let append = |text: &str, ms| match self.book.append(
-            &task.id,
-            task.attempt,
-            text,
-            ms,
-            (self.clock)(),
-        ) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(provider::Error::Cancelled),
-            Err(error) => Err(provider::Error::Protocol(error)),
-        };
-        let mut parser = crate::vocabulary::StreamParser::for_source(task.query_text());
-        let parse_output = task.extract_vocabulary
-            && !local_dictionary
-            && task.profile.provider != crate::config::Provider::Youdao;
-        let on_text = |text: &str, ms| {
-            let before = parser.has_metadata();
-            let visible = if parse_output {
-                parser.push(text)
-            } else {
-                text.to_string()
+                text,
+                ms,
+                self.now(),
+            ) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(provider::Error::Cancelled),
+                Err(error) => Err(provider::Error::Protocol(error)),
             };
-            if !before && parser.has_metadata() {
-                match self
-                    .book
-                    .translation_done(&task.id, task.attempt, &visible, ms, self.now())
-                {
-                    Ok(true) => {
-                        self.persist_later(task.id.clone());
-                        drop(permit.take());
+            let mut parser = crate::vocabulary::StreamParser::for_source(task.query_text());
+            let parse_output = task.extract_vocabulary
+                && profile.profile.provider != crate::config::Provider::SystemDictionary
+                && profile.profile.provider != crate::config::Provider::Youdao;
+            let mut primary_seen = false;
+            let mut metadata_permit = None;
+            let on_text = |text: &str, ms| {
+                let before = parser.has_metadata();
+                let visible = if parse_output {
+                    parser.push(text)
+                } else {
+                    text.to_string()
+                };
+                primary_seen |= !visible.is_empty();
+                if !before && parser.has_metadata() {
+                    match self.book.translation_done(
+                        &task.id,
+                        task.attempt,
+                        &visible,
+                        ms,
+                        self.now(),
+                    ) {
+                        Ok(true) => {
+                            self.persist_later(task.id.clone());
+                            drop(permit.take());
+                        }
+                        Ok(false) => return Err(provider::Error::Cancelled),
+                        Err(error) => return Err(provider::Error::Protocol(error)),
                     }
-                    Ok(false) => return Err(provider::Error::Cancelled),
-                    Err(error) => return Err(provider::Error::Protocol(error)),
-                }
-                if !task.extract_vocabulary {
-                    return Err(provider::Error::Cancelled);
-                }
-                Ok(())
-            } else if visible.is_empty() {
-                Ok(())
-            } else {
-                append(&visible, ms)
-            }
-        };
-        let result = if local_dictionary {
-            self.lookup_dictionary(task.query_text(), cancel, on_text)
-                .await
-        } else {
-            self.client
-                .translate_policy(
-                    &task.profile,
-                    key.as_str(),
-                    task.query_text(),
-                    provider::TranslationOptions {
-                        target: &task.target_language,
-                        source: task.source_language.as_deref(),
-                        extract_vocabulary: task.extract_vocabulary,
-                    },
-                    cancel,
-                    on_text,
-                )
-                .await
-        };
-        match result {
-            Ok(metrics) => {
-                if parse_output {
-                    let (tail, items, notice) = parser.finish(
-                        task.query_text(),
-                        &self
-                            .book
-                            .get(&task.id)
-                            .map(|t| t.translation)
-                            .unwrap_or_default(),
-                    );
-                    if !tail.is_empty() {
-                        let _ = append(&tail, metrics.total_ms);
+                    metadata_permit = self.metadata_permits.clone().try_acquire_owned().ok();
+                    if metadata_permit.is_none() {
+                        return Err(provider::Error::Cancelled);
                     }
-                    if task.extract_vocabulary {
+                    Ok(())
+                } else if visible.is_empty() {
+                    Ok(())
+                } else {
+                    append(&visible, ms)
+                }
+            };
+            let network = async {
+                if profile.profile.provider == crate::config::Provider::SystemDictionary {
+                    self.lookup_dictionary(task.query_text(), cancel.clone(), on_text)
+                        .await
+                } else {
+                    self.client
+                        .translate_structured(
+                            &profile.profile,
+                            profile.key.as_str(),
+                            task.query_text(),
+                            provider::StructuredTranslationOptions {
+                                translation: provider::TranslationOptions {
+                                    target: &task.target_language,
+                                    source: task.source_language.as_deref(),
+                                    extract_vocabulary: task.extract_vocabulary,
+                                },
+                                preserve_structure: task.preserve_structure,
+                            },
+                            cancel.clone(),
+                            on_text,
+                        )
+                        .await
+                }
+            };
+            let result = tokio::select! {biased;_=cancel.cancelled()=>Err(provider::Error::Cancelled),result=tokio::time::timeout_at(budget.deadline,network)=>result.unwrap_or(Err(provider::Error::Timeout))};
+            drop(metadata_permit);
+            match result {
+                Ok(metrics) => {
+                    if parse_output {
+                        let (tail, items, notice) = parser.finish(
+                            task.query_text(),
+                            &self
+                                .book
+                                .get(&task.id)
+                                .map(|t| t.translation)
+                                .unwrap_or_default(),
+                        );
+                        if !tail.is_empty() {
+                            let _ = append(&tail, metrics.total_ms);
+                        }
                         self.book
                             .set_vocabulary(&task.id, task.attempt, items, notice, self.now());
                     }
+                    if self
+                        .book
+                        .get(&task.id)
+                        .is_some_and(|t| t.translation.trim().is_empty())
+                    {
+                        self.book.fail(
+                            &task.id,
+                            task.attempt,
+                            provider::Error::Empty.to_string(),
+                            self.now(),
+                        );
+                    } else {
+                        self.book
+                            .finish(&task.id, task.attempt, metrics.total_ms, self.now());
+                    }
                 }
-                if self
-                    .book
-                    .get(&task.id)
-                    .is_some_and(|t| t.translation.trim().is_empty())
-                {
-                    self.book.fail(
-                        &task.id,
-                        task.attempt,
-                        provider::Error::Empty.to_string(),
-                        self.now(),
-                    );
-                } else {
-                    self.book
-                        .finish(&task.id, task.attempt, metrics.total_ms, (self.clock)());
-                }
-            }
-            Err(provider::Error::Cancelled) => {
-                self.book.finish_vocabulary(
-                    &task.id,
-                    task.attempt,
-                    VocabularyState::Cancelled,
-                    None,
-                    self.now(),
-                );
-            }
-            Err(error) => {
-                if self
-                    .book
-                    .get(&task.id)
-                    .is_some_and(|t| t.attempt == task.attempt && t.status == Status::Completed)
-                {
+                Err(provider::Error::Cancelled) => {
                     self.book.finish_vocabulary(
                         &task.id,
                         task.attempt,
-                        VocabularyState::Failed,
-                        Some("生词提炼未完成，译文已保存。".into()),
+                        VocabularyState::Cancelled,
+                        None,
                         self.now(),
                     );
-                } else {
-                    self.book
-                        .fail(&task.id, task.attempt, error.to_string(), self.now());
+                }
+                Err(error) => {
+                    let metadata = parser.has_metadata()
+                        || self.book.get(&task.id).is_some_and(|t| {
+                            t.attempt == task.attempt && t.status == Status::Completed
+                        });
+                    if metadata {
+                        self.book.finish_vocabulary(
+                            &task.id,
+                            task.attempt,
+                            VocabularyState::Failed,
+                            Some("生词提炼未完成，译文已保存。".into()),
+                            self.now(),
+                        );
+                    } else {
+                        self.book.set_failure(
+                            &task.id,
+                            task.attempt,
+                            crate::reliability::FailureSummary::from_error(&error),
+                            self.now(),
+                        );
+                        self.invalidate_service_failure(&profile.profile, &error)
+                            .await;
+                        if crate::reliability::permits_fallback(
+                            &error,
+                            primary_seen,
+                            cancel.is_cancelled(),
+                            sensitive,
+                        ) {
+                            for next in profiles.by_ref() {
+                                if !self.dispatch_profile_eligible(&next.profile, false).await {
+                                    continue;
+                                }
+                                if cancel.is_cancelled()
+                                    || tokio::time::Instant::now() >= budget.deadline
+                                {
+                                    break;
+                                }
+                                // Max three includes the initial attempt. No empty attempt
+                                // is added to history when the budget is exhausted.
+                                if attempt_count >= crate::reliability::MAX_ATTEMPTS {
+                                    break;
+                                }
+                                if let Some(next_task) = self.book.failover(
+                                    &task.id,
+                                    task.attempt,
+                                    next.profile.clone(),
+                                    error.to_string(),
+                                    self.now(),
+                                ) {
+                                    task = next_task;
+                                    profile = next;
+                                    self.persist(&task.id).await;
+                                    break;
+                                }
+                            }
+                            if self.book.get(&task.id).is_some_and(|t| {
+                                t.attempt == task.attempt && t.status == Status::Queued
+                            }) {
+                                continue;
+                            }
+                        }
+                        self.book
+                            .fail(&task.id, task.attempt, error.to_string(), self.now());
+                    }
                 }
             }
+            break;
         }
         drop(permit);
         self.persist(&task.id).await;
@@ -873,7 +1045,7 @@ impl Engine {
                 return Err("无效的语言代码。".into());
             }
         }
-        self.cancel_vocabulary_jobs();
+        self.cancel_vocabulary_for(id);
         let _guard = self.mutations.lock().await;
         self.load_into_book(id).await?;
         let old = self.book.get(id).ok_or("记录已删除或到期。")?;
@@ -881,13 +1053,15 @@ impl Engine {
             return Err("请先确认或清空敏感内容。".into());
         }
         let live = self.live.read().await;
-        let current = query_profile(&live.settings, profile_id)?;
+        let current = live
+            .settings
+            .resolved_profile(query_profile(&live.settings, profile_id)?);
         if self.guard_text(
             id,
             edited.as_deref().unwrap_or_else(|| old.query_text()),
             languages.clone(),
             detected.clone(),
-            current,
+            &current,
         ) {
             return Ok(());
         }
@@ -943,20 +1117,25 @@ impl Engine {
                 ),
             task.query_text(),
         );
+        self.book
+            .set_extraction(id, enabled, self.now())
+            .ok_or("此任务已不在等待队列。")?;
         let task = self
             .book
-            .set_extraction(id, enabled, self.now())
+            .set_structure(id, live.settings.preserve_structure, self.now())
             .ok_or("此任务已不在等待队列。")?;
         self.persist_later(id.into());
         self.schedule(task, key, error, weight);
         Ok(())
     }
 
-    fn cancel_vocabulary_jobs(self: &Arc<Self>) {
-        for task in self.book.snapshot().tasks {
-            if task.vocabulary_state == VocabularyState::Extracting {
-                self.stop(&task.id);
-            }
+    pub(crate) fn cancel_vocabulary_for(self: &Arc<Self>, id: &str) {
+        if self
+            .book
+            .get(id)
+            .is_some_and(|task| task.vocabulary_state == VocabularyState::Extracting)
+        {
+            self.stop(id);
         }
     }
 
@@ -979,6 +1158,8 @@ impl Engine {
 
     pub async fn remove(&self, id: &str) -> Result<(), String> {
         let _guard = self.mutations.lock().await;
+        self.source_forget(id);
+        self.operations.remove_for_task(id);
         if let Some((_, token)) = self.jobs.lock().unwrap().remove(id) {
             token.cancel();
         }
@@ -992,6 +1173,15 @@ impl Engine {
 
     pub async fn clear(&self) -> Result<(), String> {
         let _guard = self.mutations.lock().await;
+        self.source_forget_all();
+        let operation_ids = self
+            .operations
+            .records(None, self.now())
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        self.operations.clear();
+        self.storage.clear_operations(operation_ids).await?;
         let ids: Vec<_> = self
             .book
             .snapshot()
@@ -1022,6 +1212,8 @@ impl Engine {
             .collect();
         ids.extend(self.storage.cleanup().await?);
         for id in ids {
+            self.source_forget(&id);
+            self.operations.remove_for_task(&id);
             self.pending_sensitive.lock().unwrap().remove(&id);
             self.approved_sensitive.lock().unwrap().remove(&id);
             self.pending_images.lock().unwrap().remove(&id);
@@ -1031,7 +1223,7 @@ impl Engine {
                 token.cancel();
             }
         }
-        Ok(())
+        self.cleanup_operations().await
     }
 
     pub async fn image(&self, id: &str) -> Result<Option<Arc<Vec<u8>>>, String> {
@@ -1122,20 +1314,15 @@ impl Engine {
         if task.save_state == SaveState::MemoryOnly {
             return Err("这条结果仅保留在本次会话。".into());
         }
-        let data = self.images.lock().unwrap().data.get(id).cloned();
-        if task.image_error.is_some() && data.is_none() {
-            return Err("原始截图已不在内存中，请重新截图。".into());
-        }
-        if let Some(data) = data {
-            self.storage.save_image(id.into(), data).await?;
-            self.book.image_error(id, None, (self.clock)());
-        }
+        self.source_retry_assets(&task).await?;
+        self.book.image_error(id, None, (self.clock)());
         self.persist(id).await;
         Ok(())
     }
 
     fn trim(&self) {
         for task in self.book.trim() {
+            self.source_forget(&task.id);
             self.images.lock().unwrap().remove(&task.id);
             self.pending_sensitive.lock().unwrap().remove(&task.id);
             self.approved_sensitive.lock().unwrap().remove(&task.id);
@@ -1160,6 +1347,114 @@ impl Engine {
             .map_err(|e| e.to_string())
     }
 
+    pub async fn service_verifications(
+        &self,
+    ) -> Result<Vec<crate::reliability::VerificationStatus>, String> {
+        let live = self.live.read().await;
+        let (generations, receipts) = self.storage.service_verification_data().await?;
+        Ok(live
+            .settings
+            .profiles
+            .iter()
+            .map(|profile| {
+                let mut status = crate::reliability::VerificationStatus::for_profile(
+                    profile,
+                    generations
+                        .get(&profile.id)
+                        .map(String::as_str)
+                        .unwrap_or(""),
+                    receipts.get(&profile.id),
+                    self.now(),
+                );
+                if live.errors.contains_key(&profile.id)
+                    || generations.get(&profile.id).is_some_and(|generation| {
+                        self.verification_blocks.lock().unwrap().contains(
+                            &crate::reliability::configuration_fingerprint(profile, generation),
+                        )
+                    })
+                {
+                    status.state = crate::reliability::VerificationState::Failed;
+                }
+                status
+            })
+            .collect())
+    }
+
+    /// Manual selection remains explicit. Enabling backup authorizes every
+    /// configured compatible service, in saved order; tests are status only.
+    pub(crate) async fn dispatch_profiles(
+        &self,
+        initial: &Profile,
+        sensitive: bool,
+        generation: bool,
+    ) -> Vec<DispatchProfile> {
+        let live = self.live.read().await;
+        let entry = |profile: Profile| DispatchProfile {
+            key: live
+                .keys
+                .get(&profile.id)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(Zeroizing::new(String::new()))),
+            credential_error: live.errors.get(&profile.id).cloned(),
+            profile,
+        };
+        let mut profiles = vec![entry(initial.clone())];
+        if !live.settings.failover.enabled || sensitive {
+            return profiles;
+        }
+        for profile in &live.settings.profiles {
+            if profile.id == initial.id || !dispatch_ready(&live, profile, generation) {
+                continue;
+            }
+            profiles.push(entry(live.settings.resolved_profile(profile)));
+        }
+        profiles
+    }
+
+    pub(crate) async fn dispatch_profile_eligible(
+        &self,
+        profile: &Profile,
+        generation: bool,
+    ) -> bool {
+        let live = self.live.read().await;
+        live.settings.failover.enabled
+            && live.settings.profiles.iter().any(|saved| {
+                live.settings.resolved_profile(saved) == *profile
+                    && dispatch_ready(&live, saved, generation)
+            })
+    }
+
+    pub(crate) async fn invalidate_service_failure(
+        &self,
+        profile: &Profile,
+        error: &provider::Error,
+    ) {
+        if !crate::reliability::FailureSummary::from_error(error).invalidates_verification() {
+            return;
+        }
+        let _guard = self.mutations.lock().await;
+        let live = self.live.read().await;
+        let Some(saved) = live
+            .settings
+            .profiles
+            .iter()
+            .find(|p| live.settings.resolved_profile(p) == *profile)
+        else {
+            return;
+        };
+        if let Ok((generations, _)) = self.storage.service_verification_data().await
+            && let Some(generation) = generations.get(&profile.id)
+        {
+            let receipt =
+                crate::reliability::ServiceVerification::new(saved, generation, self.now(), false);
+            self.verification_blocks
+                .lock()
+                .unwrap()
+                .insert(receipt.configuration_fingerprint.clone());
+            let _ = self.storage.save_service_verification(receipt).await;
+        }
+    }
+
     pub async fn test_connection(
         &self,
         profile: Profile,
@@ -1172,14 +1467,30 @@ impl Engine {
                 .map_err(|e| e.to_string());
         }
         let live = self.live.read().await;
+        let saved = override_key.is_none() && live.settings.profiles.iter().any(|p| p == &profile);
+        if saved && let Some(error) = live.errors.get(&profile.id) {
+            return Err(error.clone());
+        }
         let key = override_key
             .map(|v| Arc::new(Zeroizing::new(v)))
             .or_else(|| live.keys.get(&profile.id).cloned())
             .unwrap_or_else(|| Arc::new(Zeroizing::new(String::new())));
+        let request_profile = live.settings.resolved_profile(&profile);
+        let generation = if saved {
+            self.storage
+                .service_verification_data()
+                .await?
+                .0
+                .get(&profile.id)
+                .cloned()
+        } else {
+            None
+        };
         drop(live);
-        self.client
+        let result = self
+            .client
             .translate_policy(
-                &profile,
+                &request_profile,
                 key.as_str(),
                 "This is a connection test.",
                 provider::TranslationOptions {
@@ -1190,8 +1501,39 @@ impl Engine {
                 CancellationToken::new(),
                 |_, _| Ok(()),
             )
-            .await
-            .map_err(|e| e.to_string())
+            .await;
+        if let Some(generation) = generation {
+            let _guard = self.mutations.lock().await;
+            let live = self.live.read().await;
+            // Reject late results after edits, deletion, failed key rollback or
+            // a subsequent key replacement, even if the form looks identical.
+            if live.settings.profiles.iter().any(|p| p == &profile)
+                && !live.errors.contains_key(&profile.id)
+                && live.keys.get(&profile.id).map(|k| k.as_str()).unwrap_or("") == key.as_str()
+            {
+                let receipt = crate::reliability::ServiceVerification::new(
+                    &profile,
+                    &generation,
+                    self.now(),
+                    result.is_ok(),
+                );
+                let fingerprint = receipt.configuration_fingerprint.clone();
+                if result.is_err() {
+                    self.verification_blocks
+                        .lock()
+                        .unwrap()
+                        .insert(fingerprint.clone());
+                }
+                self.storage.save_service_verification(receipt).await?;
+                if result.is_ok() {
+                    self.verification_blocks
+                        .lock()
+                        .unwrap()
+                        .remove(&fingerprint);
+                }
+            }
+        }
+        result.map_err(|e| e.to_string())
     }
 
     async fn lookup_dictionary(
@@ -1281,8 +1623,19 @@ impl Engine {
         for profile in &mut settings.profiles {
             if let Some(old) = live.settings.profiles.iter().find(|p| p.id == profile.id) {
                 profile.revision = old.revision;
-                if profile != old || changed.contains_key(&profile.id) {
-                    profile.revision = old.revision.saturating_add(1);
+                let inherited_translation_changed = profile.custom_prompt.trim().is_empty()
+                    && settings.translation_prompt != live.settings.translation_prompt;
+                let inherited_reply_changed = profile.custom_reply_prompt.trim().is_empty()
+                    && settings.reply_prompt != live.settings.reply_prompt;
+                if profile != old
+                    || changed.contains_key(&profile.id)
+                    || inherited_translation_changed
+                    || inherited_reply_changed
+                {
+                    profile.revision = old
+                        .revision
+                        .checked_add(1)
+                        .ok_or("服务配置版本已达上限，请新建服务。")?;
                 }
             } else {
                 profile.revision = 1;
@@ -1300,7 +1653,7 @@ impl Engine {
         let vault = self.credentials.clone();
         let changes = changed.clone();
         let backup = rollback.clone();
-        tokio::task::spawn_blocking(move || {
+        let key_result = tokio::task::spawn_blocking(move || {
             let mut written: Vec<String> = vec![];
             for (id, value) in &changes {
                 if let Err(error) = vault.write(id, value.as_deref()) {
@@ -1323,26 +1676,41 @@ impl Engine {
             Ok(())
         })
         .await
-        .map_err(|_| "系统凭据操作失败。")??;
+        .map_err(|_| "系统凭据操作失败。".to_string())
+        .and_then(|result| result);
+        if let Err(error) = key_result {
+            // Fail closed after a failed Keychain transaction. Its final state
+            // may not be known, so neither tests nor fallback may trust it.
+            for id in changed.keys() {
+                live.errors.insert(
+                    id.clone(),
+                    "系统凭据更新未完成，请解锁钥匙串并重新启动后检查。".into(),
+                );
+            }
+            return Err(error);
+        }
         if settings.retention == Retention::Disabled
             && live.settings.retention != Retention::Disabled
         {
             // Preserve currently loaded screenshots in the bounded session pool
             // before removing their disk copies. Older entries may be evicted.
             let tasks = self.book.snapshot().tasks;
-            let protected: HashSet<_> = tasks
-                .iter()
-                .filter(|t| !t.status.is_terminal())
-                .map(|t| t.id.clone())
-                .collect();
+            let protected = protected_image_keys(&tasks);
             for task in tasks.iter().rev().filter(|t| t.has_image) {
-                let present = self.images.lock().unwrap().data.contains_key(&task.id);
-                if !present && let Ok(Some(data)) = self.storage.image(task.id.clone()).await {
-                    let _ = self.images.lock().unwrap().insert(
-                        task.id.clone(),
-                        Arc::new(data),
-                        &protected,
-                    );
+                for (asset, key) in image_cache_entries(task) {
+                    let present = self.images.lock().unwrap().data.contains_key(&key);
+                    if !present
+                        && let Ok(Some(data)) = self
+                            .storage
+                            .source_asset(task.id.clone(), asset.into())
+                            .await
+                    {
+                        let _ = self
+                            .images
+                            .lock()
+                            .unwrap()
+                            .insert(key, Arc::new(data), &protected);
+                    }
                 }
             }
         }
@@ -1364,6 +1732,14 @@ impl Engine {
             })
             .await
             .unwrap_or(false);
+            if !restored {
+                for id in changed.keys() {
+                    live.errors.insert(
+                        id.clone(),
+                        "设置保存和密钥回滚未完成，请检查系统钥匙串后重启。".into(),
+                    );
+                }
+            }
             return Err(if restored {
                 error
             } else {
@@ -1379,18 +1755,52 @@ impl Engine {
             }
             live.errors.remove(&id);
         }
+        if let Ok((generations, _)) = self.storage.service_verification_data().await {
+            let current: HashSet<_> = settings
+                .profiles
+                .iter()
+                .filter_map(|profile| {
+                    generations.get(&profile.id).map(|generation| {
+                        crate::reliability::configuration_fingerprint(profile, generation)
+                    })
+                })
+                .collect();
+            self.verification_blocks
+                .lock()
+                .unwrap()
+                .retain(|fingerprint| current.contains(fingerprint));
+        }
         let retention_changed = live.settings.retention != settings.retention;
         self.sensitive_guard
             .store(settings.sensitive_guard, Ordering::Relaxed);
         self.auto_vocabulary
             .store(settings.auto_vocabulary, Ordering::Relaxed);
+        self.auto_clean
+            .store(settings.auto_clean, Ordering::Relaxed);
         live.settings = settings;
         if retention_changed {
+            if live.settings.retention == Retention::Disabled {
+                let records = self.operations.records(None, self.now());
+                for record in &records {
+                    self.operations.cancel(&record.id, self.now());
+                }
+                self.operations.clear();
+                self.storage
+                    .clear_operations(records.into_iter().map(|r| r.id).collect())
+                    .await?;
+            }
             let affected = self
                 .book
                 .reconfigure_retention(live.settings.retention, (self.clock)());
             for task in affected {
+                let missing_image = {
+                    let images = self.images.lock().unwrap();
+                    image_cache_entries(&task)
+                        .iter()
+                        .any(|(_, key)| !images.data.contains_key(key))
+                };
                 if task.expired((self.clock)()) {
+                    self.source_forget(&task.id);
                     self.images.lock().unwrap().remove(&task.id);
                     self.pending_sensitive.lock().unwrap().remove(&task.id);
                     self.approved_sensitive.lock().unwrap().remove(&task.id);
@@ -1401,8 +1811,10 @@ impl Engine {
                 } else if live.settings.retention == Retention::Disabled
                     && task.has_image
                     && task.status.is_terminal()
-                    && !self.images.lock().unwrap().data.contains_key(&task.id)
+                    && missing_image
                 {
+                    self.source_forget(&task.id);
+                    self.images.lock().unwrap().remove(&task.id);
                     self.book.remove(&task.id);
                 }
             }
@@ -1410,11 +1822,20 @@ impl Engine {
         drop(live);
         self.wake.notify_one();
         self.trim();
+        self.cleanup_operations().await?;
         Ok(self.configuration().await)
     }
 
     pub async fn shutdown(&self) {
         self.closing.store(true, Ordering::Relaxed);
+        self.source_forget_all();
+        for operation in self.operations.records(None, self.now()) {
+            if operation.status.active()
+                || operation.status == crate::operations::OperationStatus::Blocked
+            {
+                let _ = self.cancel_operation(&operation.id).await;
+            }
+        }
         self.pending_sensitive.lock().unwrap().clear();
         self.approved_sensitive.lock().unwrap().clear();
         self.pending_images.lock().unwrap().clear();
@@ -2709,5 +3130,38 @@ mod tests {
         assert!(task.vocabulary.is_empty());
         server.await.unwrap();
         engine.shutdown().await;
+    }
+}
+
+#[cfg(test)]
+#[path = "engine/reliability_tests.rs"]
+mod reliability_tests;
+
+#[cfg(test)]
+mod image_retention_tests {
+    use super::*;
+
+    #[test]
+    fn late_captured_image_is_protected_while_history_images_are_preloaded() {
+        let book = TaskBook::new(Retention::Days(7), 12);
+        let capturing = book
+            .create(Source::Screenshot, Profile::default(), "zh-Hans".into(), 0)
+            .unwrap();
+        assert!(!capturing.has_image);
+        assert!(capturing.source_segments.is_empty());
+        let protected = protected_image_keys(&book.snapshot().tasks);
+        let mut pool = ImagePool::default();
+        // A capture callback can arrive after the protected set is captured,
+        // while disabling history is awaiting older images from disk.
+        pool.insert(capturing.id.clone(), Arc::new(vec![0]), &protected)
+            .unwrap();
+        let large = Arc::new(vec![0; 16 * 1024 * 1024]);
+        pool.insert("older-saved-image".into(), large.clone(), &protected)
+            .unwrap();
+        pool.insert("newer-saved-image".into(), large, &protected)
+            .unwrap();
+        assert!(pool.data.contains_key(&capturing.id));
+        assert!(!pool.data.contains_key("older-saved-image"));
+        assert!(pool.bytes <= 32 * 1024 * 1024);
     }
 }

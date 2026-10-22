@@ -156,6 +156,16 @@ pub fn start_capture(app: AppHandle, screenshot: bool) {
 }
 
 pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: Option<i32>) {
+    let append_target = app.state::<AppState>().captures.append_target();
+    if let Some(target) = append_target {
+        crate::source_commands::start_capture_target(
+            app,
+            screenshot,
+            selection_target,
+            Some(target),
+        );
+        return;
+    }
     let selection_target = if screenshot {
         selection_target
     } else {
@@ -244,6 +254,9 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                         }
                     }
                     NativeEvent::Image(bytes) => engine.accept_image(&handle.id, bytes),
+                    NativeEvent::Layout(layout) => {
+                        crate::source_commands::accept_ocr_layout(&engine, &handle.id, layout)
+                    }
                     NativeEvent::OcrError(error) => engine.fail_capture(&handle.id, 1, error),
                     NativeEvent::ImageError(error) => engine.fail_image(&handle.id, error),
                     NativeEvent::Error(error) => {
@@ -392,13 +405,20 @@ pub async fn save_configuration(
     api_key_updates: BTreeMap<String, Option<String>>,
 ) -> Result<SavedConfiguration, String> {
     settings.validate()?;
-    state::parse_shortcuts(&settings.selection_shortcut, &settings.screenshot_shortcut)?;
+    state::parse_shortcuts(
+        &settings.selection_shortcut,
+        &settings.screenshot_shortcut,
+        settings.append_selection_shortcut.as_deref(),
+        settings.append_screenshot_shortcut.as_deref(),
+    )?;
     let engine = state::engine(&app).await?;
     let previous = engine.configuration().await.settings;
     let shortcuts = state::register_shortcuts(
         &app,
         &settings.selection_shortcut,
         &settings.screenshot_shortcut,
+        settings.append_selection_shortcut.as_deref(),
+        settings.append_screenshot_shortcut.as_deref(),
     );
     if !shortcuts.registered {
         return Err(shortcuts.error.unwrap_or("快捷键未生效。".into()));
@@ -410,6 +430,8 @@ pub async fn save_configuration(
                 &app,
                 &previous.selection_shortcut,
                 &previous.screenshot_shortcut,
+                previous.append_selection_shortcut.as_deref(),
+                previous.append_screenshot_shortcut.as_deref(),
             );
             return Err(error);
         }
@@ -429,6 +451,8 @@ pub async fn retry_shortcuts(app: AppHandle) -> Result<ShortcutReport, String> {
         &app,
         &config.settings.selection_shortcut,
         &config.settings.screenshot_shortcut,
+        config.settings.append_selection_shortcut.as_deref(),
+        config.settings.append_screenshot_shortcut.as_deref(),
     ))
 }
 
@@ -543,7 +567,7 @@ pub async fn search_history(
     query: String,
     source: String,
     offset: usize,
-) -> Result<Vec<Task>, String> {
+) -> Result<Vec<yurelay_core::storage::HistorySummary>, String> {
     let engine = state::engine(&app).await?;
     engine.cleanup().await?;
     engine.storage.search_history(query, source, offset).await
@@ -611,6 +635,8 @@ pub async fn end_recording(app: &AppHandle, epoch: Option<u64>) -> ShortcutRepor
                 app,
                 &settings.selection_shortcut,
                 &settings.screenshot_shortcut,
+                settings.append_selection_shortcut.as_deref(),
+                settings.append_screenshot_shortcut.as_deref(),
             )
         }
         Err(error) => ShortcutReport {
@@ -993,4 +1019,34 @@ pub async fn dictionary_guidance(
         return Err("原文为空或过长。".into());
     }
     Ok(state::engine(&app).await?.dictionary_guidance(&text).await)
+}
+
+#[tauri::command]
+pub async fn submit_operation(
+    app: AppHandle,
+    request: yurelay_core::operations::OperationRequest,
+) -> Result<yurelay_core::operations::OperationRecord, String> {
+    state::engine(&app).await?.submit_operation(request).await
+}
+#[tauri::command]
+pub async fn operation_list(
+    app: AppHandle,
+    task_id: Option<String>,
+) -> Result<Vec<yurelay_core::operations::OperationRecord>, String> {
+    state::engine(&app).await?.operation_list(task_id).await
+}
+#[tauri::command]
+pub async fn cancel_operation(app: AppHandle, id: String) -> Result<(), String> {
+    state::engine(&app).await?.cancel_operation(&id).await
+}
+#[tauri::command]
+pub async fn resolve_operation_sensitive(
+    app: AppHandle,
+    id: String,
+    allow: bool,
+) -> Result<yurelay_core::operations::OperationRecord, String> {
+    state::engine(&app)
+        .await?
+        .resolve_operation_sensitive(&id, allow)
+        .await
 }

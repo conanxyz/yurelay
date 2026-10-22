@@ -19,3 +19,8 @@ tokio.workspace = true
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-single-instance = "2"
+
+[[test]]
+name = "tray_threading"
+path = "tests/tray_threading.rs"
+harness = false
