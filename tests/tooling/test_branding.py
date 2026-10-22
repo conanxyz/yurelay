@@ -17,7 +17,11 @@ class BrandingTests(unittest.TestCase):
         self.assertEqual(config['identifier'], 'com.autodict.desktop')
         platform = (ROOT / 'crates/platform/src/lib.rs').read_text()
         services = re.findall(r'"(com\.[^"\n]+\.providers)"', platform)
-        self.assertEqual(services, ['com.autodict.desktop.providers'] * 3)
+        self.assertEqual(services, ['com.autodict.desktop.providers'])
+        self.assertRegex(platform, r'const CREDENTIAL_SERVICE: &str = "com\.autodict\.desktop\.providers";')
+        password_services = re.findall(r'(?:get|set|delete)_generic_password\(\s*([^,\s]+)', platform)
+        self.assertEqual(password_services, ['CREDENTIAL_SERVICE'] * 3)
+        self.assertIn('.service(CREDENTIAL_SERVICE)', platform)
 
     def test_release_archive_works_from_a_renamed_checkout(self):
         with tempfile.TemporaryDirectory() as temp:

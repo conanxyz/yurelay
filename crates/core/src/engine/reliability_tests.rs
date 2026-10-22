@@ -9,6 +9,9 @@ use tokio::{
 #[derive(Default)]
 struct Vault(Mutex<BTreeMap<String, String>>);
 impl Credentials for Vault {
+    fn exists(&self, id: &str) -> Result<bool, String> {
+        Ok(self.0.lock().unwrap().contains_key(id))
+    }
     fn read(&self, id: &str) -> Result<Option<String>, String> {
         Ok(self.0.lock().unwrap().get(id).cloned())
     }

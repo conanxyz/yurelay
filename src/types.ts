@@ -104,7 +104,13 @@ export type Task = {
   image_error: string | null;
   cache_hit: boolean;
   timings: { first_content_ms: number | null; total_ms: number | null };
-  past_attempts: { number: number; translation: string; status: string }[];
+  past_attempts: {
+    number: number;
+    translation: string;
+    status: string;
+    profile?: Profile;
+    reason?: string;
+  }[];
 };
 export type Snapshot = { revision: number; tasks: Task[] };
 export type TaskEvent =
@@ -169,7 +175,7 @@ export const defaults: Settings = {
   retention: { mode: "days", days: 7 },
   selection_shortcut: "Alt+D",
   screenshot_shortcut: "Alt+S",
-  auto_hide: false,
+  auto_hide: true,
   font_size: 16,
   max_concurrency: 2,
 };

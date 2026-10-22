@@ -172,8 +172,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .permission-state {display:inline-block;margin-left:10px;font-size:10px;color:var(--muted);background:var(--panel-tint);padding:3px 7px;border-radius:5px;}
 .permission-state.allowed {color:var(--accent);background:var(--accent-soft);}
 .recording-status {display:block;margin-top:14px;color:var(--accent);font-size:11px;}
-.settings-close-dialog,.history-delete-dialog {font-family:'Outfit',sans-serif;max-width:430px;width:calc(100% - 40px);padding:6px;border:0;border-radius:23px;background:var(--accent-soft);color:var(--ink);box-shadow:0 20px 70px rgb(24 49 29 / .18);}
-.settings-close-dialog::backdrop,.history-delete-dialog::backdrop {background:rgb(20 37 28 / .25);}
+.settings-close-dialog,.history-delete-dialog,.keychain-dialog {font-family:'Outfit',sans-serif;max-width:430px;width:calc(100% - 40px);padding:6px;border:0;border-radius:23px;background:var(--accent-soft);color:var(--ink);box-shadow:0 20px 70px rgb(24 49 29 / .18);}
+.settings-close-dialog::backdrop,.history-delete-dialog::backdrop,.keychain-dialog::backdrop {background:rgb(20 37 28 / .25);}
 .close-dialog-core {padding:25px;background:var(--surface);border-radius:18px;box-shadow:inset 0 1px 0 rgb(255 255 255 / .5);}
 .close-dialog-symbol {display:grid;place-items:center;width:48px;height:48px;margin-bottom:18px;border-radius:15px;background:var(--panel-tint);color:var(--accent);}
 .close-dialog-core h2 {font-size:20px;font-weight:500;margin:0 0 10px;}

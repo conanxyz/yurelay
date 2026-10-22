@@ -30,6 +30,9 @@ impl Drop for CapturePermit {
 }
 
 impl CaptureGate {
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
     pub fn append_target(&self) -> Option<AppendTarget> {
         self.append.lock().unwrap().clone()
     }
@@ -105,11 +108,13 @@ mod tests {
         let gate = CaptureGate::default();
         let mut active = None;
         let mut view = View::default();
+        assert!(!gate.is_active());
         gate.start(false, true, None, |permit| {
             active = Some(permit);
             view.launches += 1;
             view.selected = Some("synthetic-screenshot");
         });
+        assert!(gate.is_active());
         gate.start(false, true, None, |_permit| {
             view.selected = None;
             view.launches += 1;
@@ -119,6 +124,7 @@ mod tests {
         assert!(view.notice.is_none());
         assert_eq!(view.launches, 1);
         drop(active);
+        assert!(!gate.is_active());
         gate.start(false, true, Some(std::process::id() as i32), |_permit| {
             view.launches += 1;
         });

@@ -177,6 +177,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
         .shortcut_recording
         .load(Ordering::SeqCst);
     captures.start(recording, screenshot, selection_target, |permit| {
+        let epoch = state::begin_capture(&app);
         state::clear_capture_view(&app);
         let permissions = yurelay_platform::permissions();
         if (screenshot && !permissions.screen) || (!screenshot && !permissions.accessibility) {
@@ -189,10 +190,9 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                 }
                 .into(),
             );
-            state::show(&app, true);
+            state::present_capture(&app, epoch);
             return;
         }
-        let epoch = app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed);
         // Native acquisition starts before any database/keychain await can change focus.
         let mut native = yurelay_platform::start_for_target(screenshot, selection_target);
         tauri::async_runtime::spawn(async move {
@@ -201,7 +201,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                 Ok(e) => e,
                 Err(e) => {
                     state::notice(&app, e);
-                    state::show(&app, true);
+                    state::present_capture(&app, epoch);
                     while native.recv().await.is_some() {}
                     return;
                 }
@@ -217,7 +217,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                 Ok(h) => h,
                 Err(e) => {
                     state::notice(&app, e);
-                    state::show(&app, true);
+                    state::present_capture(&app, epoch);
                     while native.recv().await.is_some() {}
                     return;
                 }
@@ -229,9 +229,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                     NativeEvent::Captured => {
                         source_started = std::time::Instant::now();
                         engine.book.recognizing(&handle.id, engine.now());
-                        if app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed) == epoch {
-                            state::present_capture(&app);
-                        }
+                        state::present_capture(&app, epoch);
                     }
                     NativeEvent::Text(text) => {
                         let (text, detected) = tokio::task::spawn_blocking(move || {
@@ -247,10 +245,8 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                             source_started.elapsed().as_millis() as u64,
                             detected,
                         );
-                        if !screenshot
-                            && app.state::<AppState>().hidden_epoch.load(Ordering::Relaxed) == epoch
-                        {
-                            state::present_capture(&app);
+                        if !screenshot {
+                            state::present_capture(&app, epoch);
                         }
                     }
                     NativeEvent::Image(bytes) => engine.accept_image(&handle.id, bytes),
@@ -263,7 +259,7 @@ pub fn start_capture_target(app: AppHandle, screenshot: bool, selection_target: 
                         state::notice(&app, error);
                         let _ = engine.remove(&handle.id).await;
                         *app.state::<AppState>().selected.lock().unwrap() = None;
-                        state::show(&app, true);
+                        state::present_capture(&app, epoch);
                     }
                     NativeEvent::Cancelled => {
                         if engine
@@ -285,6 +281,31 @@ pub fn capture(app: AppHandle) {
 }
 
 #[tauri::command]
+pub async fn credential_authorization_required(
+    app: AppHandle,
+    profile_id: Option<String>,
+) -> Result<bool, String> {
+    if app.state::<AppState>().captures.is_active() {
+        return Err("原文仍在读取，请等待完成后再按 D 或 S。".into());
+    }
+    state::engine(&app)
+        .await?
+        .credential_authorization_required(profile_id.as_deref())
+        .await
+}
+
+#[tauri::command]
+pub async fn authorize_saved_credential(app: AppHandle, profile_id: String) -> Result<(), String> {
+    let _dialog = crate::window_lifecycle::SystemDialogGuard::new(
+        app.state::<AppState>().window_lifecycle.clone(),
+    );
+    state::engine(&app)
+        .await?
+        .authorize_saved_credential(&profile_id)
+        .await
+}
+
+#[tauri::command]
 pub async fn translate_text(
     app: AppHandle,
     text: String,
@@ -292,6 +313,9 @@ pub async fn translate_text(
     target_language: Option<String>,
     profile_id: Option<String>,
 ) -> Result<String, String> {
+    if app.state::<AppState>().captures.is_active() {
+        return Err("原文仍在读取，请等待完成后再按 D 或 S。".into());
+    }
     let engine = state::engine(&app).await?;
     let detected = if source_language.is_none() {
         detect_text_language(text.clone()).await?
@@ -323,6 +347,9 @@ pub async fn retry_task(
     target_language: Option<String>,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    if app.state::<AppState>().captures.is_active() {
+        return Err("原文仍在读取，请等待完成后再按 D 或 S。".into());
+    }
     let engine = state::engine(&app).await?;
     let task = engine.load_into_book(&id).await?;
     let text = edited_text
@@ -404,6 +431,9 @@ pub async fn save_configuration(
     settings: Settings,
     api_key_updates: BTreeMap<String, Option<String>>,
 ) -> Result<SavedConfiguration, String> {
+    let _dialog = crate::window_lifecycle::SystemDialogGuard::new(
+        app.state::<AppState>().window_lifecycle.clone(),
+    );
     settings.validate()?;
     state::parse_shortcuts(
         &settings.selection_shortcut,
@@ -516,7 +546,7 @@ pub async fn subscribe(app: AppHandle, on_event: Channel<Wire>) -> Result<String
                 _=wake.notified()=>{pending.clear();if on_event.send(snapshot_message(&app,&engine)).is_err(){break;}},
                 _=tokio::time::sleep_until(deadline),if !pending.is_empty()=>{if !flush(&on_event,&mut pending){break;}},
                 event=events.recv()=>{
-                    if !app.state::<AppState>().visible.load(Ordering::Relaxed){pending.clear();continue;}
+                    if !app.state::<AppState>().window_lifecycle.lock().unwrap().visible(){pending.clear();continue;}
                     match event{
                         Ok(Event::Delta{id,attempt,revision,text})=>{
                             if seen.insert((id.clone(),attempt)){

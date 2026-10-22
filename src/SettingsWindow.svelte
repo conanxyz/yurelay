@@ -363,6 +363,16 @@
       message = "";
     });
   }
+  async function authorizeSavedKey() {
+    const id = selected;
+    await run(async () => {
+      await invoke("authorize_saved_credential", { profileId: id });
+      const credentialErrors = { ...configuration.credential_errors };
+      delete credentialErrors[id];
+      configuration = { ...configuration, credential_errors: credentialErrors };
+      message = t("已授权读取已保存的密钥", "Saved key access authorized");
+    });
+  }
   function revert() {
     settings = structuredClone(JSON.parse(saved));
     keys = {};
@@ -1160,6 +1170,21 @@
                               locale,
                             )}
                           </p>{/if}
+                        <p class="subtle">
+                          {t(
+                            "API Key 已加密保存在 macOS 系统钥匙串。保存或授权读取已有密钥时，系统可能询问钥匙串密码，通常是 Mac 登录密码。",
+                            "API keys are encrypted in macOS Keychain. Saving or authorizing an existing key may require your keychain password, usually your Mac login password.",
+                          )}
+                        </p>
+                        {#if configuration.has_keys.includes(selected)}
+                          <button
+                            class="subtle-button"
+                            disabled={busy}
+                            onclick={authorizeSavedKey}
+                          >
+                            {t("授权已保存密钥", "Authorize saved key")}
+                          </button>
+                        {/if}
                         {#if usesModel(profile.provider)}<label
                             >{t("模型", "Model")}<input
                               bind:value={profile.model}

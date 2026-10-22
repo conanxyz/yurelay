@@ -9,6 +9,7 @@ mod shortcuts;
 mod source_commands;
 mod state;
 mod tray;
+mod window_lifecycle;
 
 use state::AppState;
 use std::sync::atomic::Ordering;
@@ -209,9 +210,12 @@ fn main() {
                     let _ = window.emit("window-mode-changed", expanded);
                 }
                 tauri::WindowEvent::Focused(focused) => {
-                    app.state::<AppState>()
-                        .focused
-                        .store(*focused, Ordering::Relaxed);
+                    let blur = app
+                        .state::<AppState>()
+                        .window_lifecycle
+                        .lock()
+                        .unwrap()
+                        .focus_changed(*focused);
                     if *focused {
                         state::current_notice(app);
                         app.state::<AppState>().resync.notify_one();
@@ -222,21 +226,28 @@ fn main() {
                         }
                     } else {
                         state::release_temporary_top(app);
-                        let app = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Ok(engine) = state::engine(&app).await
-                                && engine.configuration().await.settings.auto_hide
-                                && !app.state::<AppState>().focused.load(Ordering::Relaxed)
-                            {
-                                state::hide(&app);
-                            }
-                        });
+                        if blur.is_some() && window.is_minimized().unwrap_or(false) {
+                            // Native minimize is also an explicit dismissal;
+                            // return activation just as Esc/the hide button do.
+                            state::hide(app);
+                        } else if let Some(ticket) = blur {
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Ok(engine) = state::engine(&app).await
+                                    && engine.configuration().await.settings.auto_hide
+                                {
+                                    state::hide_after_blur(&app, ticket);
+                                }
+                            });
+                        }
                     }
                 }
                 _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::credential_authorization_required,
+            commands::authorize_saved_credential,
             commands::submit_operation,
             commands::operation_list,
             commands::cancel_operation,

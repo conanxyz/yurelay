@@ -60,6 +60,7 @@ mod macos {
         fn ad_copy_text(text: *const c_char);
         fn ad_configure_window(window: *mut c_void);
         fn ad_present_window(window: *mut c_void);
+        fn ad_dismiss_window(window: *mut c_void);
     }
 
     // SAFETY: native retains context until the final tag 5 callback and serializes
@@ -208,6 +209,14 @@ mod macos {
     }
 
     /// # Safety
+    /// `window` must be a live NSWindow and caller must be on the main thread.
+    pub unsafe fn dismiss_window(window: *mut c_void) {
+        unsafe {
+            ad_dismiss_window(window);
+        }
+    }
+
+    /// # Safety
     /// `window` must refer to a live NSWindow. Caller must run on the main thread.
     pub unsafe fn configure_window(window: *mut c_void) {
         unsafe {
@@ -220,19 +229,82 @@ mod macos {
 pub use macos::*;
 
 // Stable pre-rename Keychain service: keep existing keys through the Yurelay rename.
-pub fn read_credential(id: &str) -> Result<Option<String>, String> {
+#[cfg(target_os = "macos")]
+const CREDENTIAL_SERVICE: &str = "com.autodict.desktop.providers";
+
+#[cfg(target_os = "macos")]
+static CREDENTIAL_ACCESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(target_os = "macos")]
+fn with_credential_access<T>(
+    allow_prompt: bool,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    // File-based keychains ignore per-query authentication UI options. Their
+    // interaction switch is process-wide, so serialize reads AND writes.
+    let _access = CREDENTIAL_ACCESS
+        .lock()
+        .map_err(|_| "读取系统凭据失败。".to_owned())?;
+    let previously_allowed =
+        SecKeychain::user_interaction_allowed().map_err(|_| "读取系统凭据失败。".to_owned())?;
+    let _silent = if !allow_prompt && previously_allowed {
+        Some(SecKeychain::disable_user_interaction().map_err(|_| "读取系统凭据失败。".to_owned())?)
+    } else {
+        None
+    };
+    // This guard restores true. Only create it when that was the prior value;
+    // an already-disabled caller must remain disabled after this operation.
+    operation()
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod credential_interaction_tests {
+    use super::*;
+    use security_framework::os::macos::keychain::SecKeychain;
+
+    #[test]
+    fn silent_operations_restore_the_prior_interaction_policy_even_on_error() {
+        let original = SecKeychain::user_interaction_allowed().unwrap();
+        let result: Result<(), String> = with_credential_access(false, || {
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            Err("synthetic operation failure".into())
+        });
+        assert!(result.is_err());
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), original);
+        with_credential_access(true, || {
+            assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), original);
+            Ok(())
+        })
+        .unwrap();
+        let already_disabled = original.then(|| SecKeychain::disable_user_interaction().unwrap());
+        with_credential_access(false, || Ok(())).unwrap();
+        assert!(!SecKeychain::user_interaction_allowed().unwrap());
+        drop(already_disabled);
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), original);
+    }
+}
+
+/// Read only item attributes. Never request password data or authentication UI.
+pub fn credential_exists(id: &str) -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     {
-        match security_framework::passwords::get_generic_password(
-            "com.autodict.desktop.providers",
-            id,
-        ) {
-            Ok(bytes) => String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|_| "钥匙串中的密钥格式无效，请重新设置。".into()),
-            Err(e) if e.code() == -25300 => Ok(None),
-            Err(_) => Err("无法读取系统钥匙串，请解锁钥匙串或重新保存密钥。".into()),
-        }
+        with_credential_access(false, || {
+            use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+            let result = ItemSearchOptions::new()
+                .class(ItemClass::generic_password())
+                .service(CREDENTIAL_SERVICE)
+                .account(id)
+                .load_attributes(true)
+                .skip_authenticated_items(true)
+                .limit(Limit::Max(1))
+                .search();
+            match result {
+                Ok(items) => Ok(!items.is_empty()),
+                Err(error) if error.code() == -25300 => Ok(false),
+                Err(_) => Err("无法检查系统钥匙串中的密钥状态。".into()),
+            }
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -241,26 +313,46 @@ pub fn read_credential(id: &str) -> Result<Option<String>, String> {
     }
 }
 
+pub fn read_credential(id: &str, allow_prompt: bool) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        with_credential_access(allow_prompt, || {
+            match security_framework::passwords::get_generic_password(CREDENTIAL_SERVICE, id) {
+                Ok(bytes) => String::from_utf8(bytes)
+                    .map(Some)
+                    .map_err(|_| "钥匙串中的密钥格式无效，请重新设置。".into()),
+                Err(e) if e.code() == -25300 => Ok(None),
+                Err(_) if !allow_prompt => Err("已保存的 API Key 需要系统钥匙串授权。".into()),
+                Err(_) => Err("无法读取系统钥匙串，请解锁钥匙串或重新保存密钥。".into()),
+            }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (id, allow_prompt);
+        Err("此平台的系统凭据存储尚未实现。".into())
+    }
+}
+
 pub fn write_credential(id: &str, value: Option<&str>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let result = if let Some(value) = value {
-            security_framework::passwords::set_generic_password(
-                "com.autodict.desktop.providers",
-                id,
-                value.as_bytes(),
-            )
-        } else {
-            security_framework::passwords::delete_generic_password(
-                "com.autodict.desktop.providers",
-                id,
-            )
-        };
-        match result {
-            Ok(()) => Ok(()),
-            Err(e) if value.is_none() && e.code() == -25300 => Ok(()),
-            Err(_) => Err("无法更新系统钥匙串；设置未保存。".into()),
-        }
+        with_credential_access(true, || {
+            let result = if let Some(value) = value {
+                security_framework::passwords::set_generic_password(
+                    CREDENTIAL_SERVICE,
+                    id,
+                    value.as_bytes(),
+                )
+            } else {
+                security_framework::passwords::delete_generic_password(CREDENTIAL_SERVICE, id)
+            };
+            match result {
+                Ok(()) => Ok(()),
+                Err(e) if value.is_none() && e.code() == -25300 => Ok(()),
+                Err(_) => Err("无法更新系统钥匙串；设置未保存。".into()),
+            }
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {

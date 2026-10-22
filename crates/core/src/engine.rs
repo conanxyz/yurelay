@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod credential_tests;
 mod operations;
 mod source_workflow;
 
@@ -7,9 +9,10 @@ use crate::{
     storage::{self, Clock, SaveOutcome, Storage},
     tasks::{SaveState, Source, Status, Task, TaskBook, VocabularyState},
 };
+use futures_util::future::{BoxFuture, FutureExt, Shared};
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -22,13 +25,21 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 pub trait Credentials: Send + Sync + 'static {
+    /// Inspect item metadata only. Must never read a secret or request authorization.
+    fn exists(&self, id: &str) -> Result<bool, String>;
+    /// Background/use-time reads must never display authentication UI.
     fn read(&self, id: &str) -> Result<Option<String>, String>;
+    /// Only an explicit credential authorization, save or deletion may request UI.
+    fn read_for_update(&self, id: &str) -> Result<Option<String>, String> {
+        self.read(id)
+    }
     fn write(&self, id: &str, value: Option<&str>) -> Result<(), String>;
 }
 pub trait LocalDictionary: Send + Sync + 'static {
     fn lookup(&self, text: &str) -> Result<String, String>;
 }
 type Secret = Arc<Zeroizing<String>>;
+type CredentialRead = Shared<BoxFuture<'static, Result<Option<Secret>, String>>>;
 pub(crate) struct DispatchProfile {
     pub profile: Profile,
     pub key: Secret,
@@ -51,6 +62,9 @@ fn query_profile<'a>(
 
 struct LiveConfig {
     settings: Settings,
+    present: BTreeSet<String>,
+    loaded: HashSet<String>,
+    pending_reads: BTreeMap<String, CredentialRead>,
     keys: BTreeMap<String, Secret>,
     errors: BTreeMap<String, String>,
 }
@@ -60,13 +74,18 @@ fn dispatch_ready(live: &LiveConfig, profile: &Profile, generation: bool) -> boo
         && (!generation || crate::reliability::supports_generation(profile))
         && profile.validate().is_ok()
         && !live.errors.contains_key(&profile.id)
-        && provider::configured_credentials(
-            profile,
-            live.keys
-                .get(&profile.id)
-                .map(|key| key.as_str())
-                .unwrap_or(""),
-        )
+        && if live.loaded.contains(&profile.id) {
+            provider::configured_credentials(
+                profile,
+                live.keys
+                    .get(&profile.id)
+                    .map(|key| key.as_str())
+                    .unwrap_or(""),
+            )
+        } else {
+            live.present.contains(&profile.id)
+                || profile.provider == crate::config::Provider::Custom
+        }
 }
 
 #[derive(Clone, Serialize)]
@@ -220,21 +239,21 @@ impl Engine {
         let settings = storage.settings().await?;
         let ids: Vec<_> = settings.profiles.iter().map(|p| p.id.clone()).collect();
         let vault = credentials.clone();
-        let (keys, errors) = tokio::task::spawn_blocking(move || {
-            let mut keys = BTreeMap::new();
+        let (present, errors) = tokio::task::spawn_blocking(move || {
+            let mut present = BTreeSet::new();
             let mut errors = BTreeMap::new();
             for id in ids {
-                match vault.read(&id) {
-                    Ok(Some(value)) => {
-                        keys.insert(id, Arc::new(Zeroizing::new(value)));
+                match vault.exists(&id) {
+                    Ok(true) => {
+                        present.insert(id);
                     }
-                    Ok(None) => {}
+                    Ok(false) => {}
                     Err(error) => {
                         errors.insert(id, error);
                     }
                 }
             }
-            (keys, errors)
+            (present, errors)
         })
         .await
         .map_err(|_| "读取系统凭据失败。")?;
@@ -253,7 +272,10 @@ impl Engine {
             storage,
             live: RwLock::new(LiveConfig {
                 settings,
-                keys,
+                present,
+                loaded: HashSet::new(),
+                pending_reads: BTreeMap::new(),
+                keys: BTreeMap::new(),
                 errors,
             }),
             credentials,
@@ -270,6 +292,13 @@ impl Engine {
             wake: Arc::new(Notify::new()),
             closing: AtomicBool::new(false),
         });
+        {
+            let mut live = engine.live.write().await;
+            let active = live.settings.active()?.clone();
+            if active.provider != crate::config::Provider::SystemDictionary {
+                engine.load_credential(&mut live, &active.id).await;
+            }
+        }
         engine.trim();
         let weak = Arc::downgrade(&engine);
         let wake = engine.wake.clone();
@@ -306,14 +335,108 @@ impl Engine {
         let config = self.live.read().await;
         Configuration {
             settings: config.settings.clone(),
-            has_keys: config
-                .keys
-                .iter()
-                .filter(|(_, v)| !v.is_empty())
-                .map(|(k, _)| k.clone())
-                .collect(),
+            has_keys: config.present.iter().cloned().collect(),
             credential_errors: config.errors.clone(),
         }
+    }
+
+    // Call with the live write lock. A cancelled caller leaves its shared read in
+    // place, so a later request joins the original OS prompt rather than opening
+    // another. Missing items and denied reads are cached for this session too.
+    async fn load_credential(&self, live: &mut LiveConfig, id: &str) {
+        if live.loaded.contains(id) {
+            return;
+        }
+        let read = live
+            .pending_reads
+            .entry(id.into())
+            .or_insert_with(|| {
+                let vault = self.credentials.clone();
+                let id = id.to_owned();
+                let task = tokio::task::spawn_blocking(move || {
+                    vault
+                        .read(&id)
+                        .map(|value| value.map(|value| Arc::new(Zeroizing::new(value))))
+                });
+                async move { task.await.map_err(|_| "读取系统凭据失败。".to_owned())? }
+                    .boxed()
+                    .shared()
+            })
+            .clone();
+        let result = read.await;
+        live.pending_reads.remove(id);
+        live.loaded.insert(id.into());
+        live.errors.remove(id);
+        live.keys.remove(id);
+        match result {
+            Ok(Some(key)) => {
+                if key.is_empty() {
+                    live.present.remove(id);
+                } else {
+                    live.present.insert(id.into());
+                }
+                live.keys.insert(id.into(), key);
+            }
+            Ok(None) => {
+                live.present.remove(id);
+            }
+            Err(error) => {
+                live.errors.insert(id.into(), error);
+            }
+        }
+    }
+
+    async fn authorize_credential_update(&self, live: &mut LiveConfig, id: &str) {
+        // Join any existing silent read before considering an interactive retry.
+        self.load_credential(live, id).await;
+        if !live.errors.contains_key(id) {
+            return;
+        }
+        let vault = self.credentials.clone();
+        let account = id.to_owned();
+        let task = tokio::task::spawn_blocking(move || {
+            vault
+                .read_for_update(&account)
+                .map(|value| value.map(|value| Arc::new(Zeroizing::new(value))))
+        });
+        let read = async move { task.await.map_err(|_| "读取系统凭据失败。".to_owned())? }
+            .boxed()
+            .shared();
+        live.loaded.remove(id);
+        live.pending_reads.insert(id.into(), read);
+        self.load_credential(live, id).await;
+    }
+
+    pub async fn credential_authorization_required(
+        &self,
+        profile_id: Option<&str>,
+    ) -> Result<bool, String> {
+        let mut live = self.live.write().await;
+        let profile = query_profile(&live.settings, profile_id)?.clone();
+        if profile.provider == crate::config::Provider::SystemDictionary {
+            return Ok(false);
+        }
+        self.load_credential(&mut live, &profile.id).await;
+        Ok(live.errors.contains_key(&profile.id))
+    }
+
+    /// Authorize an existing item without exposing or rewriting its secret.
+    pub async fn authorize_saved_credential(&self, profile_id: &str) -> Result<(), String> {
+        let _guard = self.mutations.lock().await;
+        let mut live = self.live.write().await;
+        let profile = query_profile(&live.settings, Some(profile_id))?.clone();
+        if profile.provider == crate::config::Provider::SystemDictionary {
+            return Ok(());
+        }
+        self.authorize_credential_update(&mut live, &profile.id)
+            .await;
+        if let Some(error) = live.errors.get(&profile.id) {
+            return Err(error.clone());
+        }
+        if !live.present.contains(&profile.id) {
+            return Err("请先配置此服务的 API Key。".into());
+        }
+        Ok(())
     }
 
     pub async fn dictionary_guidance(&self, text: &str) -> crate::dictionary::Guidance {
@@ -328,9 +451,7 @@ impl Engine {
                     !live.errors.contains_key(&profile.id)
                         && crate::dictionary::configured_translator(
                             profile,
-                            live.keys
-                                .get(&profile.id)
-                                .is_some_and(|key| !key.is_empty()),
+                            live.present.contains(&profile.id),
                         )
                 })
                 .map(|profile| profile.id.clone())
@@ -352,10 +473,13 @@ impl Engine {
             return Err("应用正在退出。".into());
         }
         self.trim();
-        let live = self.live.read().await;
+        let mut live = self.live.write().await;
         let profile = live
             .settings
             .resolved_profile(query_profile(&live.settings, profile_id)?);
+        if profile.provider != crate::config::Provider::SystemDictionary {
+            self.load_credential(&mut live, &profile.id).await;
+        }
         let key = live
             .keys
             .get(&profile.id)
@@ -924,7 +1048,7 @@ impl Engine {
                             cancel.is_cancelled(),
                             sensitive,
                         ) {
-                            for next in profiles.by_ref() {
+                            for mut next in profiles.by_ref() {
                                 if !self.dispatch_profile_eligible(&next.profile, false).await {
                                     continue;
                                 }
@@ -937,6 +1061,19 @@ impl Engine {
                                 // is added to history when the budget is exhausted.
                                 if attempt_count >= crate::reliability::MAX_ATTEMPTS {
                                     break;
+                                }
+                                let ready = tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => false,
+                                    ready = self.prepare_backup(&mut next, false) => ready,
+                                };
+                                if cancel.is_cancelled()
+                                    || tokio::time::Instant::now() >= budget.deadline
+                                {
+                                    break;
+                                }
+                                if !ready {
+                                    continue;
                                 }
                                 if let Some(next_task) = self.book.failover(
                                     &task.id,
@@ -1049,10 +1186,13 @@ impl Engine {
         let _guard = self.mutations.lock().await;
         self.load_into_book(id).await?;
         let old = self.book.get(id).ok_or("记录已删除或到期。")?;
+        if matches!(old.status, Status::Capturing | Status::Recognizing) {
+            return Err("原文仍在读取，请等待完成后再按 D 或 S。".into());
+        }
         if old.sensitive.is_some() {
             return Err("请先确认或清空敏感内容。".into());
         }
-        let live = self.live.read().await;
+        let mut live = self.live.write().await;
         let current = live
             .settings
             .resolved_profile(query_profile(&live.settings, profile_id)?);
@@ -1064,6 +1204,9 @@ impl Engine {
             &current,
         ) {
             return Ok(());
+        }
+        if current.provider != crate::config::Provider::SystemDictionary {
+            self.load_credential(&mut live, &current.id).await;
         }
         // Detection belongs to the exact query. Editing the source invalidates
         // the capture's old language, including when fresh detection is unknown.
@@ -1335,7 +1478,13 @@ impl Engine {
         profile: Profile,
         override_key: Option<String>,
     ) -> Result<Vec<provider::ModelInfo>, String> {
-        let live = self.live.read().await;
+        let mut live = self.live.write().await;
+        if override_key.is_none() && live.settings.profiles.iter().any(|p| p.id == profile.id) {
+            self.load_credential(&mut live, &profile.id).await;
+            if let Some(error) = live.errors.get(&profile.id) {
+                return Err(error.clone());
+            }
+        }
         let key = override_key
             .map(|v| Arc::new(Zeroizing::new(v)))
             .or_else(|| live.keys.get(&profile.id).cloned())
@@ -1388,7 +1537,10 @@ impl Engine {
         sensitive: bool,
         generation: bool,
     ) -> Vec<DispatchProfile> {
-        let live = self.live.read().await;
+        let mut live = self.live.write().await;
+        if initial.provider != crate::config::Provider::SystemDictionary {
+            self.load_credential(&mut live, &initial.id).await;
+        }
         let entry = |profile: Profile| DispatchProfile {
             key: live
                 .keys
@@ -1422,6 +1574,30 @@ impl Engine {
                 live.settings.resolved_profile(saved) == *profile
                     && dispatch_ready(&live, saved, generation)
             })
+    }
+
+    /// Resolve a backup's secret only when dispatch actually reaches it.
+    async fn prepare_backup(&self, dispatch: &mut DispatchProfile, generation: bool) -> bool {
+        let mut live = self.live.write().await;
+        if !live.settings.failover.enabled
+            || !live.settings.profiles.iter().any(|saved| {
+                live.settings.resolved_profile(saved) == dispatch.profile
+                    && dispatch_ready(&live, saved, generation)
+            })
+        {
+            return false;
+        }
+        self.load_credential(&mut live, &dispatch.profile.id).await;
+        if !dispatch_ready(&live, &dispatch.profile, generation) {
+            return false;
+        }
+        dispatch.key = live
+            .keys
+            .get(&dispatch.profile.id)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(Zeroizing::new(String::new())));
+        dispatch.credential_error = live.errors.get(&dispatch.profile.id).cloned();
+        true
     }
 
     pub(crate) async fn invalidate_service_failure(
@@ -1466,9 +1642,14 @@ impl Engine {
                 .await
                 .map_err(|e| e.to_string());
         }
-        let live = self.live.read().await;
+        let mut live = self.live.write().await;
         let saved = override_key.is_none() && live.settings.profiles.iter().any(|p| p == &profile);
-        if saved && let Some(error) = live.errors.get(&profile.id) {
+        if override_key.is_none() && live.settings.profiles.iter().any(|p| p.id == profile.id) {
+            self.load_credential(&mut live, &profile.id).await;
+        }
+        if override_key.is_none()
+            && let Some(error) = live.errors.get(&profile.id)
+        {
             return Err(error.clone());
         }
         let key = override_key
@@ -1620,6 +1801,10 @@ impl Engine {
                 changed.insert(old.id.clone(), None);
             }
         }
+        for id in changed.keys() {
+            // Rollback needs the previous secret, including a deferred item.
+            self.authorize_credential_update(&mut live, id).await;
+        }
         for profile in &mut settings.profiles {
             if let Some(old) = live.settings.profiles.iter().find(|p| p.id == profile.id) {
                 profile.revision = old.revision;
@@ -1644,9 +1829,7 @@ impl Engine {
         let mut rollback = BTreeMap::new();
         for id in changed.keys() {
             if live.errors.contains_key(id) {
-                return Err(
-                    "原密钥无法读取，暂不能安全替换。请先解锁系统钥匙串并重启应用。".into(),
-                );
+                return Err("密钥授权未完成，设置未保存。请重新输入 API Key 并保存。".into());
             }
             rollback.insert(id.clone(), live.keys.get(id).cloned());
         }
@@ -1747,10 +1930,18 @@ impl Engine {
             });
         }
         for (id, value) in changed {
+            live.loaded.insert(id.clone());
+            live.pending_reads.remove(&id);
             if let Some(value) = value {
+                if value.is_empty() {
+                    live.present.remove(&id);
+                } else {
+                    live.present.insert(id.clone());
+                }
                 live.keys
                     .insert(id.clone(), Arc::new(Zeroizing::new(value)));
             } else {
+                live.present.remove(&id);
                 live.keys.remove(&id);
             }
             live.errors.remove(&id);
@@ -1876,6 +2067,9 @@ mod tests {
     #[derive(Default)]
     struct MemoryCredentials(Mutex<BTreeMap<String, String>>);
     impl Credentials for MemoryCredentials {
+        fn exists(&self, id: &str) -> Result<bool, String> {
+            Ok(self.0.lock().unwrap().contains_key(id))
+        }
         fn read(&self, id: &str) -> Result<Option<String>, String> {
             Ok(self.0.lock().unwrap().get(id).cloned())
         }

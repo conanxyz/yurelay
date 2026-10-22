@@ -11,6 +11,9 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
     const w = window as any;
     w.isTauri = true;
     w.calls = [];w.words=[];
+    w.keychainRequired = false;
+    w.keychainError = '';
+    w.deferKeychain = false;
     w.speechVoices = [{locale:'en-GB',available:true},{locale:'en-US',available:true}];
     w.previewResults = {};w.deferredPreviewWords=[];w.previewResolvers=[];
     w.lookupFailure='';w.deferLookup=false;w.lookupResolvers=[];
@@ -48,6 +51,13 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: false, expanded: false };
         if (cmd === 'configuration_settings') return w.settings;
         if (cmd === 'permissions') return { accessibility: true, screen: true };
+        if (cmd === 'credential_authorization_required') return w.keychainRequired;
+        if (cmd === 'authorize_saved_credential') {
+          if (w.keychainError) throw w.keychainError;
+          if (w.deferKeychain) return new Promise(resolve => { w.finishKeychain = () => { w.keychainRequired = false; resolve(null); }; });
+          w.keychainRequired = false;
+          return null;
+        }
         if (cmd === 'dictionary_guidance') {
           if(w.deferGuidance)return new Promise(resolve=>w.guidanceResolvers.push({text:args.text,resolve}));
           return structuredClone(w.guidanceResponses[args.text] ?? {issue:null,profile_ids:[]});
@@ -102,9 +112,132 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
 const requests = (page: Page) => page.evaluate(() => (window as any).calls.filter((c: any) => ['retry_task','translate_text'].includes(c.cmd)).length);
 const complete = (page: Page) => page.evaluate(() => (window as any).complete());
 
-test('arrow reflects state; X and button toggle, retain result and detect edits', async ({ page }) => {
+for (const source of ['selection', 'screenshot']) {
+  for (const key of ['d', 's']) {
+    test(`${key.toUpperCase()} waits for ${source} source and a fresh keypress`, async ({ page }) => {
+      await fixture(page);
+      await page.evaluate(source => {
+        const w = window as any;
+        Object.assign(w.task, {source, status:source === 'screenshot' ? 'recognizing' : 'capturing', original_text:'Partial synthetic source', revision:2});
+        w.wire({type:'snapshot',snapshot:{revision:2,tasks:[structuredClone(w.task)]},selected:w.task.id});
+      }, source);
+      const toggle = page.locator('.disclosure-control');
+      await expect(toggle).toBeDisabled();
+      await page.keyboard.down(key);
+      expect(await requests(page)).toBe(0);
+      await page.evaluate(() => {
+        const w = window as any;
+        Object.assign(w.task, {status:'ready',original_text:'Complete synthetic source',revision:3});
+        w.wire({type:'snapshot',snapshot:{revision:3,tasks:[structuredClone(w.task)]},selected:w.task.id});
+      });
+      await expect(toggle).toBeEnabled();
+      await page.keyboard.down(key); // browser marks a held key as repeat
+      expect(await requests(page)).toBe(0);
+      await page.keyboard.up(key);
+      await page.keyboard.press('x');
+      expect(await requests(page)).toBe(0);
+      await page.keyboard.press(key);
+      await expect.poll(() => requests(page)).toBe(1);
+      expect(await page.evaluate(() => (window as any).calls.find((c:any)=>c.cmd==='retry_task').args.editedText)).toBe('Complete synthetic source');
+    });
+  }
+}
+
+test('saved key authorization explains Keychain and resumes only after confirmation', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => { (window as any).keychainRequired = true; });
+  await page.locator('.disclosure-control').click();
+  const dialog = page.getByRole('dialog', {name:'Authorize saved API key'});
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('macOS Keychain');
+  await expect(dialog.locator('input')).toHaveCount(0);
+  expect(await requests(page)).toBe(0);
+  await dialog.getByRole('button', {name:'Cancel',exact:true}).click();
+  expect(await page.evaluate(() => (window as any).calls.filter((c:any)=>c.cmd==='authorize_saved_credential').length)).toBe(0);
+  await page.locator('.disclosure-control').click();
+  await dialog.getByRole('button', {name:'Authorize and continue',exact:true}).click();
+  await expect(dialog).not.toBeVisible();
+  await expect.poll(() => requests(page)).toBe(1);
+  expect(await page.evaluate(() => (window as any).calls.filter((c:any)=>c.cmd==='authorize_saved_credential').map((c:any)=>c.args))).toEqual([{profileId:'default'}]);
+});
+
+test('denied system authorization does not submit or repeatedly request the key', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => { const w=window as any; w.keychainRequired=true; w.keychainError='Synthetic cancelled authorization'; });
+  await page.keyboard.press('s');
+  const dialog=page.getByRole('dialog',{name:'Authorize saved API key'});
+  await dialog.getByRole('button',{name:'Authorize and continue',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('Synthetic cancelled authorization');
+  await page.keyboard.press('d');
+  await page.keyboard.press('s');
+  expect(await requests(page)).toBe(0);
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='authorize_saved_credential').length)).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  expect(await requests(page)).toBe(0);
+});
+
+test('a new source during system authorization cancels automatic translation of the old source', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => { const w=window as any; w.keychainRequired=true; w.deferKeychain=true; });
+  await page.keyboard.press('d');
+  const dialog=page.getByRole('dialog',{name:'Authorize saved API key'});
+  await dialog.getByRole('button',{name:'Authorize and continue',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'Waiting for authorization…'})).toBeDisabled();
+  await page.evaluate(() => {
+    const w=window as any;
+    Object.assign(w.task,{id:'new-source',original_text:'A different synthetic source.',source_revision:2,revision:2});
+    w.wire({type:'snapshot',snapshot:{revision:2,tasks:[structuredClone(w.task)]},selected:w.task.id});
+  });
+  await expect(dialog).not.toBeVisible();
+  await page.evaluate(() => (window as any).finishKeychain());
+  await expect(page.locator('.disclosure-control')).toBeEnabled();
+  expect(await requests(page)).toBe(0);
+  await page.keyboard.press('s');
+  await expect.poll(()=>requests(page)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).calls.find((c:any)=>c.cmd==='retry_task').args.id)).toBe('new-source');
+});
+
+test('D and S do not translate while editing, composing or using modifiers', async ({ page }) => {
+  await fixture(page);
+  const editor=await editableSource(page);
+  await editor.fill('Synthetic editable source.');
+  await editor.press('End');
+  await page.keyboard.type('ds');
+  await expect(editor).toHaveValue('Synthetic editable source.ds');
+  await page.getByRole('button',{name:'Finish editing',exact:true}).click();
+  for(const key of ['d','s']) {
+    await page.keyboard.press(`Alt+${key}`);
+    await page.keyboard.press(`Control+${key}`);
+    await page.keyboard.press(`Meta+${key}`);
+    await page.evaluate(key=>window.dispatchEvent(new KeyboardEvent('keydown',{key,isComposing:true,bubbles:true})),key);
+  }
+  expect(await requests(page)).toBe(0);
+  await page.keyboard.press('d');
+  await expect.poll(()=>requests(page)).toBe(1);
+});
+
+test('Keychain explanation is localized and fits a narrow dark window', async ({ page }) => {
+  await fixture(page);
+  await page.setViewportSize({width:380,height:720});
+  await page.evaluate(()=>{const w=window as any; w.keychainRequired=true;w.settings.ui_language='zh';w.settings.theme='dark';w.emit('configuration-changed',w.settings);});
+  await page.locator('.disclosure-control').click();
+  const dialog=page.getByRole('dialog',{name:'授权读取已保存的 API Key'});
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('已加密保存在 macOS 系统钥匙串');
+  const bounds=await dialog.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(380);
+  expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(720);
+  await expect(dialog.getByRole('button',{name:'授权并继续'})).toBeInViewport();
+  await page.screenshot({path:'artifacts/keychain-authorization-dark.png'});
+});
+
+test('arrow reflects state; D/S and button toggle, retain result and detect edits', async ({ page }) => {
   await fixture(page);
   const toggle = page.locator('.disclosure-control');
+  await expect(toggle).toHaveAttribute('aria-keyshortcuts', 'D S');
+  await expect(page.locator('.capture-hint kbd')).toHaveText('D / S');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   // The current state uses a left chevron when collapsed and down when open.
   await expect(toggle.locator('svg')).toHaveCSS('transform', 'matrix(-1, 0, 0, -1, 0, 0)');
@@ -112,11 +245,11 @@ test('arrow reflects state; X and button toggle, retain result and detect edits'
   await expect.poll(() => requests(page)).toBe(1);
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await expect(toggle.locator('svg')).toHaveCSS('transform', 'matrix(0, 1, -1, 0, 0, 0)');
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await complete(page);
   await expect(page.locator('#translation-body')).toBeHidden();
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   await expect(page.locator('.translation-prose')).toHaveText('模型当前已满，请尝试其他模型。');
   await toggle.click();
   await toggle.click();
@@ -124,8 +257,8 @@ test('arrow reflects state; X and button toggle, retain result and detect edits'
   const editor = (await editableSource(page));
   await editor.click();
   await page.keyboard.press('End');
-  await page.keyboard.press('x');
-  expect(await editor.inputValue()).toContain('x');
+  await page.keyboard.press('d');
+  expect(await editor.inputValue()).toMatch(/d$/);
   expect(await requests(page)).toBe(1);
   await toggle.click();
   await expect.poll(() => requests(page)).toBe(2);
@@ -167,16 +300,16 @@ test('source editing retains focus across app reactivation; language controls do
   await fixture(page);
   await page.getByLabel('Translation language', { exact: true }).selectOption('fr');
   await page.getByLabel('Translation language', { exact: true }).focus();
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   expect(await requests(page)).toBe(0);
   const editor = (await editableSource(page));
   await editor.click();
   await page.evaluate(() => { window.dispatchEvent(new Event('blur')); window.dispatchEvent(new Event('focus')); });
-  await page.keyboard.press('x');
-  expect(await editor.inputValue()).toContain('x');
+  await page.keyboard.press('d');
+  expect(await editor.inputValue()).toMatch(/d$/);
   expect(await requests(page)).toBe(0);
   await page.locator('.window-name').click();
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   expect(await requests(page)).toBe(1);
 });
 
@@ -290,7 +423,7 @@ test('language changes invalidate the result, errors reopen without automatic re
   });
   await expect(page.getByRole('alert')).toHaveText('Fixture service unavailable');
   await toggle.click();
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   await expect(page.getByRole('alert')).toHaveText('Fixture service unavailable');
   expect(await requests(page)).toBe(3);
 });
@@ -338,7 +471,7 @@ test('screenshot generation announces progress until source text is ready withou
   await expect(editor).toHaveAttribute('placeholder','');
   await expect(page.locator('.source-image')).toHaveCount(0);
   await page.locator('.source-panel').screenshot({path:'artifacts/previews/screenshot-progress-after.png'});
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   expect(await requests(page)).toBe(0);
   await page.evaluate(()=>{
     const w=window as any;Object.assign(w.task,{status:'ready',original_text:'Yurelay screenshot OCR test.',revision:4});
@@ -372,6 +505,10 @@ test('screenshot OCR failures remain visible while translation is collapsed with
   await expect(page.getByRole('alert')).toHaveText('Local text recognition failed. Try a smaller selection.');
   await expect((await editableSource(page))).toHaveValue('');
   expect(await requests(page)).toBe(0);
+  await page.locator('.window-name').click();
+  await page.keyboard.press('d');
+  await page.keyboard.press('s');
+  await expect(toggle).toHaveAttribute('aria-expanded','false');
   await toggle.click();
   await expect(page.getByRole('alert')).toHaveCount(1);
   await expect(page.getByRole('alert')).toBeVisible();
@@ -498,14 +635,14 @@ test('changing default service updates the current translation action', async ({
     w.emit('configuration-changed', structuredClone(w.settings));
   });
   await expect(page.locator('.provider-name')).toHaveText('System dictionary');
-  await expect(page.locator('.disclosure-control')).toHaveAttribute('aria-label','Look up and expand (X)');
+  await expect(page.locator('.disclosure-control')).toHaveAttribute('aria-label','Look up and expand (D / S)');
 });
 
-test('sensitive snapshot shows only the mask; X cannot bypass explicit consent',async({page})=>{
+test('sensitive snapshot shows only the mask; D/S cannot bypass explicit consent',async({page})=>{
  await fixture(page);
  await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{sensitive:'MNEMONIC',original_text:'',translation:'',revision:2});w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id,notice:null})});
  await expect((await editableSource(page))).toHaveCount(0);
- await expect(page.getByRole('alert')).toContainText('Possible sensitive information');await page.keyboard.press('x');expect(await requests(page)).toBe(0);
+ await expect(page.getByRole('alert')).toContainText('Possible sensitive information');await page.keyboard.press('d');expect(await requests(page)).toBe(0);
  await page.getByRole('button',{name:'Reveal source and translate'}).click();
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='resolve_sensitive').at(-1).args)).toEqual({id:'fixture',allow:true});
  await page.getByRole('button',{name:'Cancel and clear'}).click();
@@ -1021,7 +1158,7 @@ test('dictionary guidance switches only this query and waits for explicit transl
   await expect(page.locator('.disclosure-control')).toBeFocused();
   expect(await requests(page)).toBe(0);
   expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('dictionary');
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   expect(await requests(page)).toBe(1);
   expect(await page.evaluate(()=>(window as any).calls.find((c:any)=>c.cmd==='retry_task').args.profileId)).toBe('default');
   await page.evaluate(()=>(window as any).complete());
@@ -1032,7 +1169,7 @@ test('dictionary guidance offers settings without dispatching a lookup when no s
   await dictionaryFixture(page,false);
   await expect(page.getByRole('combobox',{name:'Translation service',exact:true})).toHaveCount(0);
   await expect(page.getByText('No translation service can be selected.',{exact:false})).toBeVisible();
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   expect(await requests(page)).toBe(0);
   await page.getByRole('button',{name:'Open settings',exact:true}).click();
   expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='show_settings').length)).toBe(1);
@@ -1096,7 +1233,7 @@ test('dictionary alternatives work for a new manual draft and are cleared when a
   await (await editableSource(page)).fill(dictionarySentence);
   await page.getByRole('button',{name:'Use this service',exact:true}).click();
   expect(await requests(page)).toBe(0);
-  await page.keyboard.press('x');
+  await page.keyboard.press('d');
   expect(await requests(page)).toBe(1);
   expect(await page.evaluate(()=>(window as any).calls.find((c:any)=>c.cmd==='translate_text').args.profileId)).toBe('default');
   await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'completed',translation:'Synthetic translation',revision:w.task.revision+1});w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});

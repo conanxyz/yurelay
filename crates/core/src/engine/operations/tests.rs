@@ -8,6 +8,9 @@ use tokio::{
 
 struct EmptyCredentials;
 impl Credentials for EmptyCredentials {
+    fn exists(&self, _: &str) -> Result<bool, String> {
+        Ok(false)
+    }
     fn read(&self, _: &str) -> Result<Option<String>, String> {
         Ok(None)
     }

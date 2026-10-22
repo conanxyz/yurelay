@@ -752,6 +752,9 @@ mod tests {
     use super::*;
     struct FakeCredentials;
     impl Credentials for FakeCredentials {
+        fn exists(&self, _: &str) -> Result<bool, String> {
+            Ok(false)
+        }
         fn read(&self, _: &str) -> Result<Option<String>, String> {
             Ok(None)
         }

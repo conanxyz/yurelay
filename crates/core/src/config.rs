@@ -231,7 +231,7 @@ impl Default for Settings {
             retention: Retention::default(),
             selection_shortcut: "Alt+D".into(),
             screenshot_shortcut: "Alt+S".into(),
-            auto_hide: false,
+            auto_hide: true,
             font_size: 16,
             max_concurrency: 2,
             append_selection_shortcut: None,
@@ -376,6 +376,21 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_hide_defaults_on_and_preserves_explicit_choice() {
+        assert!(Settings::default().auto_hide);
+        let missing: Settings = serde_json::from_str("{}").unwrap();
+        assert!(missing.auto_hide);
+        for enabled in [false, true] {
+            let saved: Settings =
+                serde_json::from_value(serde_json::json!({ "auto_hide": enabled })).unwrap();
+            assert_eq!(saved.auto_hide, enabled);
+            let restored: Settings =
+                serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+            assert_eq!(restored.auto_hide, enabled);
+        }
+    }
 
     #[test]
     fn global_prompts_preserve_legacy_customization_and_explicit_cleanup_preference() {

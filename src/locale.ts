@@ -206,8 +206,8 @@ Object.assign(errors, {
     "The API key is too long or contains a line break.",
   "原始截图已不在内存中，请重新截图。":
     "The original screenshot is no longer in memory. Capture it again.",
-  "原密钥无法读取，暂不能安全替换。请先解锁系统钥匙串并重启应用。":
-    "The original key cannot be read or safely replaced. Unlock the keychain and restart the app.",
+  "密钥授权未完成，设置未保存。请重新输入 API Key 并保存。":
+    "Keychain authorization was not completed. Settings were not saved. Re-enter your API key and save again.",
   "密钥对应的服务不存在。": "The service for this key no longer exists.",
   "截图超过会话图片缓存上限；已尝试单独保存到本地。":
     "The screenshot exceeds the session cache limit. A separate local save was attempted.",
@@ -222,6 +222,13 @@ Object.assign(errors, {
   "设置保存失败，密钥回滚也失败，请重新设置密钥。":
     "Saving settings and restoring the previous key failed. Configure the key again.",
   "读取系统凭据失败。": "Could not read system credentials.",
+  "已保存的 API Key 需要系统钥匙串授权。":
+    "Your saved API key needs authorization from macOS Keychain.",
+  "原文仍在读取，请等待完成后再按 D 或 S。":
+    "The source is still being captured. Wait until it is ready, then press D or S again.",
+  "密钥需要授权，请在设置中重新输入 API Key 并保存。":
+    "Keychain authorization is required. Re-enter your API key in Settings and save.",
+  "无法检查系统钥匙串中的密钥状态。": "Could not check credential status in the system keychain.",
   "这条结果仅保留在本次会话。":
     "This result is only kept for the current session.",
   "进行中的截图已占满会话缓存，请稍后重试。":

@@ -107,6 +107,27 @@ void ad_present_window(void *ptr) {
     [window orderFrontRegardless];
 }
 
+// Window/application arguments keep the lifecycle decision testable without
+// activating real apps. The caller supplies live AppKit objects on the main thread.
+static void ADDismissWindow(NSWindow *window, NSApplication *application) {
+    [window orderOut:nil];
+    if (!application.active) return;
+    for (NSWindow *other in application.windows) {
+        // AppKit includes the tray's visible NSStatusBarWindows here. Only an
+        // interactive window (including key-only capture overlays) retains focus.
+        BOOL interactive = other.canBecomeKeyWindow || other.canBecomeMainWindow;
+        if (other != window && interactive && (other.visible || other.miniaturized)) return;
+    }
+    // orderOut leaves the application active. Hiding the last result window
+    // must also yield activation so the next shortcut targets the source app.
+    // Let AppKit choose that app; never reactivate a remembered background PID.
+    [application hide:nil];
+}
+
+void ad_dismiss_window(void *ptr) {
+    ADDismissWindow((__bridge NSWindow *)ptr, NSApp);
+}
+
 static BOOL ADSameApp(pid_t pid) {
     return NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid;
 }
