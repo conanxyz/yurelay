@@ -69,10 +69,17 @@ pub(super) fn boundary(input: &str) -> (Option<usize>, bool) {
     if !first.starts_with('{') {
         return (None, false);
     }
-    match serde_json::Deserializer::from_str(first)
-        .into_iter::<Value>()
-        .next()
-    {
+    let parse_first = |raw: &str| {
+        serde_json::Deserializer::from_str(raw)
+            .into_iter::<Value>()
+            .next()
+    };
+    let parsed = match parse_first(first) {
+        // Reuse the final parser's narrow repair, within the same lookahead bound.
+        Some(Err(error)) if !error.is_eof() => parse_first(&super::without_trailing_commas(first)),
+        parsed => parsed,
+    };
+    match parsed {
         Some(Ok(Value::Object(object)))
             if object.len() == FIELDS.len()
                 && FIELDS.iter().all(|key| object.contains_key(*key)) =>

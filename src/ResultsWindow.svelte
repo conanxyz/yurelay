@@ -98,7 +98,7 @@
         : current.target_language),
   );
   let service = $derived(
-    current && active(current)
+    current && (active(current) || current.sensitive)
       ? current.profile
       : settings.profiles.find(
           (p) => p.id === (profileOverride ?? settings.active_profile),
@@ -211,7 +211,7 @@
   $effect(() => {
     if (settings.active_profile !== defaultProfileId) {
       defaultProfileId = settings.active_profile;
-      profileOverride = null;
+      profileOverride = current?.sensitive ? current.profile.id : null;
     }
   });
   $effect(() => {
@@ -411,7 +411,7 @@
   );
   let pendingRevision = 0,
     pendingAttempt = 0;
-  let draftId = "";
+  let draftId: string | null = null;
   let sourceVersion = "";
   let trigger: HTMLButtonElement;
   $effect(() => {
@@ -421,17 +421,19 @@
       clearSelection();
       draft = current?.edited_text ?? current?.original_text ?? "";
     }
-    if (current?.id !== draftId) {
-      draftId = current?.id ?? "";
+    const nextDraftId = current?.id ?? "";
+    if (nextDraftId !== draftId) {
+      draftId = nextDraftId;
       if (
         !pendingManualProfile ||
         current?.profile.id !== pendingManualProfile
       ) {
         profileOverride =
           current &&
-          !["ready", "original_only", "capturing", "recognizing"].includes(
-            current.status,
-          )
+          (current.sensitive ||
+            !["ready", "original_only", "capturing", "recognizing"].includes(
+              current.status,
+            ))
             ? current.profile.id
             : null;
       }
@@ -792,6 +794,7 @@
         expanded = data.expanded;
         permissions = data.permissions;
         if (before === preferenceEvents) settings = data.configuration.settings;
+        if (!data.selected) sourceLanguage = settings.source_language ?? "";
         apply({
           type: "snapshot",
           snapshot: data.snapshot,
