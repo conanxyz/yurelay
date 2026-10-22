@@ -374,8 +374,15 @@ impl TaskBook {
         Some(changed)
     }
 
-    pub fn mask_sensitive(&self, id: &str, kind: crate::sensitive::SensitiveKind, now: i64) {
+    pub fn mask_sensitive(
+        &self,
+        id: &str,
+        kind: crate::sensitive::SensitiveKind,
+        profile: Profile,
+        now: i64,
+    ) {
         self.update(id, None, now, |t| {
+            t.profile = profile;
             t.original_text.clear();
             t.edited_text = None;
             t.translation.clear();

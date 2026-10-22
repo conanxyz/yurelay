@@ -109,6 +109,7 @@ struct PendingSensitive {
     text: Zeroizing<String>,
     languages: Option<(Option<String>, String)>,
     detected: Option<String>,
+    profile_id: String,
 }
 fn fingerprint(text: &str) -> String {
     use sha2::{Digest, Sha256};
@@ -331,15 +332,21 @@ impl Engine {
             self.fail_capture(&handle.id, 1, "原文过长，请分段翻译。".into());
             return;
         }
-        let languages = self
-            .book
-            .get(&handle.id)
-            .map(|t| (t.source_language, t.target_language));
+        let Some(task) = self.book.get(&handle.id) else {
+            return;
+        };
+        let languages = Some((task.source_language, task.target_language));
         let english_source = crate::vocabulary::english_source(
             languages.as_ref().and_then(|(source, _)| source.as_deref()),
             detected.as_deref(),
         );
-        if self.guard_text(&handle.id, &text, languages, detected.clone()) {
+        if self.guard_text(
+            &handle.id,
+            &text,
+            languages,
+            detected.clone(),
+            &task.profile,
+        ) {
             return;
         }
         self.book.set_extraction(
@@ -383,6 +390,7 @@ impl Engine {
         text: &str,
         languages: Option<(Option<String>, String)>,
         detected: Option<String>,
+        profile: &Profile,
     ) -> bool {
         if !self.sensitive_guard.load(Ordering::Relaxed) {
             return false;
@@ -408,23 +416,27 @@ impl Engine {
                 text: Zeroizing::new(text.to_owned()),
                 languages,
                 detected,
+                profile_id: profile.id.clone(),
             },
         );
         self.pending_images.lock().unwrap().remove(id);
         self.images.lock().unwrap().remove(id);
-        self.book.mask_sensitive(id, kind, self.now());
+        self.book
+            .mask_sensitive(id, kind, profile.clone(), self.now());
         true
     }
     pub async fn resolve_sensitive(self: &Arc<Self>, id: &str, allow: bool) -> Result<(), String> {
         if !allow {
             return self.remove(id).await;
         }
-        let pending = self
-            .pending_sensitive
-            .lock()
-            .unwrap()
-            .remove(id)
-            .ok_or("敏感内容已清空或过期。")?;
+        let pending = {
+            let live = self.live.read().await;
+            let mut requests = self.pending_sensitive.lock().unwrap();
+            let pending = requests.get(id).ok_or("敏感内容已清空或过期。")?;
+            // Do not unmask or fall back to a different service if this one was removed.
+            query_profile(&live.settings, Some(&pending.profile_id))?;
+            requests.remove(id).ok_or("敏感内容已清空或过期。")?
+        };
         self.approved_sensitive
             .lock()
             .unwrap()
@@ -432,8 +444,14 @@ impl Engine {
         self.book
             .release_sensitive(id, pending.text.to_string(), self.now())
             .ok_or("记录已删除或到期。")?;
-        self.retry_languages(id, None, pending.languages, pending.detected)
-            .await
+        self.retry_languages_with_profile(
+            id,
+            None,
+            pending.languages,
+            pending.detected,
+            Some(&pending.profile_id),
+        )
+        .await
     }
 
     pub fn fail_capture(self: &Arc<Self>, id: &str, attempt: u32, error: String) {
@@ -563,6 +581,7 @@ impl Engine {
             task.query_text(),
             Some((task.source_language.clone(), task.target_language.clone())),
             task.detected_language.clone(),
+            &task.profile,
         ) {
             return;
         }
@@ -630,6 +649,7 @@ impl Engine {
             task.query_text(),
             Some((task.source_language.clone(), task.target_language.clone())),
             task.detected_language.clone(),
+            &task.profile,
         ) {
             return;
         }
@@ -860,15 +880,17 @@ impl Engine {
         if old.sensitive.is_some() {
             return Err("请先确认或清空敏感内容。".into());
         }
+        let live = self.live.read().await;
+        let current = query_profile(&live.settings, profile_id)?;
         if self.guard_text(
             id,
             edited.as_deref().unwrap_or_else(|| old.query_text()),
             languages.clone(),
             detected.clone(),
+            current,
         ) {
             return Ok(());
         }
-        let live = self.live.read().await;
         // Detection belongs to the exact query. Editing the source invalidates
         // the capture's old language, including when fresh detection is unknown.
         let detected = detected.or_else(|| {
@@ -881,7 +903,6 @@ impl Engine {
                 None
             }
         });
-        let current = query_profile(&live.settings, profile_id)?;
         let key = live
             .keys
             .get(&current.id)
@@ -1633,6 +1654,126 @@ mod tests {
             engine.configuration().await.settings.active_profile,
             "dictionary"
         );
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn sensitive_release_preserves_manual_and_retry_service_choices() {
+        let root = tempfile::tempdir().unwrap();
+        let (engine, default_requests) = configured(root.path().into(), Retention::Disabled).await;
+        let (endpoint, chosen_requests) = server().await;
+        let mut settings = engine.configuration().await.settings;
+        settings.auto_vocabulary = false;
+        settings.profiles.push(Profile {
+            id: "another-default".into(),
+            ..settings.profiles[0].clone()
+        });
+        settings.profiles.push(Profile {
+            id: "chosen".into(),
+            endpoint,
+            model: "fixture-chosen".into(),
+            ..Profile::default()
+        });
+        engine
+            .save_configuration(settings, BTreeMap::new())
+            .await
+            .unwrap();
+        for retry in [false, true] {
+            let secret = format!(
+                "A synthetic token sk-{} appears here.",
+                if retry { "r" } else { "m" }.repeat(48)
+            );
+            let id = if retry {
+                let handle = engine.begin(Source::Selection).await.unwrap();
+                engine.accept_text(&handle, "The lighthouse guides ships home.".into(), 0);
+                engine
+                    .retry_languages_with_profile(
+                        &handle.id,
+                        Some(secret),
+                        None,
+                        None,
+                        Some("chosen"),
+                    )
+                    .await
+                    .unwrap();
+                handle.id
+            } else {
+                engine
+                    .manual_languages_with_profile(secret, None, None, Some("chosen"))
+                    .await
+                    .unwrap()
+            };
+            let task = engine.book.get(&id).unwrap();
+            assert!(task.sensitive.is_some());
+            assert!(task.original_text.is_empty());
+            assert_eq!(task.profile.id, "chosen");
+            assert_eq!(default_requests.load(Ordering::SeqCst), 0);
+            assert_eq!(chosen_requests.load(Ordering::SeqCst), usize::from(retry));
+            if retry {
+                let mut changed = engine.configuration().await.settings;
+                changed.active_profile = "another-default".into();
+                engine
+                    .save_configuration(changed, BTreeMap::new())
+                    .await
+                    .unwrap();
+            }
+            engine.resolve_sensitive(&id, true).await.unwrap();
+            let completed = until(&engine, &id, |t| t.status == Status::Completed).await;
+            assert_eq!(completed.profile.id, "chosen");
+            assert_eq!(
+                chosen_requests.load(Ordering::SeqCst),
+                usize::from(retry) + 1
+            );
+            assert_eq!(default_requests.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                engine.configuration().await.settings.active_profile,
+                if retry { "another-default" } else { "default" }
+            );
+        }
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn removed_sensitive_service_stays_masked_without_default_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let (engine, requests) = configured(root.path().into(), Retention::Disabled).await;
+        let mut settings = engine.configuration().await.settings;
+        let chosen = Profile {
+            id: "chosen".into(),
+            ..settings.profiles[0].clone()
+        };
+        settings.profiles.push(chosen);
+        engine
+            .save_configuration(settings.clone(), BTreeMap::new())
+            .await
+            .unwrap();
+        let id = engine
+            .manual_languages_with_profile(
+                format!("sk-{}", "synthetic".repeat(6)),
+                None,
+                None,
+                Some("chosen"),
+            )
+            .await
+            .unwrap();
+        settings.profiles.retain(|p| p.id != "chosen");
+        engine
+            .save_configuration(settings, BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.resolve_sensitive(&id, true).await.unwrap_err(),
+            "所选服务已移除，请重新选择。"
+        );
+        let blocked = engine.book.get(&id).unwrap();
+        assert!(blocked.sensitive.is_some());
+        assert!(blocked.original_text.is_empty());
+        assert!(engine.pending_sensitive.lock().unwrap().contains_key(&id));
+        assert!(!engine.approved_sensitive.lock().unwrap().contains_key(&id));
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        engine.resolve_sensitive(&id, false).await.unwrap();
+        assert!(engine.book.get(&id).is_none());
+        assert!(engine.pending_sensitive.lock().unwrap().is_empty());
         engine.shutdown().await;
     }
 

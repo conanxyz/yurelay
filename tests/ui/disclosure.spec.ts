@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
-async function fixture(page: Page, initiallySelected=true) {
-  await page.addInitScript((initialSelection) => {
+async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='') {
+  await page.addInitScript(({initialSelection, initialSourceLanguage}) => {
     const w = window as any;
     w.isTauri = true;
     w.calls = [];w.words=[];
@@ -16,6 +16,7 @@ async function fixture(page: Page, initiallySelected=true) {
     w.settings = {
       profiles: [{ id: 'default', provider: 'custom', name: 'Custom service', model: 'gpt-6-luna', revision: 1 }],
       active_profile: 'default', target_language: 'zh-Hans', ui_language: 'en',
+      source_language: initialSourceLanguage,
       theme: 'light', ui_font_size: 14, font_size: 16, auto_hide: false,
     };
     w.task = {
@@ -86,7 +87,7 @@ async function fixture(page: Page, initiallySelected=true) {
         return null;
       },
     };
-  },initiallySelected);
+  },{initialSelection:initiallySelected,initialSourceLanguage});
   await page.goto('/');
   if(initiallySelected)await expect(page.locator('.disclosure-control')).toBeEnabled();else await expect(page.locator('.disclosure-control')).toBeDisabled();
 }
@@ -1093,10 +1094,71 @@ test('dictionary alternatives work for a new manual draft and are cleared when a
   expect(await requests(page)).toBe(1);
 });
 
+test('manual query service and languages survive focus and appearance refreshes',async({page})=>{
+  await fixture(page,false,'en');
+  await expect(page.getByRole('combobox',{name:'Source language',exact:true})).toHaveValue('en');
+  await page.evaluate(source=>{
+    const w=window as any;
+    w.settings.profiles[0].name='Chosen translator';
+    w.settings.profiles.push({...w.settings.profiles[0],id:'dictionary',provider:'system_dictionary',name:'System dictionary',model:''});
+    w.settings.active_profile='dictionary';
+    w.guidanceResponses[source]={issue:'sentence',profile_ids:['default']};
+    w.emit('configuration-changed',structuredClone(w.settings));
+  },dictionarySentence);
+  await page.getByRole('textbox',{name:'Source text'}).fill(dictionarySentence);
+  await page.getByRole('button',{name:'Use this service',exact:true}).click();
+  await page.getByRole('combobox',{name:'Source language',exact:true}).selectOption('fr');
+  await page.getByRole('combobox',{name:'Translation language',exact:true}).selectOption('de');
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='configuration_settings').length)).toBeGreaterThan(0);
+  await page.evaluate(()=>{const w=window as any;w.settings.theme='dark';w.emit('configuration-changed',structuredClone(w.settings));});
+  await expect(page.locator('.provider-name')).toHaveText('Chosen translator');
+  await expect(page.getByRole('combobox',{name:'Source language',exact:true})).toHaveValue('fr');
+  await expect(page.getByRole('combobox',{name:'Translation language',exact:true})).toHaveValue('de');
+  await expect(page.getByRole('textbox',{name:'Source text'})).toHaveValue(dictionarySentence);
+  expect(await requests(page)).toBe(0);
+  await page.locator('.disclosure-control').click();
+  expect(await requests(page)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).calls.find((c:any)=>c.cmd==='translate_text').args)).toMatchObject({profileId:'default',sourceLanguage:'fr',targetLanguage:'de'});
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{id:'next-capture',profile:structuredClone(w.settings.profiles[1]),status:'ready',original_text:'hello',edited_text:null,source_language:null,revision:w.task.revision+1});
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
+  });
+  await expect(page.locator('.provider-name')).toHaveText('System dictionary');
+  await expect(page.getByRole('combobox',{name:'Source language',exact:true})).toHaveValue('en');
+  expect(await requests(page)).toBe(1);
+});
+
 test('dictionary alternatives are hidden for sensitive content',async({page})=>{
   await dictionaryFixture(page);
   await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{original_text:'',edited_text:null,sensitive:'API_SECRET',revision:w.task.revision+1});w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
   await expect(page.getByRole('region',{name:'Dictionary lookup guidance'})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Use this service',exact:true})).toHaveCount(0);
   expect(await requests(page)).toBe(0);
+});
+
+test('sensitive confirmation keeps the displayed query service when the default changes',async({page})=>{
+  await fixture(page);
+  await page.evaluate(()=>{
+    const w=window as any;
+    w.settings.profiles.push({...w.settings.profiles[0],id:'another',name:'Another service'});
+    Object.assign(w.task,{source:'manual',sensitive:'API_SECRET',original_text:'',edited_text:null,revision:w.task.revision+1});
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
+    w.settings.active_profile='another';
+    w.emit('configuration-changed',structuredClone(w.settings));
+  });
+  await expect(page.getByRole('button',{name:'Reveal source and translate',exact:true})).toBeVisible();
+  await expect(page.locator('.provider-name')).toHaveText('Custom service');
+  expect(await requests(page)).toBe(0);
+  await page.getByRole('button',{name:'Reveal source and translate',exact:true}).click();
+  await page.evaluate(()=>{
+    const w=window as any;
+    Object.assign(w.task,{sensitive:null,status:'completed',original_text:'Synthetic confirmed source.',translation:'Synthetic confirmed translation.',revision:w.task.revision+1});
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});
+  });
+  await expect(page.locator('.provider-name')).toHaveText('Custom service');
+  await expect(page.getByRole('region',{name:'Translation',exact:true})).toContainText('Synthetic confirmed translation.');
+  expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('another');
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='resolve_sensitive').length)).toBe(1);
 });

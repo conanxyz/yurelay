@@ -523,6 +523,72 @@ mod tests {
     }
 
     #[test]
+    fn unmarked_trailing_commas_are_repaired_across_stream_boundaries() {
+        let source = "The lighthouse guides ships home.";
+        let payload = r#"[{"word":"lighthouse","surface":"lighthouse","phonetic":"","pos":"n.","meaning":"灯塔，保留 ,} 与 \",]\"","level":"B2",},]"#;
+        for prefix in ["\n```json\n", "\n---\n", "\n---VOCAB_JSON---\n"] {
+            let output = format!(
+                "灯塔指引船只。{prefix}{payload}{}",
+                if prefix.contains("```") { "\n```" } else { "" }
+            );
+            let mut partitions: Vec<Vec<&str>> = output
+                .char_indices()
+                .map(|(at, _)| vec![&output[..at], &output[at..]])
+                .collect();
+            partitions.push(
+                output
+                    .char_indices()
+                    .map(|(at, c)| &output[at..at + c.len_utf8()])
+                    .collect(),
+            );
+            for chunks in partitions {
+                let mut parser = StreamParser::for_source(source);
+                let mut visible = String::new();
+                for chunk in chunks {
+                    visible += &parser.push(chunk);
+                    assert!(!visible.contains("\"word\""));
+                }
+                assert!(parser.has_metadata());
+                let (tail, items, notice) = parser.finish(source, &visible);
+                visible += &tail;
+                assert_eq!(visible.trim(), "灯塔指引船只。");
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].context_meaning, "灯塔，保留 ,} 与 \",]\"");
+                assert!(notice.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn unmarked_repair_preserves_code_and_rejects_other_malformed_objects() {
+        let trailing = SYNTHETIC_METADATA.replace("}]", ",}]");
+        let schema = format!("A source code example: {trailing}");
+        let ordinary = "[{\"label\":\"example\",}]";
+        let malformed = SYNTHETIC_METADATA.replace("\"surface\":", "\"surface\" ");
+        let oversized = SYNTHETIC_METADATA
+            .replace("灯塔", &"a".repeat(5000))
+            .replace("}]", ",}]");
+        for (source, payload) in [
+            (schema.as_str(), trailing.as_str()),
+            ("An ordinary code example.", ordinary),
+            ("A lighthouse example.", malformed.as_str()),
+            ("A lighthouse example.", oversized.as_str()),
+        ] {
+            let output = format!("示例。\n```json\n{payload}\n```");
+            let mut parser = StreamParser::for_source(source);
+            let mut visible = String::new();
+            for c in output.chars() {
+                visible += &parser.push(&c.to_string());
+                assert!(parser.pending.len() <= 4096);
+            }
+            let (tail, items, _) = parser.finish(source, &visible);
+            visible += &tail;
+            assert_eq!(visible, output);
+            assert!(items.is_empty());
+        }
+    }
+
+    #[test]
     fn mentioning_field_names_does_not_disable_unmarked_metadata_recovery() {
         for source in [
             "The fields \"word\" and \"surface\" describe a lighthouse.",
