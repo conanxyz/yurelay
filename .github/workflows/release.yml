@@ -1,12 +1,12 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag matching package.json, for example v0.1.0'
+        description: 'Build and publish this version after verification, for example v0.1.0'
         required: true
         type: string
 
@@ -14,23 +14,51 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.event.release.tag_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   checks:
-    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && !github.event.deleted) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
+  prepare:
+    name: Prepare private release draft
+    needs: checks
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      release_id: ${{ steps.release.outputs.release_id }}
+      source_sha: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Validate release version
+        id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+        run: python3 scripts/release-version.py
+      - name: Create or reuse a draft pinned to this commit
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: python3 scripts/release.py prepare
   bundle:
     name: Bundle ${{ matrix.target }}
-    needs: checks
+    needs: prepare
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:
       contents: write
     strategy:
       fail-fast: false
-      # Serialize uploads and manual draft creation for the same release.
       max-parallel: 1
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
@@ -49,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.prepare.outputs.source_sha }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -58,18 +86,6 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - name: Validate release version
-        id: version
-        env:
-          REQUESTED_TAG: ${{ inputs.tag || github.event.release.tag_name }}
-        run: |
-          python3 scripts/release-version.py
-      - name: Resolve release without changing its notes or visibility
-        id: release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: python3 scripts/release-context.py
       - name: Install pinned Rust and architecture target
         env:
           RUST_TARGET: ${{ matrix.target }}
@@ -81,28 +97,40 @@ jobs:
           workspaces: '. -> target'
           key: release-${{ matrix.target }}
       - run: npm ci
-      - name: Build and upload release assets
+      - name: Build and upload private draft assets
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          releaseId: ${{ steps.release.outputs.release_id }}
-          tagName: ${{ steps.version.outputs.tag }}
-          releaseName: Yurelay ${{ steps.version.outputs.tag }}
-          releaseBody: |
-            macOS 14 or later. Choose aarch64 for Apple Silicon or x64 for Intel.
-            These builds use ad-hoc signing and are not Apple-notarized.
-            GPL-3.0-only. Source code is available at this release tag.
-            Review both architectures and their checksums before publishing this draft.
-          releaseDraft: true
-          prerelease: true
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          tagName: ${{ needs.prepare.outputs.tag }}
           args: --target ${{ matrix.target }} --bundles app,dmg
           tauriScript: npm run tauri
       - name: Upload app archive and SHA-256 checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RUST_TARGET: ${{ matrix.target }}
-        run: |
-          ./scripts/release-assets.sh
+        run: ./scripts/release-assets.sh
+  publish:
+    name: Verify all installers and publish
+    # A failed or cancelled architecture build leaves the draft unpublished.
+    needs: [prepare, bundle]
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Verify both architectures and publish the completed draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: python3 scripts/release.py publish
