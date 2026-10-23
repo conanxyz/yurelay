@@ -30,7 +30,7 @@ def github_json(resource, *, method='GET', payload=None, paginate=False):
                             capture_output=True, text=True, check=False)
     if result.returncode:
         raise ValueError('GitHub release request failed; publication was not confirmed.')
-    return json.loads(result.stdout)
+    return json.loads(result.stdout) if result.stdout.strip() else None
 
 
 def validate_inputs(tag, repository, source_sha):
@@ -97,16 +97,40 @@ def required_assets(release, tag):
         raise ValueError('Duplicate release asset names.')
     available = {asset['name'] for asset in assets
                  if asset.get('state') == 'uploaded' and asset.get('size', 0) > 0}
-    groups = {}
+    groups, installers = {}, []
     for target, suffixes in TARGETS.items():
-        archive = f'Yurelay_{tag}_{target}.app.tar.gz'
         checksums = f'SHA256SUMS-{target}.txt'
         dmgs = [f'Yurelay_{tag[1:]}_{suffix}.dmg' for suffix in suffixes]
         found = [name for name in dmgs if name in available]
-        if archive not in available or checksums not in available or len(found) != 1:
+        if len(found) != 1:
             raise ValueError(f'Incomplete installer assets for {target}; keeping the draft private.')
-        groups[checksums] = (archive, found[0])
-    return groups
+        installers.append(found[0])
+        if checksums in available:
+            groups[checksums] = (found[0],)
+    if len(groups) == len(TARGETS):
+        return groups
+    # Publication may have failed after uploading the combined file or removing
+    # one of the temporary manifests. A retry can verify that combined manifest.
+    if 'SHA256SUMS.txt' in available:
+        return {'SHA256SUMS.txt': tuple(installers)}
+    raise ValueError('Missing architecture checksums; keeping the draft private.')
+
+
+def legacy_asset_names(tag):
+    names = {f'SHA256SUMS-{target}.txt' for target in TARGETS}
+    for target, suffixes in TARGETS.items():
+        names.add(f'Yurelay_{tag}_{target}.app.tar.gz')
+        names.update(f'Yurelay_{tag[1:]}_{suffix}.app.tar.gz' for suffix in suffixes)
+    return names
+
+
+def upload_manifest(repository, tag, manifest):
+    result = subprocess.run(
+        ['gh', 'release', 'upload', tag, str(manifest), '--repo', repository, '--clobber'],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode:
+        raise ValueError('Could not upload the combined checksums; keeping the draft private.')
 
 
 def download_assets(repository, tag, directory, names):
@@ -144,6 +168,11 @@ def publish_release(tag, repository, source_sha, release_id):
     validate_draft(release, tag, int(release_id))
     groups = required_assets(release, tag)
     names = set(groups) | {name for group in groups.values() for name in group}
+    installers = {name for group in groups.values() for name in group}
+    final_names = installers | {'SHA256SUMS.txt'}
+    legacy = legacy_asset_names(tag)
+    if {asset['name'] for asset in release['assets']} - final_names - legacy:
+        raise ValueError('Unexpected release attachments; keeping the draft private.')
     snapshot = {asset['name']: (asset.get('id'), asset['size'], asset.get('digest'),
                                asset.get('updated_at'))
                 for asset in release['assets'] if asset['name'] in names}
@@ -151,15 +180,41 @@ def publish_release(tag, repository, source_sha, release_id):
         directory = Path(directory)
         download_assets(repository, tag, directory, names)
         verify_checksums(directory, groups)
-    # Recheck the draft after downloads, including any tag created while building.
+        # Recheck before replacing the combined checksum file on a retry.
+        release = github_json(resource)
+        validate_draft(release, tag, int(release_id))
+        current = {asset['name']: (asset.get('id'), asset['size'], asset.get('digest'),
+                                  asset.get('updated_at'))
+                   for asset in release['assets'] if asset['name'] in names}
+        if current != snapshot:
+            raise ValueError('Installer assets changed during verification; keeping the draft private.')
+        lines = []
+        for name in sorted(installers):
+            with (directory / name).open('rb') as installer:
+                lines.append(f'{hashlib.file_digest(installer, "sha256").hexdigest()}  {name}\n')
+        manifest = directory / 'SHA256SUMS.txt'
+        manifest.write_text(''.join(lines))
+        digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        upload_manifest(repository, tag, manifest)
     release = github_json(resource)
     validate_draft(release, tag, int(release_id))
-    required_assets(release, tag)
-    current = {asset['name']: (asset.get('id'), asset['size'], asset.get('digest'),
-                              asset.get('updated_at'))
-               for asset in release['assets'] if asset['name'] in names}
-    if current != snapshot:
-        raise ValueError('Installer assets changed during verification; keeping the draft private.')
+    for asset in release['assets']:
+        if asset['name'] in legacy:
+            if type(asset.get('id')) is not int or asset['id'] <= 0:
+                raise ValueError('Invalid legacy attachment ID; keeping the draft private.')
+            github_json(f"repos/{repository}/releases/assets/{asset['id']}", method='DELETE')
+    release = github_json(resource)
+    validate_draft(release, tag, int(release_id))
+    if len(release['assets']) != 3 or {asset['name'] for asset in release['assets']} != final_names:
+        raise ValueError('Expected exactly two DMGs and one combined checksum file.')
+    for asset in release['assets']:
+        if asset['name'] in installers:
+            expected = snapshot[asset['name']]
+            actual = (asset.get('id'), asset['size'], asset.get('digest'), asset.get('updated_at'))
+            if actual != expected:
+                raise ValueError('Installer assets changed during verification; keeping the draft private.')
+        elif (asset.get('state') != 'uploaded' or asset.get('digest') != f'sha256:{digest}'):
+            raise ValueError('Combined checksum upload was not verified; keeping the draft private.')
     tag_exists = verify_tag_source(repository, tag, source_sha)
     if not tag_exists and release.get('target_commitish') != source_sha:
         raise ValueError('Draft target changed during the build; keeping the draft private.')

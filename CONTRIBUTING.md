@@ -67,11 +67,16 @@ prerelease draft. Saving a draft alone does not start a build. Do not click
 The workflow runs CI, creates or reuses a private draft pinned to the checked
 commit, and builds Apple Silicon and Intel packages. All jobs run on
 `macos-latest`. Both matrix builds must succeed before the final publication job
-can run. It requires each architecture's `.dmg`, `.app.tar.gz` and SHA-256 manifest,
-downloads those six files, verifies every checksum, then publishes the completed
-draft automatically. Build failure, cancellation, missing assets, checksum errors
-or a changed source target leave the draft unpublished. Existing titles, notes
+can run. Each build uploads one `.dmg` and a temporary architecture checksum
+manifest. The final job downloads and verifies both installers, merges the
+checksums into `SHA256SUMS.txt`, removes temporary manifests and known legacy app
+archives from the draft, then publishes exactly those three attachments. A retry
+can recover from an interrupted cleanup using the combined manifest. Build
+failure, cancellation, missing assets, checksum errors or a changed source target
+leave the draft unpublished. Existing titles, notes
 and prerelease choices are preserved; early releases should remain **Pre-release**.
+GitHub also adds its own source-code ZIP/tarball download links after publication;
+those are separate from the three uploaded attachments.
 
 Pushing a matching `vX.Y.Z` tag also starts this build-then-publish flow. Merge
 workflow changes into `main` before creating the tag, so the workflow exists in

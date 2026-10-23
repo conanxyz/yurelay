@@ -30,6 +30,10 @@ class FakeGitHub:
 
     def __call__(self, resource, *, method='GET', payload=None, paginate=False):
         self.calls.append((resource, copy.deepcopy(payload)))
+        if method == 'DELETE':
+            asset_id = int(resource.rsplit('/', 1)[1])
+            self.release['assets'] = [a for a in self.release['assets'] if a['id'] != asset_id]
+            return None
         if '/git/matching-refs/' in resource:
             return [[{'ref': f'refs/tags/{TAG}'}]] if self.tag_sha else [[]]
         if '/commits/' in resource:
@@ -49,16 +53,14 @@ class FakeGitHub:
 def installer_fixture():
     files, groups = {}, {}
     for target, suffixes in RELEASE.TARGETS.items():
-        archive = f'Yurelay_{TAG}_{target}.app.tar.gz'
         dmg = f'Yurelay_{TAG[1:]}_{suffixes[0]}.dmg'
         manifest = f'SHA256SUMS-{target}.txt'
-        files[archive] = f'synthetic app archive: {target}'.encode()
         files[dmg] = f'synthetic installer: {target}'.encode()
         files[manifest] = ''.join(
             f'{hashlib.sha256(files[name]).hexdigest()}  {"./" if name == dmg else ""}{name}\n'
-            for name in [archive, dmg]
+            for name in [dmg]
         ).encode()
-        groups[manifest] = (archive, dmg)
+        groups[manifest] = (dmg,)
     release = draft()
     release['assets'] = [{'id': index + 1, 'name': name, 'state': 'uploaded', 'size': len(content)}
                          for index, (name, content) in enumerate(files.items())]
@@ -118,6 +120,13 @@ class ReleaseTests(unittest.TestCase):
                 self.prepare()
             api.assert_called_once()
 
+    def test_asset_deletion_accepts_an_empty_204_response(self):
+        result = subprocess.CompletedProcess([], 0, stdout='', stderr='')
+        with patch.object(RELEASE.subprocess, 'run', return_value=result):
+            self.assertIsNone(RELEASE.github_json(
+                f'repos/{REPO}/releases/assets/99', method='DELETE',
+            ))
+
     def test_duplicate_drafts_are_rejected(self):
         with patch.object(RELEASE, 'github_json', side_effect=[[[]], [[draft(), draft()]]]):
             with self.assertRaisesRegex(ValueError, 'Multiple releases'):
@@ -128,7 +137,7 @@ class ReleaseTests(unittest.TestCase):
 
         def download(repository, tag, directory, names):
             self.assertEqual((repository, tag), (REPO, TAG))
-            self.assertEqual(set(names), set(files))
+            self.assertTrue(set(names).issubset(files))
             for name in names:
                 content = files[name]
                 if corrupt and name.endswith('.dmg'):
@@ -137,14 +146,26 @@ class ReleaseTests(unittest.TestCase):
             if change_assets:
                 api.release['assets'][0]['id'] += 100
 
+        def upload(repository, tag, manifest):
+            self.assertEqual((repository, tag, manifest.name), (REPO, TAG, 'SHA256SUMS.txt'))
+            content = manifest.read_bytes()
+            files[manifest.name] = content
+            api.release['assets'] = [a for a in api.release['assets']
+                                     if a['name'] != manifest.name]
+            api.release['assets'].append({
+                'id': 1000, 'name': manifest.name, 'size': len(content), 'state': 'uploaded',
+                'digest': 'sha256:' + hashlib.sha256(content).hexdigest(),
+            })
+
         with patch.object(RELEASE, 'github_json', api), patch.object(
             RELEASE, 'download_assets', side_effect=download,
-        ) as downloader:
+        ) as downloader, patch.object(RELEASE, 'upload_manifest', side_effect=upload) as uploader:
             try:
                 RELEASE.publish_release(TAG, REPO, SHA, '42')
             finally:
                 self.last_api = api
                 self.last_downloader = downloader
+                self.last_uploader = uploader
         return api
 
     def test_both_architectures_and_checksums_are_verified_before_publication(self):
@@ -160,6 +181,10 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(api.publication_calls(), [
                     (f'repos/{REPO}/releases/42', {'draft': False}),
                 ])
+                self.assertEqual({a['name'] for a in api.release['assets']}, {
+                    'Yurelay_0.1.0_aarch64.dmg', 'Yurelay_0.1.0_x64.dmg', 'SHA256SUMS.txt',
+                })
+                self.assertEqual(len(files['SHA256SUMS.txt'].splitlines()), 2)
 
     def test_missing_or_incomplete_architecture_assets_prevent_publication(self):
         for state in ['missing', 'uploading', 'empty']:
@@ -186,7 +211,7 @@ class ReleaseTests(unittest.TestCase):
     def test_missing_checksum_entry_prevents_publication(self):
         release, files, _ = installer_fixture()
         manifest = next(name for name in files if name.endswith('.txt'))
-        files[manifest] = files[manifest].splitlines(keepends=True)[0]
+        files[manifest] = b''
         with self.assertRaisesRegex(ValueError, 'Missing installer checksums'):
             self.publish(release, files)
         self.assertEqual(self.last_api.publication_calls(), [])
@@ -216,6 +241,65 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'assets changed'):
             self.publish(release, files, change_assets=True)
         self.assertEqual(self.last_api.publication_calls(), [])
+
+    def test_legacy_archives_and_architecture_manifests_are_removed_before_publication(self):
+        release, files, _ = installer_fixture()
+        existing = {asset['name'] for asset in release['assets']}
+        for index, name in enumerate(sorted(RELEASE.legacy_asset_names(TAG) - existing)):
+            release['assets'].append({'id': 50 + index, 'name': name,
+                                      'state': 'uploaded', 'size': 10})
+        api = self.publish(release, files)
+        self.assertEqual({a['name'] for a in api.release['assets']}, {
+            'Yurelay_0.1.0_aarch64.dmg', 'Yurelay_0.1.0_x64.dmg', 'SHA256SUMS.txt',
+        })
+        self.assertEqual(api.calls[-1], (f'repos/{REPO}/releases/42', {'draft': False}))
+
+    def test_retry_after_partial_cleanup_uses_combined_checksums(self):
+        release, files, _ = installer_fixture()
+        combined = b''.join(content for name, content in files.items() if name.endswith('.txt'))
+        files['SHA256SUMS.txt'] = combined
+        release['assets'] = [a for a in release['assets'] if not a['name'].startswith('SHA256SUMS-')]
+        release['assets'].append({'id': 90, 'name': 'SHA256SUMS.txt',
+                                  'state': 'uploaded', 'size': len(combined)})
+        api = self.publish(release, files)
+        self.assertFalse(api.release['draft'])
+        self.assertEqual(len(api.release['assets']), 3)
+
+    def test_unknown_attachment_is_not_deleted_or_published(self):
+        release, files, _ = installer_fixture()
+        release['assets'].append({'id': 99, 'name': 'custom-document.pdf',
+                                  'state': 'uploaded', 'size': 10})
+        with self.assertRaisesRegex(ValueError, 'Unexpected release attachments'):
+            self.publish(release, files)
+        self.assertEqual(self.last_api.publication_calls(), [])
+        self.last_downloader.assert_not_called()
+        self.assertIn('custom-document.pdf', [a['name'] for a in self.last_api.release['assets']])
+
+    def test_corrupt_installer_does_not_remove_legacy_assets(self):
+        release, files, _ = installer_fixture()
+        old = {'id': 99, 'name': 'Yurelay_v0.1.0_aarch64-apple-darwin.app.tar.gz',
+               'state': 'uploaded', 'size': 10}
+        release['assets'].append(old)
+        with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+            self.publish(release, files, corrupt=True)
+        self.assertIn(old, self.last_api.release['assets'])
+        self.last_uploader.assert_not_called()
+
+    def test_combined_manifest_upload_failure_prevents_publication(self):
+        release, files, _ = installer_fixture()
+        api = FakeGitHub(release)
+
+        def download(repository, tag, directory, names):
+            for name in names:
+                (directory / name).write_bytes(files[name])
+
+        with patch.object(RELEASE, 'github_json', api), patch.object(
+            RELEASE, 'download_assets', side_effect=download,
+        ), patch.object(RELEASE, 'upload_manifest', side_effect=ValueError('Upload failed')):
+            with self.assertRaisesRegex(ValueError, 'Upload failed'):
+                RELEASE.publish_release(TAG, REPO, SHA, '42')
+        self.assertEqual(api.publication_calls(), [])
+        self.assertEqual(api.release['assets'], release['assets'])
 
     def test_download_failure_keeps_the_draft_private(self):
         release, _, _ = installer_fixture()

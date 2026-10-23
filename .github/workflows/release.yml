@@ -97,16 +97,11 @@ jobs:
           workspaces: '. -> target'
           key: release-${{ matrix.target }}
       - run: npm ci
-      - name: Build and upload private draft assets
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+      - name: Build macOS installer
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          releaseId: ${{ needs.prepare.outputs.release_id }}
-          tagName: ${{ needs.prepare.outputs.tag }}
-          args: --target ${{ matrix.target }} --bundles app,dmg
-          tauriScript: npm run tauri
-      - name: Upload app archive and SHA-256 checksums
+          RUST_TARGET: ${{ matrix.target }}
+        run: npm run tauri -- build --target "$RUST_TARGET" --bundles app,dmg
+      - name: Upload installer and temporary architecture checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
