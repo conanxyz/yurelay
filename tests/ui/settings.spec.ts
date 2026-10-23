@@ -1,6 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
 import { defaults } from '../../src/types';
 
+async function recordAppendShortcut(page: Page, kind: 'selection' | 'screenshot', key: string) {
+ const button=page.getByRole('button',{name:`Record append ${kind} shortcut`,exact:true});
+ await button.click();await expect(button).toHaveClass(/recording/);
+ await page.keyboard.press(`Alt+Shift+${key}`);
+ await expect(button).not.toHaveClass(/recording/);
+ await expect(button.locator('kbd')).toHaveText(['⌥','⇧',key]);
+}
+
+
 test('authorizing an existing key preserves unsaved service edits and never saves a new key', async ({ page }) => {
   await settingsFixture(page);
   await page.getByRole('button',{name:'Services',exact:true}).click();
@@ -63,7 +72,8 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
         if(cmd==='default_reply_prompt')return 'Use the source context to express the user intent in natural language for a native reader. Never invent facts or commitments.';
         if(cmd==='operation_list')return structuredClone(w.operations??[]);
         if(cmd==='service_verifications')return structuredClone(w.verifications??[]);
-        if(cmd==='test_connection'){if(w.receiptOnTest&&JSON.stringify(args.profile)===JSON.stringify(w.settings.profiles.find((p:any)=>p.id===args.profile.id))&&!args.keyOverride)w.verifications=[{profile_id:args.profile.id,state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];return {first_content_ms:1,total_ms:2};}
+        if(cmd==='test_connection'){if(w.deferTest)await new Promise<void>(resolve=>w.finishTest=resolve);if(w.testError)throw w.testError;if(w.receiptOnTest&&JSON.stringify(args.profile)===JSON.stringify(w.settings.profiles.find((p:any)=>p.id===args.profile.id))&&!args.keyOverride)w.verifications=[{profile_id:args.profile.id,state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];return {first_content_ms:1,total_ms:2};}
+        if (cmd === 'take_settings_route') { const route=w.pendingRoute;w.pendingRoute=null;return route??null; }
         if (cmd === 'permissions') return structuredClone(w.permissions);
         if(cmd==='vocabulary_list')return structuredClone(w.vocabulary);
         if(cmd==='fetch_models')return [{id:'fixture/free-model:free',free:true},{id:'fixture/zero-input-paid-output',free:false},{id:'fixture/unknown',free:null}];
@@ -77,7 +87,7 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
           return record;
         }
         if (cmd === 'begin_shortcut_recording') return 1;
-        if (cmd === 'end_shortcut_recording') return { registered: true, error: null };
+        if (cmd === 'end_shortcut_recording') {if(w.deferEndRecording)await new Promise(resolve=>w.releaseRecording=resolve);return { registered: true, error: null };}
         return null;
       },
     };
@@ -369,7 +379,7 @@ test('service search supports Chinese English and pinyin; panes align and prompt
  const search=page.getByRole('textbox',{name:'Search providers'});
  for(const query of ['智谱','zhipu','zp']){await search.fill(query);await expect(page.locator('.service-scroll .service-item')).toHaveCount(1);await expect(page.locator('.service-scroll')).toContainText('Zhipu')}
  await page.locator('.service-scroll .service-item').click();
- await expect(page.getByLabel('Model',{exact:true})).toHaveValue('glm-4-flash-250414');
+ await expect(page.getByLabel('Model',{exact:true})).toHaveValue('glm-4.7-flash');
  await search.fill('');
  const panes=await page.evaluate(()=>['.service-list','.service-editor-tray'].map(q=>document.querySelector(q)!.getBoundingClientRect().toJSON()));expect(panes[0].height).toBe(panes[1].height);expect(panes[0].y).toBe(panes[1].y);
  await expect(page.locator('.provider-logo')).toHaveCount(13);
@@ -422,7 +432,7 @@ test('service and vocabulary workspaces remain usable in narrow and dark windows
 
 test('free defaults, tier labels and live OpenRouter filtering retain exact model IDs',async({page})=>{
  await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
- for(const [provider,model] of [['Gemini','gemini-2.5-flash-lite'],['SiliconFlow','Qwen/Qwen2.5-7B-Instruct'],['Zhipu','glm-4-flash-250414']]){
+ for(const [provider,model] of [['Gemini','gemini-2.5-flash-lite'],['SiliconFlow','Qwen/Qwen2.5-7B-Instruct'],['Zhipu','glm-4.7-flash']]){
   await page.locator('.service-list').getByRole('button',{name:new RegExp(provider)}).click();await expect(page.getByLabel('Model',{exact:true})).toHaveValue(model);
  }
  await expect(page.locator('.model-suggestions')).toContainText('glm-4.7-flash');await expect(page.locator('.model-suggestions')).toContainText('glm-4.6v-flash');
@@ -675,7 +685,7 @@ test('one fallback switch uses configured services and saves with optional appen
  await expect(page.getByRole('checkbox',{name:/Automatically tidy PDF line breaks/})).toBeChecked();
  await page.screenshot({path:'artifacts/previews/reading-workflow-settings-simple.png'});
  const order=await page.locator('.guard-setting input').evaluateAll(nodes=>nodes.map(node=>node.parentElement?.textContent??''));expect(order[0]).toContain('Automatic fallback services');expect(order[1]).toContain('Automatically extract vocabulary');
- await page.getByText('Optional append shortcuts',{exact:true}).click();await page.getByLabel('Append selection shortcut').fill('Alt+Shift+D');await page.getByLabel('Append screenshot shortcut').fill('Alt+Shift+S');await page.getByLabel('Append screenshot shortcut').blur();
+ await page.getByText('Optional append shortcuts',{exact:true}).click();await recordAppendShortcut(page,'selection','D');await recordAppendShortcut(page,'screenshot','S');
  expect(await page.evaluate(()=>(window as any).settings.failover)).toEqual({enabled:false,profile_ids:[]});
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['test_connection','retry_task','submit_operation','translate_text'].includes(c.cmd)))).toEqual([]);
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
@@ -701,4 +711,167 @@ test('standalone reply history is readable and copyable without attaching it to 
  await page.locator('.operation-history-record>summary').nth(2).click();await page.getByRole('button',{name:'View associated source'}).click();await expect(page.locator('.history-detail')).toContainText('Record 0: A complete source');
  await page.getByRole('button',{name:'Delete record',exact:true}).click();await page.getByRole('button',{name:'Delete permanently',exact:true}).click();await expect(page.locator('.operation-history-record')).toHaveCount(2);await expect(page.locator('.operation-history')).not.toContainText('Associated result.');
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['submit_operation','retry_task','translate_text','resolve_operation_sensitive'].includes(c.cmd)))).toEqual([]);
+});
+
+
+test('settings deep links preserve unsaved service edits and keys', async ({page}) => {
+  await settingsFixture(page, false, 'Custom service', true);
+  await page.getByRole('button',{name:'Services',exact:true}).click();
+  await page.getByLabel('Service name',{exact:true}).fill('Unsaved synthetic name');
+  await page.getByLabel('API Key',{exact:true}).fill('synthetic-only-new-key');
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'translation',profile_id:null};w.emit('settings-navigate',null);});
+  await expect(page.getByRole('heading',{name:'Translation',exact:true})).toBeVisible();
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',profile_id:'default'};w.emit('settings-navigate',null);});
+  await expect(page.getByLabel('Service name',{exact:true})).toHaveValue('Unsaved synthetic name');
+  await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-only-new-key');
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
+});
+
+test('first-use dictionary choice is an explicit draft until saved', async ({page}) => {
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',dictionary:true};w.emit('settings-navigate',null);});
+  await expect(page.getByRole('button',{name:'Test dictionary',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.id===(window as any).settings.active_profile).provider)).toBe('custom');
+  await page.getByRole('button',{name:'Save changes',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.id===(window as any).settings.active_profile).provider)).toBe('system_dictionary');
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['test_connection','translate_text','retry_task'].includes(c.cmd)))).toEqual([]);
+});
+
+test('a settings deep link received before bootstrap opens the requested pane',async({page})=>{
+  await settingsFixture(page,true);
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',profile_id:'default'};w.emit('settings-navigate',null);});
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='take_settings_route').length)).toBeGreaterThan(1);
+  await page.evaluate(()=>(window as any).releaseBootstrap());
+  await expect(page.getByLabel('Service name',{exact:true})).toBeVisible();
+});
+
+
+test('translation setup from a dictionary choice opens the model form without saving',async({page})=>{
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',dictionary:true};w.emit('settings-navigate',null);});
+  await expect(page.getByRole('button',{name:'Test dictionary',exact:true})).toBeVisible();
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',translation:true};w.emit('settings-navigate',null);});
+  await expect(page.getByLabel('API Key',{exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'Model',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
+});
+
+
+test('Zhipu onboarding only requires a key and saves the free model explicitly',async({page})=>{
+ await settingsFixture(page);
+ await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',zhipu:true};w.emit('settings-navigate',null);});
+ const card=page.getByRole('region',{name:'Zhipu quick setup'});
+ await expect(card).toBeVisible();
+ await expect(card.locator('input')).toHaveCount(1);
+ await expect(card.getByLabel('API Key',{exact:true})).toHaveAttribute('type','password');
+ await expect(card.getByRole('button',{name:'Save and use'})).toBeDisabled();
+ await card.getByRole('button',{name:'2. Get an API key'}).click();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='open_translation_link').at(-1).args.url)).toBe('https://bigmodel.cn/usercenter/proj-mgmt/apikeys');
+ await card.getByLabel('API Key',{exact:true}).fill('synthetic-zhipu-key');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['save_configuration','test_connection'].includes(c.cmd)))).toEqual([]);
+ await card.getByRole('button',{name:'Save and use'}).click();
+ const saved=await page.evaluate(()=>{const w=window as any;return w.settings.profiles.find((p:any)=>p.id===w.settings.active_profile)});
+ expect(saved.provider).toBe('zhipu');expect(saved.model).toBe('glm-4.7-flash');
+ expect(JSON.stringify(saved)).not.toContain('synthetic-zhipu-key');
+ await expect(card.getByLabel('API Key',{exact:true})).toHaveValue('');
+});
+
+test('Zhipu quick setup preserves an existing nondefault model',async({page})=>{
+ await settingsFixture(page);
+ await page.getByRole('button',{name:'Services',exact:true}).click();
+ await page.locator('.service-list').getByRole('button',{name:/Zhipu/}).click();
+ await page.getByLabel('Model',{exact:true}).fill('existing-synthetic-model');
+ await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',zhipu:true};w.emit('settings-navigate',null);});
+ await expect(page.getByLabel('Model',{exact:true})).toHaveValue('existing-synthetic-model');
+ await expect(page.getByRole('region',{name:'Zhipu quick setup'})).toHaveCount(0);
+});
+
+
+test('connection feedback is visible beside its button and distinguishes saved versus unsaved configuration',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
+ await page.evaluate(()=>{(window as any).deferTest=true;});
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();
+ const feedback=page.locator('.service-test-feedback');
+ await expect(feedback).toContainText('Testing connection');
+ await expect(feedback).toBeInViewport();
+ await expect(page.getByRole('button',{name:'Testing…',exact:true})).toBeDisabled();
+ await page.evaluate(()=>{const w=window as any;w.deferTest=false;w.finishTest();});
+ await expect(feedback).toContainText('Your saved configuration passed');
+ await expect(feedback).toBeInViewport();
+ await page.screenshot({path:'docs/images/first-use/connection-success.png',fullPage:true});
+ await page.getByLabel('API Key',{exact:true}).fill('synthetic-new-key');
+ await expect(feedback).toHaveCount(0);
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();
+ await expect(feedback).toContainText('Save changes to apply');
+ await page.evaluate(()=>{(window as any).testError='Synthetic HTTP 401';});
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();
+ await expect(feedback).toContainText('Connection failed');
+ await expect(feedback).toContainText('Synthetic HTTP 401');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
+});
+
+
+
+test('append recorders capture key combinations, cancel safely and save cleared bindings explicitly',async({page})=>{
+ await settingsFixture(page);
+ await page.getByText('Optional append shortcuts',{exact:true}).click();
+ const selection=page.getByRole('button',{name:'Record append selection shortcut',exact:true});
+ const screenshot=page.getByRole('button',{name:'Record append screenshot shortcut',exact:true});
+ await expect(page.locator('.optional-shortcuts input,.optional-shortcuts small,.append-shortcuts-note,.append-shortcuts-format')).toHaveCount(0);
+ await selection.click();await expect(selection).toHaveClass(/recording/);
+ await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
+ await page.keyboard.down('Alt');await page.keyboard.down('Shift');await page.keyboard.down('D');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='end_shortcut_recording').length)).toBe(0);
+ await page.keyboard.up('D');await page.keyboard.up('Shift');await page.keyboard.up('Alt');
+ await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
+ await recordAppendShortcut(page,'screenshot','S');
+ await selection.click();await page.keyboard.press('Escape');await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
+ await screenshot.click();await page.keyboard.press('Tab');await expect(screenshot).not.toHaveClass(/recording/);await expect(screenshot.locator('kbd')).toHaveText(['⌥','⇧','S']);
+ expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut??null)).toBeNull();
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
+ expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await expect(page.getByRole('button',{name:'Disable append selection shortcut',exact:true})).toHaveCount(0);
+ await selection.click();
+ await page.getByRole('button',{name:'Disable append selection shortcut',exact:true}).click();
+ await expect(selection.locator('kbd')).toHaveCount(0);
+ expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBeNull();
+ expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await screenshot.click();await expect(screenshot).toContainText('Press keys…');await page.keyboard.press('Delete');
+ await expect(screenshot.locator('kbd')).toHaveCount(0);
+ expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await page.getByRole('button',{name:'Revert',exact:true}).click();
+ for(const width of [1100,850,620]) {
+  await page.setViewportSize({width,height:820});
+  const a=await selection.boundingBox(),b=await screenshot.boundingBox();expect(b!.y-a!.y-a!.height).toBeGreaterThanOrEqual(14);
+  for(const recorder of [selection,screenshot]){const outer=await recorder.locator('..').boundingBox(),inner=await recorder.boundingBox();expect(outer!.width-inner!.width).toBeLessThanOrEqual(6);}
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.setViewportSize({width:1100,height:820});
+ await page.getByRole('button',{name:'Appearance',exact:true}).click();
+ await page.getByRole('combobox',{name:'Display language',exact:true}).selectOption('zh');
+ await page.getByRole('combobox',{name:'外观',exact:true}).selectOption('dark');
+ await page.getByRole('button',{name:'翻译与快捷键',exact:true}).click();
+ await page.locator('.optional-shortcuts summary').click();
+ await page.locator('.optional-shortcuts').screenshot({path:'.ai-notes/append-recorders-dark.png',animations:'disabled'});
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['translate_text','start_capture','retry_task'].includes(c.cmd)))).toEqual([]);
+});
+
+
+test('revert during delayed recorder cleanup preserves restored shortcuts and focus',async({page})=>{
+ await settingsFixture(page);await page.getByText('Optional append shortcuts',{exact:true}).click();
+ await recordAppendShortcut(page,'selection','D');await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ await page.getByLabel('Default translation language',{exact:true}).selectOption('fr');
+ const selection=page.getByRole('button',{name:'Record append selection shortcut',exact:true});
+ await selection.click();await expect(selection).toContainText('Press keys…');
+ await page.evaluate(()=>{(window as any).deferEndRecording=true;});
+ await page.getByRole('button',{name:'Disable append selection shortcut',exact:true}).click();
+ await page.getByRole('button',{name:'Revert',exact:true}).click();
+ const language=page.getByLabel('Default translation language',{exact:true});await language.focus();
+ await page.evaluate(()=>(window as any).releaseRecording());
+ await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
+ await expect(language).toBeFocused();await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
 });

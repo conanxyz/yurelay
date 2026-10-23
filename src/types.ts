@@ -140,6 +140,7 @@ export type Bootstrap = {
   notice: string | null;
   pinned: boolean;
   expanded: boolean;
+  window_sizing?: WindowSizing;
 };
 export const defaults: Settings = {
   profiles: [
@@ -306,4 +307,37 @@ export type OperationRequest = {
   tone?: "default" | "professional" | "casual" | "concise";
   reply_language?: string | null;
   include_back_translation?: boolean;
+};
+
+export type Experience = {
+  version: number;
+  setup: "new" | "started" | "skipped" | "completed" | "legacy";
+  step: number;
+  tutorial: "new" | "started" | "skipped" | "completed" | "legacy";
+  lesson: number;
+};
+export type ServiceReadiness = {
+  profile_id: string;
+  state:
+    "needs_configuration" | "needs_key" | "needs_authorization" | "configured";
+  dictionary: boolean;
+  translation: boolean;
+  generation: boolean;
+};
+export type ExperienceStatus = {
+  progress: Experience;
+  services: ServiceReadiness[];
+  shortcuts?: { registered: boolean; error: string | null };
+};
+export type SettingsRoute = {
+  section: "translation" | "services" | "help";
+  profile_id?: string | null;
+  dictionary?: boolean;
+  translation?: boolean;
+  zhipu?: boolean;
+};
+export type WindowSizing = {
+  expanded: boolean;
+  manual: boolean;
+  generation: number;
 };

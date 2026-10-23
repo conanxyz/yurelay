@@ -6,6 +6,7 @@ pub mod config;
 pub mod dictionary;
 pub mod engine;
 mod hex;
+pub mod onboarding;
 pub mod provider;
 pub mod sse;
 pub mod storage;

@@ -6,10 +6,11 @@ async function editableSource(page: Page) {
   return page.getByRole('textbox', {name:'Source text',exact:true});
 }
 
-async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='') {
-  await page.addInitScript(({initialSelection, initialSourceLanguage}) => {
+async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='', deferLayout=false, deferBootstrap=false) {
+  await page.addInitScript(({initialSelection, initialSourceLanguage, deferLayout, deferBootstrap}) => {
     const w = window as any;
-    w.isTauri = true;
+    w.isTauri = true;w.pinned=false;
+    w.deferLayout = deferLayout;w.deferBootstrap=deferBootstrap;
     w.calls = [];w.words=[];
     w.keychainRequired = false;
     w.keychainError = '';
@@ -48,8 +49,12 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
       invoke: async (cmd: string, args: any) => {
         w.calls.push({ cmd, args });
         if (cmd === 'plugin:event|listen') { events[args.event] = args.handler; return callback; }
-        if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: false, expanded: false };
+        if(cmd==='bootstrap'&&w.deferBootstrap)await new Promise(resolve=>w.releaseBootstrap=resolve);
+        if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: w.pinned, expanded: false };
+        if(cmd==='reading_layout'){if(w.deferLayout)await new Promise(resolve=>w.releaseLayout=resolve);return JSON.parse(localStorage.getItem('fixture-reading-layout')??'{"source_height":null,"translation_height":null}');}
+        if(cmd==='save_reading_height'){if(w.failHeightSave)throw 'Synthetic height save failed';const layout=JSON.parse(localStorage.getItem('fixture-reading-layout')??'{"source_height":null,"translation_height":null}');layout[args.panel+'_height']=args.height;layout[args.panel+'_viewport_height']=args.viewportHeight;localStorage.setItem('fixture-reading-layout',JSON.stringify(layout));return null;}
         if (cmd === 'configuration_settings') return w.settings;
+        if(cmd==='pin_window'){if(w.failPin)throw 'Could not change the window pin state.';if(w.deferPin)await new Promise(resolve=>w.releasePin=resolve);w.pinned=args.pinned;return w.pinned;}
         if (cmd === 'permissions') return { accessibility: true, screen: true };
         if (cmd === 'credential_authorization_required') return w.keychainRequired;
         if (cmd === 'authorize_saved_credential') {
@@ -104,8 +109,9 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         return null;
       },
     };
-  },{initialSelection:initiallySelected,initialSourceLanguage});
+  },{initialSelection:initiallySelected,initialSourceLanguage,deferLayout,deferBootstrap});
   await page.goto('/');
+  if(deferBootstrap)return;
   if(initiallySelected)await expect(page.locator('.disclosure-control')).toBeEnabled();else await expect(page.locator('.disclosure-control')).toBeDisabled();
 }
 
@@ -1315,4 +1321,252 @@ test('sensitive confirmation keeps the displayed query service when the default 
   await expect(page.getByRole('region',{name:'Translation',exact:true})).toContainText('Synthetic confirmed translation.');
   expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('another');
   expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='resolve_sensitive').length)).toBe(1);
+});
+
+test('content, guide and native mode changes never request automatic sizing', async ({page}) => {
+ await fixture(page);
+ await page.locator('.disclosure-control').click();await complete(page);
+ await page.getByRole('button',{name:'Usage guide',exact:true}).click();
+ await page.getByRole('button',{name:'Set up later',exact:true}).click();
+ await page.evaluate(()=>{const w=window as any;w.emit('window-mode-changed',true);});
+ await page.setViewportSize({width:1000,height:800});
+ await page.evaluate(()=>{const w=window as any;w.emit('window-mode-changed',false);});
+ await page.setViewportSize({width:520,height:560});
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
+ await expect(page.getByRole('button',{name:'Fit content height'})).toHaveCount(0);
+ await expect(page.locator('.translation-prose')).toBeVisible();
+});
+
+
+test('narrow vocabulary opens inside the existing window without shifting the reading column',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:520,height:560});
+ await page.locator('.disclosure-control').click();await complete(page);
+ const before=await page.locator('.translation-main').boundingBox();
+ await page.evaluate(()=>{const w=window as any;w.task.vocabulary=[{word:'model',surface:'model',phonetic:'',pos:'n.',context_meaning:'模型',context_sentence:'A model.',dict_meaning:'',sentence_trans:'',difficulty:'B1'}];w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id,notice:null});});
+ await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
+ await expect(page.locator('.vocabulary-side-card')).toHaveCount(1);
+ const after=await page.locator('.translation-main').boundingBox();
+ expect(after!.x).toBe(before!.x);expect(after!.width).toBe(before!.width);
+ const rail=await page.locator(".vocabulary-sidebar").boundingBox();expect(rail!.y).toBeGreaterThanOrEqual(after!.y+after!.height);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
+});
+
+
+test('source and translation heights can be dragged or adjusted by keyboard without resizing the window',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:800,height:900});
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ const start=Number(await source.getAttribute('aria-valuenow'));
+ const box=await source.boundingBox();
+ await page.mouse.move(box!.x+box!.width/2,box!.y+9);await page.mouse.down();await page.mouse.move(box!.x+box!.width/2,box!.y+129,{steps:6});await page.mouse.up();
+ await expect.poll(async()=>Number(await source.getAttribute('aria-valuenow'))).toBeGreaterThan(start+100);
+ expect(await requests(page)).toBe(0);
+ const resized=Number(await source.getAttribute('aria-valuenow'));
+ await (await editableSource(page)).fill('A synthetic source.');
+ await expect(source).toHaveAttribute('aria-valuenow',String(resized));
+ await page.locator('.disclosure-control').click();await complete(page);
+ const translation=page.getByRole('separator',{name:/Resize translation height/});
+ await expect(page.locator('.translation-prose')).toContainText('模型当前已满，请尝试其他模型。');
+ await page.evaluate(()=>document.fonts.ready);
+ await translation.focus();
+ const before=await page.locator('#translation-reading-viewport').evaluate(el=>Math.round(el.getBoundingClientRect().height));
+ await page.keyboard.press('ArrowDown');
+ await expect(translation).toHaveAttribute('aria-valuenow',String(before+24));
+ await page.locator('.disclosure-control').click();await page.locator('.disclosure-control').click();
+ await expect(translation).toHaveAttribute('aria-valuenow',String(before+24));
+ await page.evaluate(()=>{const w=window as any;w.task.translation='Long synthetic paragraph.\n\n'.repeat(100);w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ await expect(page.locator('.reading-block')).toHaveCount(100);
+ const scroll=await page.locator('#translation-body .reader-resize-box').evaluate(el=>({scroll:el.scrollHeight,client:el.clientHeight}));expect(scroll.scroll).toBeGreaterThan(scroll.client);
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
+ expect(await requests(page)).toBe(1);
+ await translation.dblclick();await expect(page.locator('#translation-body .reader-resize-box')).not.toHaveClass(/has-height/);
+});
+
+
+test('reading heights survive collapse, retranslations, restart and independent reset',async({page})=>{
+ await fixture(page);
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ await expect(source).toHaveAttribute('aria-disabled','false');
+ await source.focus();await page.keyboard.press('ArrowDown');
+ const sourceSize=await page.locator('#source-reading-viewport').evaluate(el=>parseInt((el as HTMLElement).style.height));
+ await expect(source).toHaveAttribute('aria-valuenow',String(sourceSize));
+ await page.locator('.disclosure-control').click();await complete(page);
+ const translation=page.getByRole('separator',{name:/Resize translation height/});
+ await translation.focus();await page.keyboard.press('ArrowDown');
+ const translationSize=await page.locator('#translation-reading-viewport').evaluate(el=>parseInt((el as HTMLElement).style.height));
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!))).toEqual({source_height:sourceSize,translation_height:translationSize,source_viewport_height:650,translation_viewport_height:650});
+ await page.locator('.disclosure-control').click();await page.locator('.disclosure-control').click();
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ await page.getByRole('button',{name:'Translate again',exact:true}).click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ await page.reload();
+ await expect(source).toHaveAttribute('aria-valuenow',String(sourceSize));
+ await page.locator('.disclosure-control').click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height'))).toEqual([]);
+ await source.dblclick();
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!))).toEqual({source_height:null,translation_height:translationSize,source_viewport_height:null,translation_viewport_height:650});
+ await page.reload();await page.locator('.disclosure-control').click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+});
+
+test('a failed height save is visible and does not silently replace the persisted size',async({page})=>{
+ await fixture(page);await page.evaluate(()=>{(window as any).failHeightSave=true;});
+ const source=page.getByRole('separator',{name:/Resize source height/});await source.focus();await page.keyboard.press('ArrowDown');
+ await expect(page.getByRole('alert')).toContainText('Synthetic height save failed');
+ expect(await page.evaluate(()=>localStorage.getItem('fixture-reading-layout'))).toBeNull();
+});
+
+
+test('delayed layout restoration blocks edits and does not write defaults', async ({page}) => {
+ await fixture(page, true, '', true);
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ await expect(source).toHaveAttribute('aria-disabled','true');
+ await source.dispatchEvent('keydown',{key:'ArrowDown'});
+ await source.dispatchEvent('dblclick');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height'))).toEqual([]);
+ await page.evaluate(()=>{localStorage.setItem('fixture-reading-layout',JSON.stringify({source_height:280,translation_height:380,source_viewport_height:650,translation_viewport_height:650}));(window as any).releaseLayout();});
+ await expect(source).toHaveAttribute('aria-disabled','false');
+ await expect(source).toHaveAttribute('aria-valuenow','280');
+ await page.locator('.disclosure-control').click();await complete(page);
+ await expect(page.getByRole('separator',{name:/Resize translation height/})).toHaveAttribute('aria-valuenow','380');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height'))).toEqual([]);
+});
+
+test('saved reading proportions follow window height without rewriting on resize or restart',async({page})=>{
+ await fixture(page);
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ await source.focus();await page.keyboard.press('ArrowDown');
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')??'{}').source_viewport_height)).toBe(650);
+ const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!));
+ await page.setViewportSize({width:900,height:975});
+ await expect(source).toHaveAttribute('aria-valuenow',String(Math.round(saved.source_height*1.5)));
+ await page.locator('.disclosure-control').click();await complete(page);
+ const translation=page.getByRole('separator',{name:/Resize translation height/});
+ await translation.focus();await page.keyboard.press('Shift+ArrowDown');
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!).translation_viewport_height)).toBe(975);
+ const both=await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!));
+ const writes=await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height').length);
+ await page.setViewportSize({width:520,height:650});
+ await expect(source).toHaveAttribute('aria-valuenow',String(saved.source_height));
+ await expect(translation).toHaveAttribute('aria-valuenow',String(Math.round(both.translation_height*650/975)));
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height').length)).toBe(writes);
+ await page.reload();
+ await expect(source).toHaveAttribute('aria-valuenow',String(saved.source_height));
+ await page.locator('.disclosure-control').click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(Math.round(both.translation_height*650/975)));
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!))).toEqual(both);
+});
+
+test('wide reading pairs stay balanced and narrow windows keep source before translation',async({page})=>{
+ await fixture(page,false);await page.setViewportSize({width:1440,height:900});
+ const source=page.locator('.source-panel'),output=page.locator('.translation-output');
+ await expect(output).toBeVisible();
+ let a=await source.boundingBox(),b=await output.boundingBox();
+ expect(Math.abs(a!.y-b!.y)).toBeLessThan(1);expect(b!.x).toBeGreaterThan(a!.x+a!.width);
+ expect(Math.abs(a!.width-b!.width)).toBeLessThan(2);
+ const overflow=await page.locator('.source-editor').evaluate(el=>el.scrollHeight-el.clientHeight);
+ expect(overflow).toBeLessThanOrEqual(1);
+ await page.evaluate(()=>document.documentElement.setAttribute('data-theme','dark'));
+ await expect(page.locator('.service-identity')).toHaveCSS('color','rgb(230, 238, 229)');
+ expect(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight)).toBe(true);
+ await page.screenshot({path:'.ai-notes/reading-wide-empty-dark.png',fullPage:true,animations:'disabled'});
+ const sourceHandle=page.getByRole('separator',{name:/Resize source height/});
+ await sourceHandle.focus();await page.keyboard.press('ArrowUp');
+ await expect.poll(async()=>{const s=await source.boundingBox(),r=await output.boundingBox();return Math.abs(s!.height-r!.height);}).toBeLessThan(2);
+ await sourceHandle.dblclick();
+ await (await editableSource(page)).fill('Good design makes room for the words.\n\nA quiet layout helps readers move naturally between the original and its translation. Resize the window to find a comfortable reading space.');
+ await page.locator('.disclosure-control').click();await complete(page);
+ await page.evaluate(()=>{const w=window as any;w.task.translation='好的设计，为文字留出空间。\n\n安静的布局，让读者自然地在原文与译文之间切换。调整窗口大小，找到适合自己的阅读空间。';w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ await expect(page.locator('.translation-prose')).toContainText('好的设计');
+ await page.evaluate(()=>{const w=window as any;w.settings.ui_language='zh';w.settings.theme='dark';window.dispatchEvent(new Event('focus'));});
+ await expect(page.getByRole('heading',{name:'原文',exact:true})).toBeVisible();
+ await expect(page.locator('.service-identity')).toHaveCSS('color','rgb(230, 238, 229)');
+ await page.screenshot({path:'.ai-notes/reading-wide-result-dark.png',fullPage:true,animations:'disabled'});
+ await page.evaluate(()=>document.documentElement.setAttribute('data-theme','light'));
+ await expect(page.locator('.service-identity')).toHaveCSS('color','rgb(36, 57, 46)');
+ expect(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight)).toBe(true);
+ a=await source.boundingBox();b=await output.boundingBox();expect(Math.abs(a!.height-b!.height)).toBeLessThan(2);
+ await page.screenshot({path:'.ai-notes/reading-wide-result-light.png',fullPage:true,animations:'disabled'});
+ await page.setViewportSize({width:520,height:650});
+ a=await source.boundingBox();b=await output.boundingBox();expect(b!.y).toBeGreaterThan(a!.y+a!.height);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:'.ai-notes/reading-compact-result.png',fullPage:true,animations:'disabled'});
+ await page.setViewportSize({width:1200,height:900});
+ await page.evaluate(()=>{const w=window as any;w.task.vocabulary=[{word:'design',surface:'design',phonetic:'',pos:'n.',context_meaning:'设计',context_sentence:'Good design.',dict_meaning:'',sentence_trans:'',difficulty:'B1'}];w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ await page.getByRole('button',{name:'展开生词',exact:true}).click();
+ await expect(page.locator('.vocabulary-side-card')).toHaveCount(1);
+ a=await source.boundingBox();b=await output.boundingBox();expect(Math.abs(a!.y-b!.y)).toBeLessThan(1);expect(b!.x).toBeGreaterThan(a!.x+a!.width);
+
+});
+
+
+test('wide reader aligns both handles, fills fixed window insets, and keeps assistant expansion below',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:1440,height:900});
+ await page.evaluate(()=>localStorage.setItem('fixture-reading-layout',JSON.stringify({source_height:160,translation_height:360,source_viewport_height:650,translation_viewport_height:650})));
+ await page.reload();await page.locator('.disclosure-control').click();await complete(page);
+ await page.evaluate(()=>{const w=window as any;w.task.edited_text=null;w.task.original_text='A synthetic reading sample with enough text to scroll.\n\n'.repeat(60);w.task.translation='这是一段用于检查阅读布局的示例文字。\n\n'.repeat(60);w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ const geometry=()=>page.evaluate(()=>{
+   const sheet=document.querySelector('.reading-sheet')!.getBoundingClientRect();
+   const source=document.querySelector('[aria-controls="source-reading-viewport"]')!.getBoundingClientRect();
+   const translation=document.querySelector('[aria-controls="translation-reading-viewport"]')!.getBoundingClientRect();
+   return {left:sheet.left,right:innerWidth-sheet.right,bottom:innerHeight-sheet.bottom,aligned:Math.abs(source.top-translation.top),height:document.querySelector('.source-panel')!.getBoundingClientRect().height};
+ });
+ await expect.poll(async()=>{const g=await geometry();return Math.abs(g.bottom-24);}).toBeLessThan(2);
+ let g=await geometry();expect(g.left).toBe(24);expect(g.right).toBe(24);expect(g.aligned).toBeLessThan(1);
+ for(const id of ['source','translation']){
+   await expect.poll(()=>page.locator('#'+id+'-reading-viewport').evaluate(el=>{const scroller=el.querySelector('textarea')??el;return scroller.scrollHeight>scroller.clientHeight;})).toBe(true);
+ }
+ await page.screenshot({path:'.ai-notes/reading-aligned-wide.png',fullPage:true,animations:'disabled'});
+ await page.setViewportSize({width:1680,height:1050});
+ await expect.poll(async()=>{const g=await geometry();return Math.abs(g.bottom-24);}).toBeLessThan(2);
+ g=await geometry();expect(g.left).toBe(24);expect(g.right).toBe(24);expect(g.aligned).toBeLessThan(1);
+ const baseHeight=g.height;
+ await page.getByRole('button',{name:'Compose reply',exact:true}).click();
+ await expect(page.locator('.assistant-drawer')).toBeVisible();
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollHeight>innerHeight)).toBe(true);
+ await page.screenshot({path:'.ai-notes/reading-aligned-reply.png',fullPage:true,animations:'disabled'});
+ await page.getByRole('button',{name:'Close assistant panel',exact:true}).click();
+ await expect.poll(async()=>Math.abs((await geometry()).bottom-24)).toBeLessThan(2);
+ const handle=page.getByRole('separator',{name:/Resize source height/});
+ await handle.focus();await page.keyboard.press('ArrowUp');
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight-24);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!));
+ expect(saved.paired_height).toBe(baseHeight-24);expect(saved.source_height).toBe(160);expect(saved.translation_height).toBe(360);
+ await page.reload();await page.locator('.disclosure-control').click();await complete(page);
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight-24);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ await handle.dblclick();await expect.poll(async()=>Math.abs((await geometry()).bottom-24)).toBeLessThan(2);
+ const translationHandle=page.getByRole('separator',{name:/Resize translation height/});
+ const bounds=await translationHandle.boundingBox();
+ await page.mouse.move(bounds!.x+bounds!.width/2,bounds!.y+10);await page.mouse.down();await page.mouse.move(bounds!.x+bounds!.width/2,bounds!.y-54,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight-64);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!).paired_height)).toBe(baseHeight-64);
+
+});
+
+
+test('pin reports native confirmation, prevents duplicate clicks and preserves state on failure',async({page})=>{
+ await fixture(page);const pin=page.getByRole('button',{name:'Pin',exact:true});
+ await page.evaluate(()=>{(window as any).failPin=true;});await pin.click();
+ await expect(page.getByRole('alert')).toContainText('Could not change the window pin state.');await expect(pin).toHaveAttribute('aria-pressed','false');
+ await page.evaluate(()=>{(window as any).failPin=false;(window as any).deferPin=true;});await pin.click();await expect(pin).toBeDisabled();await expect(pin).toHaveAttribute('aria-pressed','false');
+ await page.evaluate(()=>(window as any).releasePin());const unpin=page.getByRole('button',{name:'Unpin',exact:true});await expect(unpin).toHaveAttribute('aria-pressed','true');await expect(unpin).toBeEnabled();
+ await page.evaluate(()=>{(window as any).deferPin=false;});await unpin.click();await expect(pin).toHaveAttribute('aria-pressed','false');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='pin_window').map((c:any)=>c.args.pinned))).toEqual([true,true,false]);
+});
+
+
+test('pin waits for the initial native state before accepting a toggle',async({page})=>{
+ await fixture(page,true,'',false,true);
+ const pin=page.getByRole('button',{name:/^(Pin|置顶)$/});await expect(pin).toBeDisabled();
+ await page.evaluate(()=>(window as any).releaseBootstrap());await expect(pin).toBeEnabled();
+ await pin.click();await expect(page.getByRole('button',{name:'Unpin',exact:true})).toHaveAttribute('aria-pressed','true');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='pin_window').length)).toBe(1);
 });

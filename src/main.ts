@@ -7,5 +7,7 @@ import "./styles.css";
 import "./preferences.css";
 import "./yurelay-design.css";
 import "./workflow.css";
+import "./onboarding.css";
+import "./reading-layout.css";
 
 mount(App, { target: document.getElementById("app")! });

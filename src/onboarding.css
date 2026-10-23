@@ -1,0 +1,407 @@
+.getting-started {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 8px 4px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.getting-started h2 {
+  font-size: 21px;
+  line-height: 1.4;
+  margin: 16px 0 10px;
+}
+.getting-started h3 {
+  font-size: 14px;
+  margin: 0;
+}
+.getting-started p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.guide-heading,
+.guide-card-heading,
+.guide-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.guide-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.getting-started button {
+  min-height: 32px;
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+/* An unmistakable exit, with two slow halo pulses rather than flashing text. */
+.getting-started .guide-skip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+.guide-skip::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  pointer-events: none;
+  opacity: 0;
+  animation: guide-exit-hint 1.5s cubic-bezier(0.32, 0.72, 0, 1) 2;
+}
+.guide-skip:hover {
+  filter: brightness(1.06);
+}
+.guide-skip:disabled::after {
+  animation: none;
+}
+@keyframes guide-exit-hint {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  45% {
+    opacity: 0.42;
+    transform: scale(1.02);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-skip::after {
+    animation: none;
+  }
+}
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 12px 0;
+}
+.guide-steps button {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: var(--panel-tint);
+  color: var(--muted);
+  padding: 7px 3px;
+}
+.guide-steps button[aria-current] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.guide-steps button > span {
+  font-variant-numeric: tabular-nums;
+}
+.guide-card,
+.guide-demo {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-tint);
+  padding: 12px;
+  margin: 12px 0;
+}
+.guide-card-heading > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.guide-card-heading > .allowed {
+  color: var(--accent);
+}
+.guide-detail {
+  font-size: 12px;
+  color: var(--muted);
+}
+.guide-readiness {
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+.getting-started details {
+  margin: 12px 0;
+  font-size: 12px;
+}
+.getting-started summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.getting-started footer {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 16px;
+}
+.guide-demo textarea {
+  width: 100%;
+  min-height: 80px;
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+.guide-demo kbd {
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.guide-demo .guide-actions {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+.demo-result {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.getting-started .primary {
+  background: var(--accent);
+  color: var(--surface);
+}
+.service-setup-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  padding: 10px 4px;
+}
+.service-setup-hint button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 4px;
+}
+button.service-identity {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 3px;
+  border-radius: 6px;
+}
+button.service-identity:hover {
+  background: var(--hover);
+}
+.disclosure-control.labeled {
+  width: auto;
+  min-width: 52px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.reading-sheet[hidden],
+.capture-hint[hidden] {
+  display: none;
+}
+@media (max-width: 420px) {
+  .window-chrome {
+    gap: 4px;
+    padding-right: 6px;
+  }
+  .window-tools {
+    gap: 0;
+  }
+  .window-name {
+    font-size: 10px;
+  }
+  .guide-steps button {
+    font-size: 11px;
+  }
+}
+
+.window-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.workspace-pref-pane > .getting-started {
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 8px 12px;
+}
+
+.guide-basics {
+  padding-left: 22px;
+  margin: 12px 0;
+}
+.guide-basics li {
+  padding: 4px 0;
+}
+.guide-basics p {
+  margin: 3px 0;
+  color: var(--muted);
+}
+.guide-basics kbd {
+  white-space: nowrap;
+}
+
+/* Keep narrow-window reading width stable without covering the source. */
+@media (max-width: 579px) {
+  .translation-window.with-vocabulary {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  .translation-window .vocabulary-sidebar {
+    grid-column: 2;
+    grid-row: 2;
+    position: static;
+    width: 100%;
+    height: auto;
+    max-height: 360px;
+    padding: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .translation-window .vocabulary-sidebar.collapsed {
+    padding: 4px 12px;
+    height: 56px;
+  }
+}
+
+.service-test-feedback {
+  border: 1px solid var(--accent);
+  border-left-width: 4px;
+  border-radius: 9px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.service-test-feedback strong {
+  font-size: 15px;
+  color: var(--accent);
+}
+.service-test-feedback p {
+  margin: 5px 0 0;
+}
+.service-test-feedback[data-state="error"] {
+  border-color: var(--error);
+  background: var(--surface);
+}
+.service-test-feedback[data-state="error"] strong {
+  color: var(--error);
+}
+
+.reader-resize-box {
+  min-height: 80px;
+  min-width: 0;
+}
+.reader-resize-box.has-height {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.reader-resize-box .source-editor {
+  resize: none;
+}
+.reader-resize-box.has-height .source-editor-frame {
+  height: 100%;
+}
+.reading-sheet .reader-resize-box.has-height .source-editor {
+  height: 100%;
+  min-height: 0;
+}
+.reader-resize-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+.reader-resize-handle span {
+  height: 3px;
+  width: 32px;
+  border-radius: 3px;
+  background: currentColor;
+}
+.reader-resize-handle:hover,
+.reader-resize-handle:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.reader-resize-handle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* Optional shortcuts use the same row rhythm as the main shortcut controls. */
+.optional-shortcuts {
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--panel-tint);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.optional-shortcuts summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  list-style: none;
+}
+.optional-shortcuts summary::-webkit-details-marker {
+  display: none;
+}
+.optional-shortcuts summary svg {
+  transform: rotate(0);
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.optional-shortcuts[open] summary svg {
+  transform: rotate(90deg);
+}
+.append-shortcut-list {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0 6px;
+}
+.shortcut-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+}
+.preferences-shell .shortcut-edit-actions .shortcut-clear {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+.optional .shortcut-operation {
+  align-items: center;
+}
+.optional .shortcut-keycaps {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.optional .shortcut-recording-text {
+  font-size: 13px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .optional-shortcuts summary svg {
+    transition: none;
+  }
+}

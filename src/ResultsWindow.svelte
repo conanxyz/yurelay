@@ -27,6 +27,146 @@
     languageName,
     languages,
   } from "./locale";
+  import ResizableReading from "./ResizableReading.svelte";
+  import { fitReadingWorkspace } from "./readingWorkspace";
+  let viewportWidth = $state(0);
+  let pairedHeight = $state<number | null>(null);
+  let pairedViewportHeight = $state<number | null>(null);
+  let pairedAvailable = $state(400);
+  const paired = $derived(viewportWidth >= 1100);
+  const pairedRowHeight = $derived(
+    pairedHeight === null
+      ? pairedAvailable
+      : Math.max(
+          240,
+          Math.min(
+            pairedAvailable,
+            Math.round(
+              (pairedHeight * pairedAvailable) /
+                (pairedViewportHeight ?? pairedAvailable),
+            ),
+          ),
+        ),
+  );
+  function resizePair(height: number | null, commit: boolean) {
+    pairedHeight =
+      height === null
+        ? null
+        : Math.max(240, Math.min(4000, pairedAvailable, Math.round(height)));
+    pairedViewportHeight = height === null ? null : pairedAvailable;
+    if (commit) saveReadingHeight("paired", pairedHeight, pairedViewportHeight);
+  }
+  let sourceHeight = $state<number | null>(null);
+  let translationHeight = $state<number | null>(null);
+  let sourceViewportHeight = $state<number | null>(null);
+  let translationViewportHeight = $state<number | null>(null);
+  let readingLayoutLoading = $state(true);
+  let heightSaveQueue = Promise.resolve();
+  function saveReadingHeight(
+    panel: "source" | "translation" | "paired",
+    height: number | null,
+    viewportHeight: number | null,
+  ) {
+    if (!isTauri()) return;
+    heightSaveQueue = heightSaveQueue
+      .then(() =>
+        invoke<void>("save_reading_height", { panel, height, viewportHeight }),
+      )
+      .catch((e) => {
+        error = errorText(e, locale);
+      });
+  }
+  onMount(() => {
+    if (!isTauri()) {
+      readingLayoutLoading = false;
+      return;
+    }
+    let disposed = false;
+    invoke<{
+      source_height: number | null;
+      translation_height: number | null;
+      source_viewport_height?: number | null;
+      translation_viewport_height?: number | null;
+      paired_height?: number | null;
+      paired_viewport_height?: number | null;
+    }>("reading_layout")
+      .then((layout) => {
+        if (!disposed && layout) {
+          pairedHeight = layout.paired_height ?? null;
+          pairedViewportHeight = layout.paired_viewport_height ?? null;
+          sourceHeight = layout.source_height;
+          translationHeight = layout.translation_height;
+          sourceViewportHeight = layout.source_viewport_height ?? null;
+          translationViewportHeight =
+            layout.translation_viewport_height ?? null;
+        }
+      })
+      .catch((e) => {
+        if (!disposed) error = errorText(e, locale);
+      })
+      .finally(() => {
+        if (!disposed) readingLayoutLoading = false;
+      });
+    return () => {
+      disposed = true;
+    };
+  });
+  import GettingStarted from "./GettingStarted.svelte";
+  import type {
+    Experience,
+    ExperienceStatus,
+    SettingsRoute,
+    WindowSizing,
+  } from "./types";
+  let experience = $state<ExperienceStatus | null>(null);
+  let guideOpen = $state(false);
+  let guideBusy = $state(false);
+  let guideView = $state<GettingStarted>();
+  let guideStep = $state(0);
+  let experienceSequence = 0;
+  let guideOpener: HTMLElement | null = null;
+  async function refreshExperience() {
+    if (!isTauri()) return;
+    const sequence = ++experienceSequence;
+    const result = await invoke<ExperienceStatus>("experience_status");
+    if (sequence === experienceSequence) experience = result;
+  }
+  const serviceStatus = $derived(
+    experience?.services.find((s) => s.profile_id === service?.id),
+  );
+  const setupBlocked = $derived(
+    !!serviceStatus &&
+      ["needs_configuration", "needs_key"].includes(serviceStatus.state),
+  );
+  async function openSettings(route: SettingsRoute) {
+    await action("open_settings_at", { route });
+  }
+  async function toggleGuide() {
+    if (guideOpen) await guideView?.skip();
+    else openGuide();
+  }
+  function openGuide() {
+    if (guideOpen) return;
+    guideOpener = document.activeElement as HTMLElement;
+    guideStep = experience?.progress.step ?? 0;
+    guideOpen = true;
+    tick().then(() =>
+      content?.querySelector<HTMLButtonElement>(".guide-steps button")?.focus(),
+    );
+  }
+  function closeGuide() {
+    if (!guideOpen) return;
+    guideOpen = false;
+    guideBusy = false;
+    void refreshExperience().catch((e) => (error = errorText(e, locale)));
+    tick().then(() =>
+      guideOpener?.isConnected ? guideOpener.focus() : sourceEditor?.focus(),
+    );
+  }
+  function windowMode(value: boolean | WindowSizing) {
+    expanded = typeof value === "boolean" ? value : value.expanded;
+  }
+
   import PendingCaptures from "./PendingCaptures.svelte";
   import SourceToolbar from "./SourceToolbar.svelte";
   import SourceReadingView from "./SourceReadingView.svelte";
@@ -109,7 +249,7 @@
   import Icon from "./Icons.svelte";
   import LoadingSpinner from "./LoadingSpinner.svelte";
   import { serviceName } from "./services";
-  import { imageEntrance, panelEntrance } from "./motion";
+  import { imageEntrance } from "./motion";
   let settings = $state<Settings>(structuredClone(defaults));
   let permissions = $state({ accessibility: false, screen: false });
   let locale = $derived(localeFor(settings));
@@ -119,6 +259,20 @@
     selected = $state<string | null>(null),
     notice = $state<string | null>(null),
     error = $state("");
+  let pinReady = $state(false);
+  let pinBusy = $state(false);
+  async function togglePin() {
+    if (!pinReady || pinBusy) return;
+    pinBusy = true;
+    error = "";
+    try {
+      pinned = await invoke<boolean>("pin_window", { pinned: !pinned });
+    } catch (e) {
+      error = errorText(e, locale);
+    } finally {
+      pinBusy = false;
+    }
+  }
   let pinned = $state(false),
     expanded = $state(false),
     resizing = $state(false),
@@ -195,6 +349,7 @@
   let localDictionary = $derived(service?.provider === "system_dictionary");
   let canStart = $derived(
     !!draft.trim() &&
+      !setupBlocked &&
       !current?.sensitive &&
       (!current || !active(current)) &&
       !submitting &&
@@ -354,7 +509,8 @@
     disclosed && !dictionaryHint && (submitting || (attempted && !changed)),
   );
   let toggleDisabled = $derived(
-    !!current?.sensitive ||
+    (setupBlocked && (!current || waiting || changed)) ||
+      !!current?.sensitive ||
       credentialChecking ||
       credentialAuthorizing ||
       (!!current && ["capturing", "recognizing"].includes(current.status)) ||
@@ -529,7 +685,7 @@
   let draftId: string | null = null;
   let sourceVersion = "";
   let lastSourceText = "";
-  let trigger: HTMLButtonElement;
+  let trigger = $state<HTMLButtonElement>();
   $effect(() => {
     const version = `${current?.id}:${current?.original_text}:${current?.edited_text}`;
     if (version !== sourceVersion) {
@@ -737,6 +893,7 @@
       ]);
       permissions = p;
       settings = s;
+      await refreshExperience();
     } catch {
       /* Initial bootstrap reports errors. */
     }
@@ -868,6 +1025,7 @@
     const editing =
       'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]:not([aria-readonly="true"]),[role="combobox"]';
     if (
+      guideOpen ||
       !!document.querySelector("dialog[open]") ||
       event.defaultPrevented ||
       event.repeat ||
@@ -909,7 +1067,8 @@
     const next = !expanded;
     resizing = true;
     await action("set_window_expanded", { expanded: next });
-    if (!error) expanded = next;
+    // The native resize event is authoritative; it may arrive after this command.
+    if (!error && !isTauri()) expanded = next;
     resizing = false;
   }
   function drag(event: PointerEvent) {
@@ -961,25 +1120,6 @@
       tick().then(() => trigger?.focus({ preventScroll: true }));
   }
   onMount(() => {
-    let frame = 0,
-      lastHeight = 0;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const height = Math.ceil(content.getBoundingClientRect().height + 44);
-        if (!expanded && height !== lastHeight && isTauri()) {
-          lastHeight = height;
-          invoke("fit_result_height", { height }).catch(() => {});
-        }
-      });
-    });
-    observer.observe(content);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  });
-  onMount(() => {
     if (!isTauri()) return;
     let disposed = false;
     let subscription: string | undefined;
@@ -993,6 +1133,7 @@
         const off = await listen<Settings>("configuration-changed", (e) => {
           preferenceEvents++;
           settings = e.payload;
+          void refreshExperience().catch(() => {});
         });
         if (disposed) {
           off();
@@ -1003,7 +1144,9 @@
         const data = await invoke<Bootstrap>("bootstrap");
         if (disposed) return;
         pinned = data.pinned;
+        pinReady = true;
         expanded = data.expanded;
+        if (data.window_sizing) windowMode(data.window_sizing);
         permissions = data.permissions;
         if (before === preferenceEvents) settings = data.configuration.settings;
         if (!data.selected) sourceLanguage = settings.source_language ?? "";
@@ -1018,18 +1161,35 @@
         subscription = await invoke("subscribe", { onEvent: channel });
         if (disposed && subscription)
           await invoke("unsubscribe", { subscriptionId: subscription });
-        const offMode = await listen<boolean>(
+        const offMode = await listen<boolean | WindowSizing>(
           "window-mode-changed",
-          (e) => (expanded = e.payload),
+          (e) => windowMode(e.payload),
         );
         if (disposed) offMode();
         else cleanup.push(offMode);
+        const offExperience = await listen<{
+          progress: Experience;
+          close_guide: boolean;
+        }>("experience-changed", (e) => {
+          if (experience) experience.progress = e.payload.progress;
+          if (guideOpen && e.payload.close_guide) closeGuide();
+        });
+        if (disposed) offExperience();
+        else cleanup.push(offExperience);
+        await refreshExperience();
+        if (
+          !disposed &&
+          experience &&
+          ["new", "started"].includes(experience.progress.setup)
+        )
+          openGuide();
       } catch (e) {
         error = String(e);
       }
     })();
     return () => {
       disposed = true;
+      experienceSequence++;
       previewSequence++;
       clearTimeout(previewTimer);
       clearInterval(timer);
@@ -1040,7 +1200,11 @@
   });
 </script>
 
-<svelte:window onfocus={refresh} onkeydown={keydown} />
+<svelte:window
+  bind:innerWidth={viewportWidth}
+  onfocus={refresh}
+  onkeydown={keydown}
+/>
 <div
   class="translation-window"
   class:expanded
@@ -1063,6 +1227,25 @@
     <div class="window-chrome" onpointerdown={drag} role="presentation">
       <span class="window-name">Yurelay</span>
       <div class="window-tools">
+        <button
+          class="icon-button"
+          aria-label={t("设置", "Settings")}
+          title={t("设置（⌘,）", "Settings (⌘,)")}
+          onclick={() => action("show_settings")}
+          ><Icon name="settings" size={16} /></button
+        >
+        <button
+          class="icon-button"
+          aria-label={t("使用帮助", "Usage guide")}
+          title={guideOpen
+            ? t("关闭引导，稍后设置", "Close guide and set up later")
+            : t("使用帮助", "Usage guide")}
+          class:chosen={guideOpen}
+          aria-expanded={guideOpen}
+          aria-controls="reading-usage-guide"
+          disabled={guideBusy}
+          onclick={toggleGuide}><Icon name="help" size={16} /></button
+        >
         <button
           class="icon-button"
           aria-label={expanded
@@ -1088,13 +1271,18 @@
           class="icon-button"
           class:chosen={pinned}
           aria-label={pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
-          title={pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+          title={pinned
+            ? t(
+                "取消置顶，恢复自动隐藏规则",
+                "Unpin and restore auto-hide behavior",
+              )
+            : t(
+                "置顶，切换应用时保持可见",
+                "Keep on top and visible when switching apps",
+              )}
           aria-pressed={pinned}
-          onclick={async () => {
-            const next = !pinned;
-            await action("pin_window", { pinned: next });
-            if (!error) pinned = next;
-          }}><Icon name="pin" size={16} /></button
+          disabled={!pinReady || pinBusy}
+          onclick={togglePin}><Icon name="pin" size={16} /></button
         >
       </div>
     </div>
@@ -1122,7 +1310,24 @@
         {locale}
         onUpdate={(task, choose) => updateSource(task, choose)}
       />
-      <div class="reading-sheet">
+      {#if guideOpen}<div id="reading-usage-guide">
+          <GettingStarted
+            bind:this={guideView}
+            bind:busy={guideBusy}
+            {settings}
+            {locale}
+            initialStep={guideStep}
+            onclose={closeGuide}
+            navigate={openSettings}
+          />
+        </div>{/if}
+      <div
+        class="reading-sheet"
+        hidden={guideOpen}
+        inert={guideOpen}
+        use:fitReadingWorkspace={(height) => (pairedAvailable = height)}
+        style:--paired-row-height={`${pairedRowHeight}px`}
+      >
         <section class="source-panel" aria-label={t("原文", "Source")}>
           <div class="reading-caption">
             <h1>{t("原文", "Source")}</h1>
@@ -1223,60 +1428,88 @@
                     alt={t("原始截图选区", "Original screenshot selection")}
                   />{/if}
               </details>{/if}
-            {#if !sourceEditing && current && !sourceProcessing && !!draft.trim()}
-              <SourceReadingView
-                task={current}
-                text={draft}
-                {locale}
-                enabled={settings.encounter_highlight !== false &&
-                  vocabularyEligible}
-                onSelect={chooseSourceRange}
-              />
-            {:else}<div class="source-editor-frame">
-                <textarea
-                  class="source-editor"
-                  bind:this={sourceEditor!}
-                  aria-label={t("原文内容", "Source text")}
-                  aria-busy={sourceProcessing}
-                  aria-describedby={sourceProcessing
-                    ? "source-processing-status"
-                    : undefined}
-                  bind:value={draft}
-                  readonly={!!current && active(current)}
-                  onselect={captureSelection}
-                  onmouseup={selectWordAtCaret}
-                  oninput={clearSelection}
-                  placeholder={sourceProcessing
-                    ? ""
-                    : t(
-                        "选中文字或截取屏幕区域…",
-                        "Select text or capture a screen region…",
-                      )}
-                  spellcheck="false"></textarea>
-                {#if sourceProcessing}<div
-                    class="source-processing"
-                    id="source-processing-status"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    <LoadingSpinner size={20} />
-                    <span
-                      >{current?.status === "capturing"
-                        ? t("正在准备截图…", "Preparing screenshot…")
-                        : t(
-                            "正在识别截图文字…",
-                            "Recognizing screenshot text…",
-                          )}</span
+            <ResizableReading
+              id="source-reading-viewport"
+              linkedHeight={paired ? pairedRowHeight : null}
+              linkedMaximum={pairedAvailable}
+              onLinkedResize={resizePair}
+              disabled={readingLayoutLoading}
+              onCommit={(height, viewport) =>
+                saveReadingHeight("source", height, viewport)}
+              bind:viewportHeight={sourceViewportHeight}
+              bind:height={sourceHeight}
+              label={t(
+                paired
+                  ? "调整原文高度（宽屏左右联动；拖动或上下键；双击铺满）"
+                  : "调整原文高度（拖动或上下键；双击恢复）",
+                paired
+                  ? "Resize source height (both columns; drag or arrow keys; double-click to fill)"
+                  : "Resize source height (drag or arrow keys; double-click to reset)",
+              )}
+            >
+              {#if !sourceEditing && current && !sourceProcessing && !!draft.trim()}
+                <SourceReadingView
+                  task={current}
+                  text={draft}
+                  {locale}
+                  enabled={settings.encounter_highlight !== false &&
+                    vocabularyEligible}
+                  onSelect={chooseSourceRange}
+                />
+              {:else}<div class="source-editor-frame">
+                  <textarea
+                    class="source-editor"
+                    bind:this={sourceEditor!}
+                    aria-label={t("原文内容", "Source text")}
+                    aria-busy={sourceProcessing}
+                    aria-describedby={sourceProcessing
+                      ? "source-processing-status"
+                      : undefined}
+                    bind:value={draft}
+                    readonly={!!current && active(current)}
+                    onselect={captureSelection}
+                    onmouseup={selectWordAtCaret}
+                    oninput={clearSelection}
+                    placeholder={sourceProcessing
+                      ? ""
+                      : t(
+                          "输入或粘贴文字，也可划词或截图…",
+                          "Type or paste text, or capture a selection…",
+                        )}
+                    spellcheck="false"></textarea>
+                  {#if sourceProcessing}<div
+                      class="source-processing"
+                      id="source-processing-status"
+                      role="status"
+                      aria-live="polite"
                     >
-                  </div>{/if}
-              </div>{/if}
+                      <LoadingSpinner size={20} />
+                      <span
+                        >{current?.status === "capturing"
+                          ? t("正在准备截图…", "Preparing screenshot…")
+                          : t(
+                              "正在识别截图文字…",
+                              "Recognizing screenshot text…",
+                            )}</span
+                      >
+                    </div>{/if}
+                </div>{/if}
+            </ResizableReading>
           {/if}
           {#if current?.image_error}<p class="inline-feedback">
               {errorText(current.image_error, locale)}
             </p>{/if}
         </section>
         <div class="service-strip">
-          <div
+          <button
+            onclick={() =>
+              openSettings({
+                section: "services",
+                profile_id: shownService?.id,
+              })}
+            aria-label={setupBlocked
+              ? t("配置翻译服务", "Configure translation service")
+              : t("更改服务或模型", "Change service or model")}
             class="service-identity"
             title={`${shownService?.name ?? ""} · ${shownService?.model ?? ""}`}
           >
@@ -1297,7 +1530,7 @@
                   : shownService?.model ||
                     t("选择模型", "Choose a model")}</span
             >
-          </div>
+          </button>
           <div class="translation-controls">
             {#if service?.provider !== "system_dictionary"}<label
                 class="target-language"
@@ -1332,21 +1565,63 @@
                   role="tooltip">{t("停止翻译", "Stop translation")}</span
                 >
               </div>{/if}
-            <button
-              bind:this={trigger!}
-              class="icon-button disclosure-control"
-              class:opened={showResult}
-              title={triggerLabel}
-              aria-label={triggerLabel}
-              aria-expanded={showResult}
-              aria-controls="translation-body"
-              aria-keyshortcuts="D S"
-              disabled={toggleDisabled}
-              onclick={toggleTranslation}
-              ><Icon name="chevron" size={15} /></button
-            >
+            {#if !current || waiting || changed || dictionaryNotFound}
+              <button
+                bind:this={trigger!}
+                class="icon-button disclosure-control labeled"
+                class:opened={showResult}
+                title={triggerLabel}
+                aria-label={triggerLabel}
+                aria-expanded={showResult}
+                aria-controls="translation-body"
+                aria-keyshortcuts="D S"
+                disabled={toggleDisabled}
+                onclick={translate}
+                >{localDictionary
+                  ? t("查询", "Look up")
+                  : t("翻译", "Translate")}<Icon
+                  name="chevron"
+                  size={15}
+                /></button
+              >
+            {:else}
+              <button
+                bind:this={trigger!}
+                class="icon-button disclosure-control labeled"
+                class:opened={showResult}
+                title={triggerLabel}
+                aria-label={triggerLabel}
+                aria-expanded={showResult}
+                aria-controls="translation-body"
+                aria-keyshortcuts="D S"
+                disabled={toggleDisabled}
+                onclick={() => (disclosed = !disclosed)}
+                >{showResult ? t("收起", "Collapse") : t("展开", "Expand")}<Icon
+                  name="chevron"
+                  size={15}
+                /></button
+              >
+            {/if}
           </div>
         </div>
+        {#if setupBlocked}<div class="service-setup-hint" role="status">
+            <p>
+              {serviceStatus?.state === "needs_key"
+                ? t(
+                    "此服务还需要 API 凭据。保存后即可开始翻译。",
+                    "This service needs API credentials. Save them before translating.",
+                  )
+                : t(
+                    "尚未配置可用服务。可以选择系统词典查词，或配置翻译 API。",
+                    "No service is configured. Choose the system dictionary for words, or configure a translation API.",
+                  )}
+            </p>
+            <button
+              onclick={() =>
+                openSettings({ section: "services", profile_id: service?.id })}
+              >{t("配置服务", "Set up a service")}</button
+            ><button onclick={openGuide}>{t("查看引导", "View guide")}</button>
+          </div>{/if}
         {#if dictionaryHint}<section
             class="dictionary-guidance"
             aria-label={t("词典查询提示", "Dictionary lookup guidance")}
@@ -1399,49 +1674,110 @@
               >
             {/if}
           </section>{/if}
-        {#if showResult}<section
-            id="translation-body"
-            class="translation-body"
-            use:panelEntrance
-            aria-label={localDictionary
-              ? t("释义", "Definition")
-              : t("译文", "Translation")}
-          >
-            {#if current?.error && !captureFailure}<p
-                class="inline-feedback"
-                role="alert"
+        <div class="translation-output" class:has-result={showResult}>
+          <div class="reading-caption output-caption">
+            <h2>
+              {localDictionary
+                ? t("释义", "Definition")
+                : t("译文", "Translation")}
+            </h2>
+            <span
+              >{localDictionary
+                ? t("本机查询", "Local lookup")
+                : languageName(targetLanguage, locale)}</span
+            >
+          </div>
+          {#if showResult}<section
+              id="translation-body"
+              class="translation-body"
+              aria-label={localDictionary
+                ? t("释义", "Definition")
+                : t("译文", "Translation")}
+            >
+              {#if current?.error && !captureFailure}<p
+                  class="inline-feedback"
+                  role="alert"
+                >
+                  {errorText(current.error, locale)}
+                </p>{/if}
+              {#if current?.error?.includes("密钥需要授权") || current?.error?.includes("API Key 需要系统钥匙串授权")}
+                <button
+                  class="subtle-button"
+                  disabled={!canStart}
+                  onclick={translate}
+                >
+                  {t("授权已保存密钥", "Authorize saved key")}
+                </button>
+              {/if}
+              <ResizableReading
+                id="translation-reading-viewport"
+                linkedHeight={paired ? pairedRowHeight : null}
+                linkedMaximum={pairedAvailable}
+                onLinkedResize={resizePair}
+                disabled={readingLayoutLoading}
+                onCommit={(height, viewport) =>
+                  saveReadingHeight("translation", height, viewport)}
+                bind:viewportHeight={translationViewportHeight}
+                bind:height={translationHeight}
+                label={t(
+                  paired
+                    ? "调整译文高度（宽屏左右联动；拖动或上下键；双击铺满）"
+                    : "调整译文高度（拖动或上下键；双击恢复）",
+                  paired
+                    ? "Resize translation height (both columns; drag or arrow keys; double-click to fill)"
+                    : "Resize translation height (drag or arrow keys; double-click to reset)",
+                )}
               >
-                {errorText(current.error, locale)}
-              </p>{/if}
-            {#if current?.error?.includes("密钥需要授权") || current?.error?.includes("API Key 需要系统钥匙串授权")}
-              <button
-                class="subtle-button"
-                disabled={!canStart}
-                onclick={translate}
+                {#if current?.translation && !submitting}<TranslationContent
+                    text={current.translation}
+                    {locale}
+                    identity={`${current.id}:${current.attempt}`}
+                    streaming={active(current)}
+                    plain={localDictionary}
+                    highlights={activeHighlights}
+                  />
+                {:else if submitting || (current && active(current))}<div
+                    class="translation-skeleton"
+                    aria-busy="true"
+                  >
+                    <i></i><i></i>
+                    <p>{t("正在翻译…", "Translating…")}</p>
+                  </div>
+                {:else}<p class="result-empty">
+                    {localDictionary
+                      ? t(
+                          "暂无释义，可重新查询",
+                          "No definition yet. Try again.",
+                        )
+                      : t("尚无译文，可重试", "No translation yet. Try again.")}
+                  </p>{/if}
+              </ResizableReading>
+            </section>{/if}
+          {#if !showResult}<div class="reading-empty">
+              <span class="empty-reading-mark" aria-hidden="true"
+                ><Icon name="translate" size={24} /></span
               >
-                {t("授权已保存密钥", "Authorize saved key")}
-              </button>
-            {/if}
-            {#if current?.translation && !submitting}<TranslationContent
-                text={current.translation}
-                {locale}
-                identity={`${current.id}:${current.attempt}`}
-                streaming={active(current)}
-                plain={localDictionary}
-                highlights={activeHighlights}
-              />
-            {:else if submitting || (current && active(current))}<div
-                class="translation-skeleton"
-                aria-busy="true"
+              <p>
+                {current?.translation
+                  ? t("译文已收起", "Translation collapsed")
+                  : localDictionary
+                    ? t("释义将在这里呈现", "Your definition appears here")
+                    : t("译文将在这里呈现", "Your translation appears here")}
+              </p>
+              <span
+                >{current?.translation
+                  ? t(
+                      "点击展开，继续对照阅读。",
+                      "Expand to continue reading side by side.",
+                    )
+                  : t(
+                      "准备好原文，再开始。",
+                      "Start when your source is ready.",
+                    )}</span
               >
-                <i></i><i></i>
-                <p>{t("正在翻译…", "Translating…")}</p>
-              </div>
-            {:else}<p class="result-empty">
-                {localDictionary
-                  ? t("暂无释义，可重新查询", "No definition yet. Try again.")
-                  : t("尚无译文，可重试", "No translation yet. Try again.")}
-              </p>{/if}
+            </div>{/if}
+        </div>
+        {#if showResult}<div class="reading-output-actions">
             {#if service?.provider === "youdao" && draft.trim() && draft.length <= 512}<button
                 class="dictionary-link"
                 disabled={!draft.trim() || draft.length > 512}
@@ -1479,7 +1815,7 @@
                     : t("重新翻译", "Translate again")}</button
                 >
               </div>{/if}
-          </section>{/if}
+          </div>{/if}
         {#if changed && current?.translation && !active(current)}<details
             class="previous-translation"
             open
@@ -1517,7 +1853,7 @@
           >{current ? statusName(current.status, locale) : ""}</span
         >
       </div>
-      {#if waiting && !submitting && !current?.sensitive && !dictionaryHint}<div
+      {#if !guideOpen && waiting && !submitting && !current?.sensitive && !dictionaryHint}<div
           class="capture-hint"
         >
           <span

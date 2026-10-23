@@ -5318,7 +5318,7 @@ dependencies = [
 
 [[package]]
 name = "yurelay"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5335,7 +5335,7 @@ dependencies = [
 
 [[package]]
 name = "yurelay-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "regex",
@@ -5356,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "yurelay-platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cc",
  "security-framework",

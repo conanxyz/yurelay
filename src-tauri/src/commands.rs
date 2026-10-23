@@ -27,6 +27,7 @@ pub struct Bootstrap {
     notice: Option<String>,
     pinned: bool,
     expanded: bool,
+    window_sizing: crate::window_sizing::WindowSizing,
 }
 
 #[tauri::command]
@@ -46,6 +47,11 @@ pub async fn bootstrap(app: AppHandle) -> Result<Bootstrap, String> {
             w.is_maximized().unwrap_or(false) || w.is_fullscreen().unwrap_or(false)
         })
     });
+    let window_sizing = {
+        let mut sizing = s.sizing.lock().unwrap();
+        sizing.observe(view.expanded, false);
+        *sizing
+    };
     Ok(Bootstrap {
         configuration,
         permissions: yurelay_platform::permissions(),
@@ -55,6 +61,7 @@ pub async fn bootstrap(app: AppHandle) -> Result<Bootstrap, String> {
         notice: state::current_notice(&app),
         pinned: view.pinned,
         expanded: view.expanded,
+        window_sizing,
     })
 }
 
@@ -104,26 +111,7 @@ pub fn finish_settings_close(app: AppHandle, request_id: u64) -> Result<(), Stri
 }
 #[tauri::command]
 pub fn set_window_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
-    if expanded {
-        window.maximize().map_err(|_| "无法展开窗口。")?;
-    } else {
-        if window.is_fullscreen().map_err(|_| "无法读取窗口状态。")? {
-            window.set_fullscreen(false).map_err(|_| "无法退出全屏。")?;
-        }
-        window.unmaximize().map_err(|_| "无法恢复小窗口。")?;
-        window
-            .set_size(tauri::LogicalSize::new(
-                460.0
-                    + app
-                        .state::<AppState>()
-                        .vocabulary_sidebar_width
-                        .load(Ordering::Relaxed) as f64,
-                560.0,
-            ))
-            .map_err(|_| "无法调整窗口大小。")?;
-    }
-    Ok(())
+    crate::window_sizing::set_expanded(&app, expanded)
 }
 
 #[tauri::command]
@@ -131,15 +119,8 @@ pub fn dismiss_notice(app: AppHandle) {
     state::clear_notice(&app);
 }
 #[tauri::command]
-pub fn pin_window(app: AppHandle, pinned: bool) -> Result<(), String> {
-    app.get_webview_window("main")
-        .ok_or("窗口不可用。")?
-        .set_always_on_top(pinned)
-        .map_err(|_| "无法改变窗口置顶状态。")?;
-    app.state::<AppState>()
-        .pinned
-        .store(pinned, Ordering::Relaxed);
-    Ok(())
+pub async fn pin_window(app: AppHandle, pinned: bool) -> Result<bool, String> {
+    state::set_pinned(&app, pinned).await
 }
 #[tauri::command]
 pub async fn copy_text(text: String) -> Result<(), String> {
@@ -717,29 +698,6 @@ pub async fn detect_text_language(text: String) -> Result<Option<String>, String
 }
 
 #[tauri::command]
-pub fn fit_result_height(app: AppHandle, height: f64) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
-    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
-        return Ok(());
-    }
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let width = window.inner_size().map_err(|e| e.to_string())?.width as f64 / scale;
-    let max_height = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .map(|m| m.work_area().size.height as f64 / m.scale_factor() - 40.0)
-        .unwrap_or(720.0)
-        .min(720.0);
-    window
-        .set_size(tauri::LogicalSize::new(
-            width,
-            height.clamp(220.0, max_height.max(220.0)),
-        ))
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn open_dictionary(kind: String, text: String) -> Result<(), String> {
     yurelay_platform::open_dictionary(&kind, &text)
 }
@@ -987,57 +945,11 @@ pub fn set_vocabulary_sidebar(app: AppHandle, width: u32) -> Result<u32, String>
     if !matches!(width, 0 | 40 | 220) {
         return Err("无效的生词栏尺寸。".into());
     }
-    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
-    let state = app.state::<AppState>();
-    let old = state.vocabulary_sidebar_width.load(Ordering::Relaxed) as f64;
-    if old == f64::from(width) {
-        return Ok(width);
-    }
-    let scale = window.scale_factor().map_err(|_| "无法读取窗口比例。")?;
-    let size = window.inner_size().map_err(|_| "无法读取窗口大小。")?;
-    let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "无法读取屏幕。")?
-        .ok_or("屏幕不可用。")?;
-    let area = monitor.work_area();
-    let (point, size, applied) = crate::placement::sidebar_bounds(
-        [f64::from(position.x) / scale, f64::from(position.y) / scale],
-        [
-            f64::from(size.width) / scale,
-            f64::from(size.height) / scale,
-        ],
-        [
-            f64::from(area.position.x) / scale,
-            f64::from(area.position.y) / scale,
-            f64::from(area.size.width) / scale,
-            f64::from(area.size.height) / scale,
-        ],
-        old,
-        width,
-    );
-    window
-        .set_min_size(Some(tauri::LogicalSize::new(
-            360.0 + f64::from(applied),
-            220.0,
-        )))
-        .map_err(|_| "无法调整生词栏。")?;
-    if !window.is_maximized().unwrap_or(false) && !window.is_fullscreen().unwrap_or(false) {
-        window
-            .set_size(tauri::LogicalSize::new(size[0], size[1]))
-            .map_err(|_| "无法调整生词栏。")?;
-        state
-            .vocabulary_sidebar_width
-            .store(u64::from(applied), Ordering::Relaxed);
-        window
-            .set_position(tauri::LogicalPosition::new(point[0], point[1]))
-            .map_err(|_| "无法调整生词栏位置。")?;
-    } else {
-        state
-            .vocabulary_sidebar_width
-            .store(u64::from(applied), Ordering::Relaxed);
-    }
-    Ok(applied)
+    // Sidebars change the internal layout, never the user's native bounds.
+    app.state::<AppState>()
+        .vocabulary_sidebar_width
+        .store(u64::from(width), Ordering::Relaxed);
+    Ok(width)
 }
 
 #[tauri::command]

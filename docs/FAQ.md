@@ -14,8 +14,22 @@ Requires **macOS 14 or newer**. When a package is published, download its `.dmg`
 
 1. Allow **Accessibility** for text selection and **Screen Recording** for screenshots.
 2. Choose the system dictionary or configure a model in Settings → Services.
-3. Capture some text; once it is ready, press `D` / `S` or click the arrow.
+3. Capture some text; once it is ready, press `D` / `S` or click Translate / Look up.
 4. If a saved key needs authorization, choose Authorize and continue and follow the macOS prompt.
+
+### Getting started, settings and models
+
+First launch offers **Permissions → Service → Practice**. Grant only the permissions you need, or choose **Set up later**. Completed or skipped setup does not reopen on every launch. Use the title-bar **gear**, app menu, tray menu or `⌘,` for settings. The **question mark** and **Settings → Getting started** replay the guide. Clicking the title-bar question mark again performs the same persistent skip as Set up later and returns to reading without clearing your draft. The empty reader no longer repeats a setup banner.
+
+Click the service/model name in the translation window to open that service's settings. Save model changes explicitly; change shortcuts under **Translation**. System dictionary handles words and phrases, translation services handle passages, and generative model services also support context explanations and replies. Configuration is separate from verification: a connection test sends a fixed sample only when requested.
+
+Practice uses a separate demo. It makes no network requests and never replaces your source, clipboard or history. It displays your currently configured shortcuts.
+
+The main window defaults to 520 × 560 macOS logical pixels. Content, guide and vocabulary changes never resize it; overflow scrolls. Manual sizes persist across launches, and zoom restores the previous normal bounds. In narrow windows vocabulary appears below the reading content without covering it or changing the reading column width.
+
+The title-bar pin keeps the window on top and prevents automatic hiding when another app gains focus. Unpinning restores your existing auto-hide preference. Esc and the explicit Hide button still hide a pinned window.
+
+The guide offers a Zhipu quick setup: register with BigModel, create a standard model API key, paste it and choose Save and use. The free `glm-4.7-flash` model and endpoint are preset. Coding Plan keys use a different endpoint. Existing model configurations are preserved, and advanced settings remain available.
 
 ### First launch and permissions
 
@@ -23,13 +37,15 @@ The current workflow produces ad-hoc-signed development builds without Apple not
 
 Accessibility enables selection from other apps; Screen Recording enables screenshots. Typing, pasting and local dictionary lookup do not require those two permissions. They are separate from signing, notarization and Keychain access. After updating a development build, consult Yurelay's permission recovery guide if needed.
 
+Drag the handle below either reading area to adjust its height, or focus it and use the arrow keys. Wide windows keep a 24px inset and fill the available space with aligned source and translation panels. Either handle adjusts both columns together; their shared proportion is saved separately from compact-window heights. Compact windows stack the panels and retain independent adjustments. Expanding Compose reply adds space below without shrinking the reader. Double-click or press Home to restore the default fit; manual proportions survive collapse, retranslation and restart. Long text scrolls inside a manually sized area; the outer window stays unchanged.
+
 <a id="workflow"></a>
 
 ## Read and reply
 
 1. **Capture text.** Select it, take a screenshot, or type and paste directly.
 2. **Review the source.** Text opens in reading mode; use the pencil to edit and check OCR or cleanup results.
-3. **Start translation.** Wait for the source, release the shortcut, then press `D` / `S` alone or click the arrow.
+3. **Start translation.** Wait for the source, release the shortcut, then press `D` / `S` alone or click Translate / Look up.
 
 Capture or OCR in progress, held-key repeats, editable inputs and input-method composition do not trigger translation. Reading mode supports paragraphs, headings, lists and code blocks. You can also switch to plain text and copy the translation or Markdown separately.
 
@@ -53,7 +69,7 @@ Explanations and replies can each be stopped, regenerated and revisited in histo
 
 **Looking up a word?** Set **macOS system dictionary** as the default in Settings → Services to query enabled local dictionaries without an API key. With a model service selected, Yurelay chooses dictionary or passage instructions based on the input.
 
-For a sentence or paragraph, the system dictionary offers configured translation services for the current query. Choose one, then press `D` / `S` or click the arrow to translate; your default service stays the same.
+For a sentence or paragraph, the system dictionary offers configured translation services for the current query. Choose one, then press `D` / `S` or click Translate / Look up to translate; your default service stays the same.
 
 **Want to remember an expression?** Click or select an English source word for native lemmatization and a dictionary preview, then click **Add**. You can also collect words suggested by the model.
 
@@ -113,7 +129,7 @@ Translation and reply prompts have separate editors in Settings → Prompts. Ser
 
 ### Interaction details and FAQ
 
-- **Can I change the shortcuts?** Global selection, screenshot and optional append bindings can be changed in Translation settings; conflicts are reported. The local second-step keys remain `D` / `S`.
+- **Can I change the shortcuts?** Click any selection, screenshot or optional append shortcut button and press a key combination. Release the main key to finish, or press Esc to cancel. While recording an optional append binding, choose Clear and disable or press Delete to clear it. Recording and clearing take effect only after saving; conflicts are reported. The local second-step keys remain `D` / `S`.
 - **Do D and S translate while I am typing?** In an input field, both keys type normally. Click the arrow or move focus outside the field before using the shortcut.
 - **Can I hold D / S until capture completes?** No. Release and press again after the source is ready. `Option` / `Alt`, `Control` or `Command` combinations, input-method composition and editable fields do not submit a translation.
 - **What happens if I press capture twice?** Duplicate requests are ignored during capture. The selection shortcut preserves the result while Yurelay has focus. A new screenshot can start after the current capture finishes or is cancelled.
