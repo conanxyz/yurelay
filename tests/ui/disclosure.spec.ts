@@ -1435,11 +1435,11 @@ test('saved reading proportions follow window height without rewriting on resize
  await source.focus();await page.keyboard.press('ArrowDown');
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')??'{}').source_viewport_height)).toBe(650);
  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!));
- await page.setViewportSize({width:1360,height:975});
+ await page.setViewportSize({width:900,height:975});
  await expect(source).toHaveAttribute('aria-valuenow',String(Math.round(saved.source_height*1.5)));
  await page.locator('.disclosure-control').click();await complete(page);
  const translation=page.getByRole('separator',{name:/Resize translation height/});
- await translation.focus();await page.keyboard.press('ArrowDown');
+ await translation.focus();await page.keyboard.press('Shift+ArrowDown');
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!).translation_viewport_height)).toBe(975);
  const both=await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!));
  const writes=await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height').length);
@@ -1493,5 +1493,54 @@ test('wide reading pairs stay balanced and narrow windows keep source before tra
  await page.getByRole('button',{name:'展开生词',exact:true}).click();
  await expect(page.locator('.vocabulary-side-card')).toHaveCount(1);
  a=await source.boundingBox();b=await output.boundingBox();expect(Math.abs(a!.y-b!.y)).toBeLessThan(1);expect(b!.x).toBeGreaterThan(a!.x+a!.width);
+
+});
+
+
+test('wide reader aligns both handles, fills fixed window insets, and keeps assistant expansion below',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:1440,height:900});
+ await page.evaluate(()=>localStorage.setItem('fixture-reading-layout',JSON.stringify({source_height:160,translation_height:360,source_viewport_height:650,translation_viewport_height:650})));
+ await page.reload();await page.locator('.disclosure-control').click();await complete(page);
+ await page.evaluate(()=>{const w=window as any;w.task.edited_text=null;w.task.original_text='A synthetic reading sample with enough text to scroll.\n\n'.repeat(60);w.task.translation='这是一段用于检查阅读布局的示例文字。\n\n'.repeat(60);w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ const geometry=()=>page.evaluate(()=>{
+   const sheet=document.querySelector('.reading-sheet')!.getBoundingClientRect();
+   const source=document.querySelector('[aria-controls="source-reading-viewport"]')!.getBoundingClientRect();
+   const translation=document.querySelector('[aria-controls="translation-reading-viewport"]')!.getBoundingClientRect();
+   return {left:sheet.left,right:innerWidth-sheet.right,bottom:innerHeight-sheet.bottom,aligned:Math.abs(source.top-translation.top),height:document.querySelector('.source-panel')!.getBoundingClientRect().height};
+ });
+ await expect.poll(async()=>{const g=await geometry();return Math.abs(g.bottom-24);}).toBeLessThan(2);
+ let g=await geometry();expect(g.left).toBe(24);expect(g.right).toBe(24);expect(g.aligned).toBeLessThan(1);
+ for(const id of ['source','translation']){
+   await expect.poll(()=>page.locator('#'+id+'-reading-viewport').evaluate(el=>{const scroller=el.querySelector('textarea')??el;return scroller.scrollHeight>scroller.clientHeight;})).toBe(true);
+ }
+ await page.screenshot({path:'.ai-notes/reading-aligned-wide.png',fullPage:true,animations:'disabled'});
+ await page.setViewportSize({width:1680,height:1050});
+ await expect.poll(async()=>{const g=await geometry();return Math.abs(g.bottom-24);}).toBeLessThan(2);
+ g=await geometry();expect(g.left).toBe(24);expect(g.right).toBe(24);expect(g.aligned).toBeLessThan(1);
+ const baseHeight=g.height;
+ await page.getByRole('button',{name:'Compose reply',exact:true}).click();
+ await expect(page.locator('.assistant-drawer')).toBeVisible();
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollHeight>innerHeight)).toBe(true);
+ await page.screenshot({path:'.ai-notes/reading-aligned-reply.png',fullPage:true,animations:'disabled'});
+ await page.getByRole('button',{name:'Close assistant panel',exact:true}).click();
+ await expect.poll(async()=>Math.abs((await geometry()).bottom-24)).toBeLessThan(2);
+ const handle=page.getByRole('separator',{name:/Resize source height/});
+ await handle.focus();await page.keyboard.press('ArrowUp');
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight-24);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!));
+ expect(saved.paired_height).toBe(baseHeight-24);expect(saved.source_height).toBe(160);expect(saved.translation_height).toBe(360);
+ await page.reload();await page.locator('.disclosure-control').click();await complete(page);
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight-24);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ await handle.dblclick();await expect.poll(async()=>Math.abs((await geometry()).bottom-24)).toBeLessThan(2);
+ const translationHandle=page.getByRole('separator',{name:/Resize translation height/});
+ const bounds=await translationHandle.boundingBox();
+ await page.mouse.move(bounds!.x+bounds!.width/2,bounds!.y+10);await page.mouse.down();await page.mouse.move(bounds!.x+bounds!.width/2,bounds!.y-54,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await geometry()).height).toBe(baseHeight-64);
+ expect((await geometry()).aligned).toBeLessThan(1);
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!).paired_height)).toBe(baseHeight-64);
 
 });

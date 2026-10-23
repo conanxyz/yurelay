@@ -28,6 +28,32 @@
     languages,
   } from "./locale";
   import ResizableReading from "./ResizableReading.svelte";
+  import { fitReadingWorkspace } from "./readingWorkspace";
+  let viewportWidth = $state(0);
+  let pairedHeight = $state<number | null>(null);
+  let pairedViewportHeight = $state<number | null>(null);
+  let pairedAvailable = $state(400);
+  const paired = $derived(viewportWidth >= 1100);
+  const pairedRowHeight = $derived(
+    pairedHeight === null
+      ? pairedAvailable
+      : Math.max(
+          240,
+          Math.min(
+            pairedAvailable,
+            Math.round(
+              (pairedHeight * pairedAvailable) /
+                (pairedViewportHeight ?? pairedAvailable),
+            ),
+          ),
+        ),
+  );
+  function resizePair(height: number | null, commit: boolean) {
+    pairedHeight =
+      height === null ? null : Math.max(240, Math.min(4000, pairedAvailable, Math.round(height)));
+    pairedViewportHeight = height === null ? null : pairedAvailable;
+    if (commit) saveReadingHeight("paired", pairedHeight, pairedViewportHeight);
+  }
   let sourceHeight = $state<number | null>(null);
   let translationHeight = $state<number | null>(null);
   let sourceViewportHeight = $state<number | null>(null);
@@ -35,7 +61,7 @@
   let readingLayoutLoading = $state(true);
   let heightSaveQueue = Promise.resolve();
   function saveReadingHeight(
-    panel: "source" | "translation",
+    panel: "source" | "translation" | "paired",
     height: number | null,
     viewportHeight: number | null,
   ) {
@@ -59,9 +85,13 @@
       translation_height: number | null;
       source_viewport_height?: number | null;
       translation_viewport_height?: number | null;
+      paired_height?: number | null;
+      paired_viewport_height?: number | null;
     }>("reading_layout")
       .then((layout) => {
         if (!disposed && layout) {
+          pairedHeight = layout.paired_height ?? null;
+          pairedViewportHeight = layout.paired_viewport_height ?? null;
           sourceHeight = layout.source_height;
           translationHeight = layout.translation_height;
           sourceViewportHeight = layout.source_viewport_height ?? null;
@@ -208,7 +238,7 @@
   import Icon from "./Icons.svelte";
   import LoadingSpinner from "./LoadingSpinner.svelte";
   import { serviceName } from "./services";
-  import { imageEntrance, panelEntrance } from "./motion";
+  import { imageEntrance } from "./motion";
   let settings = $state<Settings>(structuredClone(defaults));
   let permissions = $state({ accessibility: false, screen: false });
   let locale = $derived(localeFor(settings));
@@ -1144,7 +1174,11 @@
   });
 </script>
 
-<svelte:window onfocus={refresh} onkeydown={keydown} />
+<svelte:window
+  bind:innerWidth={viewportWidth}
+  onfocus={refresh}
+  onkeydown={keydown}
+/>
 <div
   class="translation-window"
   class:expanded
@@ -1265,7 +1299,13 @@
             >{t("查看或修改快捷键", "View or change shortcuts")}</button
           >
         </div>{/if}
-      <div class="reading-sheet" hidden={guideOpen} inert={guideOpen}>
+      <div
+        class="reading-sheet"
+        hidden={guideOpen}
+        inert={guideOpen}
+        use:fitReadingWorkspace={(height) => (pairedAvailable = height)}
+        style:--paired-row-height={`${pairedRowHeight}px`}
+      >
         <section class="source-panel" aria-label={t("原文", "Source")}>
           <div class="reading-caption">
             <h1>{t("原文", "Source")}</h1>
@@ -1368,14 +1408,21 @@
               </details>{/if}
             <ResizableReading
               id="source-reading-viewport"
+              linkedHeight={paired ? pairedRowHeight : null}
+              linkedMaximum={pairedAvailable}
+              onLinkedResize={resizePair}
               disabled={readingLayoutLoading}
               onCommit={(height, viewport) =>
                 saveReadingHeight("source", height, viewport)}
               bind:viewportHeight={sourceViewportHeight}
               bind:height={sourceHeight}
               label={t(
-                "调整原文高度（拖动或上下键；双击恢复）",
-                "Resize source height (drag or arrow keys; double-click to reset)",
+                paired
+                  ? "调整原文高度（宽屏左右联动；拖动或上下键；双击铺满）"
+                  : "调整原文高度（拖动或上下键；双击恢复）",
+                paired
+                  ? "Resize source height (both columns; drag or arrow keys; double-click to fill)"
+                  : "Resize source height (drag or arrow keys; double-click to reset)",
               )}
             >
               {#if !sourceEditing && current && !sourceProcessing && !!draft.trim()}
@@ -1621,7 +1668,6 @@
           {#if showResult}<section
               id="translation-body"
               class="translation-body"
-              use:panelEntrance
               aria-label={localDictionary
                 ? t("释义", "Definition")
                 : t("译文", "Translation")}
@@ -1643,14 +1689,21 @@
               {/if}
               <ResizableReading
                 id="translation-reading-viewport"
+                linkedHeight={paired ? pairedRowHeight : null}
+                linkedMaximum={pairedAvailable}
+                onLinkedResize={resizePair}
                 disabled={readingLayoutLoading}
                 onCommit={(height, viewport) =>
                   saveReadingHeight("translation", height, viewport)}
                 bind:viewportHeight={translationViewportHeight}
                 bind:height={translationHeight}
                 label={t(
-                  "调整译文高度（拖动或上下键；双击恢复）",
-                  "Resize translation height (drag or arrow keys; double-click to reset)",
+                  paired
+                    ? "调整译文高度（宽屏左右联动；拖动或上下键；双击铺满）"
+                    : "调整译文高度（拖动或上下键；双击恢复）",
+                  paired
+                    ? "Resize translation height (both columns; drag or arrow keys; double-click to fill)"
+                    : "Resize translation height (drag or arrow keys; double-click to reset)",
                 )}
               >
                 {#if current?.translation && !submitting}<TranslationContent
@@ -1677,46 +1730,6 @@
                       : t("尚无译文，可重试", "No translation yet. Try again.")}
                   </p>{/if}
               </ResizableReading>
-              {#if service?.provider === "youdao" && draft.trim() && draft.length <= 512}<button
-                  class="dictionary-link"
-                  disabled={!draft.trim() || draft.length > 512}
-                  onclick={() =>
-                    action("open_dictionary", {
-                      kind: "youdao",
-                      text: draft.trim(),
-                    })}
-                  >{t("在有道词典中查看", "View in Youdao dictionary")}</button
-                >{/if}
-              {#if current}<div class="result-actions">
-                  <button
-                    class="copy-translation"
-                    disabled={active(current) || !current.translation}
-                    onclick={() =>
-                      action("copy_text", {
-                        text: localDictionary
-                          ? current!.translation
-                          : translationPlainText(current!.translation),
-                      })}>{t("复制译文", "Copy translation")}</button
-                  >
-                  {#if current.vocabulary_state === "extracting"}<button
-                      class="quiet-tail-stop"
-                      aria-label={t(
-                        "停止生词提炼",
-                        "Stop vocabulary extraction",
-                      )}
-                      title={t("停止生词提炼", "Stop vocabulary extraction")}
-                      onclick={() => action("stop_task", { id: current!.id })}
-                      ><Icon name="stop" size={12} /></button
-                    >{/if}
-                  <button
-                    class="retry-link"
-                    disabled={!canStart}
-                    onclick={translate}
-                    >{localDictionary
-                      ? t("重新查询", "Look up again")
-                      : t("重新翻译", "Translate again")}</button
-                  >
-                </div>{/if}
             </section>{/if}
           {#if !showResult}<div class="reading-empty">
               <span class="empty-reading-mark" aria-hidden="true"
@@ -1742,6 +1755,45 @@
               >
             </div>{/if}
         </div>
+        {#if showResult}<div class="reading-output-actions">
+            {#if service?.provider === "youdao" && draft.trim() && draft.length <= 512}<button
+                class="dictionary-link"
+                disabled={!draft.trim() || draft.length > 512}
+                onclick={() =>
+                  action("open_dictionary", {
+                    kind: "youdao",
+                    text: draft.trim(),
+                  })}
+                >{t("在有道词典中查看", "View in Youdao dictionary")}</button
+              >{/if}
+            {#if current}<div class="result-actions">
+                <button
+                  class="copy-translation"
+                  disabled={active(current) || !current.translation}
+                  onclick={() =>
+                    action("copy_text", {
+                      text: localDictionary
+                        ? current!.translation
+                        : translationPlainText(current!.translation),
+                    })}>{t("复制译文", "Copy translation")}</button
+                >
+                {#if current.vocabulary_state === "extracting"}<button
+                    class="quiet-tail-stop"
+                    aria-label={t("停止生词提炼", "Stop vocabulary extraction")}
+                    title={t("停止生词提炼", "Stop vocabulary extraction")}
+                    onclick={() => action("stop_task", { id: current!.id })}
+                    ><Icon name="stop" size={12} /></button
+                  >{/if}
+                <button
+                  class="retry-link"
+                  disabled={!canStart}
+                  onclick={translate}
+                  >{localDictionary
+                    ? t("重新查询", "Look up again")
+                    : t("重新翻译", "Translate again")}</button
+                >
+              </div>{/if}
+          </div>{/if}
         {#if changed && current?.translation && !active(current)}<details
             class="previous-translation"
             open

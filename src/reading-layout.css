@@ -2,7 +2,7 @@
    Native window bounds and the user's saved proportions remain independent. */
 .translation-window .translation-content {
   width: 100%;
-  max-width: 1280px;
+  max-width: none;
   padding: 16px;
 }
 .reading-sheet {
@@ -105,13 +105,13 @@
   color: var(--accent);
 }
 
-/* Reserve room for the learning sidebar so opening it never flips the columns. */
+/* Window-level breakpoint keeps the orientation stable when the sidebar opens. */
 @media (min-width: 1100px) {
   .translation-window .translation-content {
-    padding: clamp(24px, 4cqw, 56px) clamp(24px, 4cqw, 56px) 32px;
+    max-width: none;
+    padding: 24px;
   }
   .reading-sheet:not([hidden]) {
-    --default-reading-height: clamp(220px, calc(100dvh - 400px), 640px);
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     column-gap: 8px;
@@ -123,47 +123,69 @@
     grid-column: 1 / -1;
     min-width: 0;
   }
-  .translation-content:has(.start-hint) .reading-sheet {
-    --default-reading-height: clamp(200px, calc(100dvh - 500px), 520px);
-  }
-  .reading-sheet > .source-panel:has(.reader-resize-box:not(.has-height)) {
-    align-self: stretch;
+  .reading-sheet > .source-panel,
+  .reading-sheet > .translation-output {
+    grid-row: 1;
+    height: var(--paired-row-height, 400px);
+    min-height: 0;
     display: flex;
     flex-direction: column;
-  }
-  .source-panel > .reader-resize-box:not(.has-height) {
-    flex: 1 0 auto;
-  }
-  .reading-sheet button.service-identity {
-    color: var(--ink);
+    border-radius: 17px;
   }
   .reading-sheet > .source-panel {
     grid-column: 1;
-    grid-row: 1;
+    overflow: auto;
+  }
+  .reading-sheet > .source-panel:has(.sensitive-mask) {
+    height: auto;
+    min-height: var(--paired-row-height, 400px);
   }
   .reading-sheet > .translation-output {
     grid-column: 2;
-    grid-row: 1;
-    display: block;
   }
   .reading-sheet > .translation-output:not(.has-result) {
     container: reading-output / size;
-    align-self: stretch;
-    display: flex;
-    flex-direction: column;
   }
   .translation-output:not(.has-result) .reading-empty {
     flex: 1;
-    height: auto;
     min-height: 0;
   }
-  .reading-sheet > .service-strip {
-    grid-row: 2;
-    padding: 16px 14px 12px;
+  .reading-sheet .translation-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 0;
   }
-  .reading-sheet > .source-panel,
-  .translation-output {
-    border-radius: 17px;
+  .reading-sheet .reader-resize-box {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 80px;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .source-panel > :not(.reader-resize-box),
+  .translation-output > .reading-caption,
+  .translation-body > :not(.reader-resize-box) {
+    flex: none;
+  }
+  .reading-sheet .reader-resize-box .source-editor-frame {
+    height: 100%;
+  }
+  .reading-sheet .reader-resize-box .source-editor {
+    height: 100%;
+    min-height: 0;
+    padding: 12px 20px 20px;
+  }
+  .reading-sheet .source-reading-view,
+  .reading-sheet .translation-prose {
+    padding: 12px 20px 20px;
+  }
+  .reading-sheet .reader-resize-handle {
+    margin: 0 12px;
+  }
+  .reading-sheet .source-image img {
+    max-height: 120px;
   }
   .reading-caption {
     padding: 14px 20px 10px;
@@ -176,47 +198,36 @@
     display: flex;
     justify-content: space-between;
   }
-  .reading-sheet .reader-resize-box:not(.has-height) {
-    height: var(--default-reading-height);
-    overflow: auto;
-    overscroll-behavior: contain;
+  .reading-output-actions {
+    grid-row: 2;
   }
-  .reading-sheet .reader-resize-box .source-editor-frame {
-    height: 100%;
+  .reading-output-actions .result-actions {
+    margin: 0;
+    padding: 6px 14px 4px;
   }
-  .reading-sheet .reader-resize-box .source-editor {
-    height: 100%;
-    min-height: 0;
-    padding: 12px 20px 20px;
+  .reading-output-actions .copy-translation {
+    margin-left: auto;
   }
-  .reading-sheet .source-reading-view {
-    padding: 12px 20px 20px;
+  .reading-output-actions .retry-link {
+    margin-left: 16px;
   }
-  .reading-sheet .translation-prose {
-    padding: 12px 20px 20px;
+  .reading-sheet > .service-strip {
+    grid-row: 3;
+    padding: 12px 14px;
   }
-  .reading-sheet .translation-body {
-    padding-bottom: 0;
-  }
-  .reading-empty {
-    height: calc(var(--default-reading-height) + 20px);
-  }
-  .reading-sheet .result-actions {
-    padding: 6px 20px 12px;
-  }
-  .reading-sheet .reader-resize-handle {
-    margin: 0 12px;
+  .reading-sheet button.service-identity {
+    color: var(--ink);
   }
   .reading-sheet .assistant-entrypoints {
     padding: 4px 14px 10px;
   }
   .start-hint {
-    margin: 0 4px 28px;
+    margin: 0 4px 20px;
     padding: 0;
   }
   .start-hint .start-eyebrow {
     display: block;
-    margin: 0 0 12px;
+    margin: 0 0 10px;
     font-size: 10px;
     letter-spacing: 0.16em;
     text-transform: uppercase;

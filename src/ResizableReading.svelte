@@ -5,6 +5,9 @@
     id,
     height = $bindable<number | null>(null),
     viewportHeight = $bindable<number | null>(null),
+    linkedHeight = null,
+    linkedMaximum = 4000,
+    onLinkedResize = (_height: number | null, _commit: boolean) => {},
     children,
     disabled = false,
     onCommit = (_height: number | null, _viewportHeight: number | null) => {},
@@ -13,6 +16,9 @@
     id: string;
     height?: number | null;
     viewportHeight?: number | null;
+    linkedHeight?: number | null;
+    linkedMaximum?: number;
+    onLinkedResize?: (height: number | null, commit: boolean) => void;
     children: Snippet;
     disabled?: boolean;
     onCommit?: (height: number | null, viewportHeight: number | null) => void;
@@ -29,13 +35,19 @@
       ? null
       : clamp((height * referenceHeight) / (viewportHeight ?? 560)),
   );
-  function setHeight(value: number) {
+  function setHeight(value: number, commit = false) {
+    if (linkedHeight !== null) {
+      onLinkedResize(value, commit);
+      return;
+    }
     height = clamp(value);
     viewportHeight = referenceHeight;
+    if (commit) onCommit(height, viewportHeight);
   }
   let box: HTMLDivElement;
   let measured = $state(120);
-  let drag: { id: number; y: number; height: number } | null = null;
+  let drag: { id: number; y: number; height: number; latest?: number } | null =
+    null;
   function start(event: PointerEvent) {
     if (disabled || event.button !== 0 || drag) return;
     event.preventDefault();
@@ -45,17 +57,20 @@
     drag = {
       id: event.pointerId,
       y: event.clientY,
-      height: box.getBoundingClientRect().height,
+      height: linkedHeight ?? box.getBoundingClientRect().height,
     };
   }
   function move(event: PointerEvent) {
     if (drag?.id !== event.pointerId) return;
-    setHeight(drag.height + event.clientY - drag.y);
+    drag.latest = drag.height + event.clientY - drag.y;
+    setHeight(drag.latest);
   }
   function end(event: PointerEvent) {
     if (drag?.id !== event.pointerId) return;
+    const finalHeight = drag.latest ?? linkedHeight;
     drag = null;
-    onCommit(height, viewportHeight);
+    if (linkedHeight !== null) onLinkedResize(finalHeight, true);
+    else onCommit(height, viewportHeight);
     const handle = event.currentTarget as HTMLElement;
     if (handle.hasPointerCapture(event.pointerId))
       handle.releasePointerCapture(event.pointerId);
@@ -73,10 +88,10 @@
       event.preventDefault();
       event.stopPropagation();
       setHeight(
-        box.getBoundingClientRect().height +
+        (linkedHeight ?? box.getBoundingClientRect().height) +
           (event.key === "ArrowDown" ? 24 : -24) * (event.shiftKey ? 4 : 1),
+        true,
       );
-      onCommit(height, viewportHeight);
     } else if (event.key === "Home") {
       event.preventDefault();
       event.stopPropagation();
@@ -85,6 +100,10 @@
   }
   function reset() {
     if (!disabled) {
+      if (linkedHeight !== null) {
+        onLinkedResize(null, true);
+        return;
+      }
       height = null;
       viewportHeight = null;
       onCommit(null, null);
@@ -105,7 +124,9 @@
   {id}
   class="reader-resize-box"
   class:has-height={height !== null}
-  style:height={displayedHeight === null ? undefined : `${displayedHeight}px`}
+  style:height={linkedHeight !== null || displayedHeight === null
+    ? undefined
+    : `${displayedHeight}px`}
   bind:this={box!}
 >
   {@render children()}
@@ -120,9 +141,11 @@
   title={label}
   aria-orientation="horizontal"
   aria-controls={id}
-  aria-valuemin={minimum}
-  aria-valuemax={Math.max(maximum, measured)}
-  aria-valuenow={measured}
+  aria-valuemin={linkedHeight !== null ? 240 : minimum}
+  aria-valuemax={linkedHeight !== null
+    ? Math.max(linkedMaximum, linkedHeight)
+    : Math.max(maximum, measured)}
+  aria-valuenow={linkedHeight ?? measured}
   aria-disabled={disabled}
   tabindex={disabled ? -1 : 0}
   onpointerdown={start}

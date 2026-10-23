@@ -9,12 +9,15 @@ pub struct ReadingLayout {
     pub translation_height: Option<u32>,
     pub source_viewport_height: Option<u32>,
     pub translation_viewport_height: Option<u32>,
+    pub paired_height: Option<u32>,
+    pub paired_viewport_height: Option<u32>,
 }
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadingPanel {
     Source,
     Translation,
+    Paired,
 }
 fn validate(height: Option<u32>) -> Result<(), String> {
     if height.is_some_and(|h| !(80..=4000).contains(&h)) {
@@ -41,6 +44,8 @@ fn read(connection: &Connection) -> Result<ReadingLayout, String> {
         .map(|v| serde_json::from_str(&v).map_err(|_| "无法读取阅读区尺寸设置。".to_string()))
         .transpose()?
         .unwrap_or_default();
+    validate(layout.paired_height)?;
+    validate_viewport(layout.paired_viewport_height)?;
     validate(layout.source_height)?;
     validate(layout.translation_height)?;
     validate_viewport(layout.source_viewport_height)?;
@@ -63,6 +68,10 @@ impl Storage {
         self.call(move |db| {
             let mut layout = read(&db.connection)?;
             match panel {
+                ReadingPanel::Paired => {
+                    layout.paired_height = height;
+                    layout.paired_viewport_height = viewport_height;
+                },
                 ReadingPanel::Source => {
                     layout.source_height = height;
                     layout.source_viewport_height = viewport_height;
@@ -106,6 +115,7 @@ mod tests {
                 translation_height: Some(420),
                 source_viewport_height: Some(560),
                 translation_viewport_height: Some(560),
+                ..ReadingLayout::default()
             }
         );
         db.save_reading_height(ReadingPanel::Source, None, Some(560))
@@ -118,6 +128,7 @@ mod tests {
                 translation_height: Some(420),
                 source_viewport_height: None,
                 translation_viewport_height: Some(560),
+                ..ReadingLayout::default()
             }
         );
         assert!(
@@ -193,5 +204,38 @@ mod tests {
         assert_eq!(layout.source_viewport_height, Some(900));
         assert_eq!(layout.translation_height, Some(320));
         assert_eq!(layout.translation_viewport_height, None);
+    }
+    #[tokio::test]
+    async fn paired_height_is_independent_of_compact_preferences_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Storage::open(dir.path().to_path_buf(), system_clock())
+            .await
+            .unwrap();
+        db.save_reading_height(ReadingPanel::Source, Some(240), Some(560))
+            .await
+            .unwrap();
+        db.save_reading_height(ReadingPanel::Translation, Some(320), Some(560))
+            .await
+            .unwrap();
+        db.save_reading_height(ReadingPanel::Paired, Some(480), Some(640))
+            .await
+            .unwrap();
+        drop(db);
+        let db = Storage::open(dir.path().to_path_buf(), system_clock())
+            .await
+            .unwrap();
+        let layout = db.reading_layout().await.unwrap();
+        assert_eq!(layout.paired_height, Some(480));
+        assert_eq!(layout.paired_viewport_height, Some(640));
+        assert_eq!(layout.source_height, Some(240));
+        assert_eq!(layout.translation_height, Some(320));
+        db.save_reading_height(ReadingPanel::Paired, None, None)
+            .await
+            .unwrap();
+        let reset = db.reading_layout().await.unwrap();
+        assert_eq!(reset.paired_height, None);
+        assert_eq!(reset.paired_viewport_height, None);
+        assert_eq!(reset.source_height, layout.source_height);
+        assert_eq!(reset.translation_height, layout.translation_height);
     }
 }
