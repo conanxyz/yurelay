@@ -93,15 +93,10 @@ test('tutorial is independent of setup, uses current shortcuts and preserves the
   await page.evaluate(()=>{const w=window as any;w.settings.selection_shortcut='Control+Shift+L';w.emit('configuration-changed',structuredClone(w.settings));});
   await page.getByRole('button',{name:'Usage guide',exact:true}).click();
   await page.getByRole('button',{name:/3\s*Practice/}).click();
-  await expect(page.locator('.guide-demo')).toContainText('⌃⇧L');
-  await page.getByRole('button',{name:'Use sample text',exact:true}).click();
-  await page.getByRole('button',{name:'Confirm and continue',exact:true}).click();
-  await page.getByRole('button',{name:'Show demo translation',exact:true}).click();
-  await page.getByRole('button',{name:'Continue',exact:true}).click();
-  await page.getByRole('button',{name:'Practice copying',exact:true}).click();
-  await page.getByRole('button',{name:'Pin demo',exact:true}).click();
-  await page.getByRole('button',{name:'Hide demo',exact:true}).click();
-  await page.getByRole('button',{name:'Finish practice',exact:true}).click();
+  await expect(page.locator('.guide-basics')).toContainText('⌃⇧L');
+  await page.keyboard.press('s');
+  await expect(page.locator('.demo-result')).toBeVisible();
+  await page.getByRole('button',{name:'Start using Yurelay',exact:true}).click();
   await expect(page.getByRole('textbox',{name:'Source text',exact:true})).toHaveValue('My synthetic draft');
   expect(await networkActions(page)).toEqual([]);
   expect(await page.evaluate(()=>(window as any).progress.tutorial)).toBe('completed');
@@ -148,5 +143,31 @@ test('a skipped guide can be replayed without closing on a progress update',asyn
   await page.getByRole('button',{name:'Continue to services',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Choose a service before your first query'})).toBeVisible();
   await page.getByRole('button',{name:'Practice the basics',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Practice the basic workflow'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Three steps to get started'})).toBeVisible();
+});
+
+test('D activates the tutorial sample without sending a real translation',async({page})=>{
+ await setup(page);
+ await page.getByRole('button',{name:/3\s*Practice/}).click();
+ await page.keyboard.press('d');
+ await expect(page.locator('.demo-result')).toBeVisible();
+ expect(await networkActions(page)).toEqual([]);
+});
+
+
+test('tutorial shortcuts ignore modifiers, repeat, composition, editing and dialogs',async({page})=>{
+ await setup(page);
+ await page.getByRole('button',{name:/3\s*Practice/}).click();
+ await page.evaluate(()=>{
+  for(const options of [{repeat:true},{isComposing:true},{altKey:true},{metaKey:true},{ctrlKey:true},{shiftKey:true}])window.dispatchEvent(new KeyboardEvent('keydown',{key:'d',...options}));
+  const input=document.createElement('input');document.querySelector('.guide-demo')!.append(input);input.focus();input.dispatchEvent(new KeyboardEvent('keydown',{key:'s',bubbles:true}));input.remove();
+  const dialog=document.createElement('dialog');document.body.append(dialog);dialog.showModal();window.dispatchEvent(new KeyboardEvent('keydown',{key:'d'}));dialog.remove();
+ });
+ await expect(page.locator('.demo-result')).toHaveCount(0);
+ await page.getByRole('button',{name:'Translate sample (D / S)',exact:true}).click();
+ await expect(page.locator('.demo-result')).toBeVisible();
+ expect(await networkActions(page)).toEqual([]);
+ await page.setViewportSize({width:360,height:650});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:'test-results/simple-guide.png',fullPage:true});
 });

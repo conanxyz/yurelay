@@ -25,18 +25,38 @@
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   let step = $state(untrack(() => initialStep ?? 0)),
-    lesson = $state(0),
     busy = $state(false),
     error = $state("");
   let permissions = $state({ accessibility: false, screen: false });
   let status = $state<ExperienceStatus | null>(null);
   let heading = $state<HTMLHeadingElement>();
-  let demo = $state(""),
-    demoResult = $state(false),
-    copied = $state(false),
-    demoHidden = $state(false),
-    demoPinned = $state(false);
-  let advanced = $state(false);
+  let demoResult = $state(false);
+  function demoKeydown(event: KeyboardEvent) {
+    if (
+      step !== 2 ||
+      busy ||
+      event.defaultPrevented ||
+      event.repeat ||
+      event.isComposing ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      document.querySelector("dialog[open]")
+    )
+      return;
+    const editing =
+      'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"]';
+    if (
+      (event.target as HTMLElement)?.closest(editing) ||
+      document.activeElement?.closest(editing)
+    )
+      return;
+    if (["d", "s"].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      demoResult = true;
+    }
+  }
   let disposed = false,
     sequence = 0;
   const active = $derived(
@@ -96,25 +116,12 @@
       onclose?.();
     });
   }
-  async function nextLesson() {
-    await run(async () => {
-      const next = Math.min(3, lesson + 1);
-      await progress({ type: "lesson", lesson: next });
-      lesson = next;
-      await tick();
-      heading?.focus();
-    });
-  }
   onMount(() => {
     let loaded = false;
     const update = () =>
       refresh()
         .then(() => {
           if (!loaded && status) {
-            lesson =
-              status.progress.tutorial === "completed"
-                ? 0
-                : status.progress.lesson;
             if (initialStep === undefined) step = status.progress.step;
             loaded = true;
           }
@@ -144,6 +151,8 @@
     };
   });
 </script>
+
+<svelte:window onkeydown={demoKeydown} />
 
 <section
   class="getting-started"
@@ -324,126 +333,56 @@
     </p>
   {:else}
     <h2 bind:this={heading!} tabindex="-1">
-      {t("练习一次，掌握基础操作", "Practice the basic workflow")}
+      {t("三步就能开始", "Three steps to get started")}
     </h2>
-    <p class="guide-detail">
-      {t(
-        "以下是独立演示，不请求网络、不修改你的原文，也不写入历史记录。",
-        "This is a separate demo: no network requests, no changes to your source and no history entries.",
-      )}
-    </p>
-    <div class="guide-demo">
-      <strong
-        >{lesson + 1} / 4 · {[
-          t("取得原文", "Get text"),
-          t("核对文字和语言", "Review text and languages"),
-          t("主动开始翻译", "Start translation"),
-          t("复制与窗口操作", "Copy and window controls"),
-        ][lesson]}</strong
-      >
-      {#if lesson === 0}<p>
-          {t(
-            "在其他应用选中文字后按",
-            "Select text in another app, then press ",
-          )} <kbd>{shortcut(settings.selection_shortcut)}</kbd>；{t(
+    <ol class="guide-basics">
+      <li>
+        <strong>{t("取词", "Get text")}</strong>
+        <p>
+          {t("选中文字后按", "Select text and press ")}
+          <kbd>{shortcut(settings.selection_shortcut)}</kbd>；{t(
             "截图按",
-            "capture a region with ",
+            "capture with ",
           )} <kbd>{shortcut(settings.screenshot_shortcut)}</kbd>。
         </p>
-        <button
-          disabled={busy}
-          onclick={() => {
-            demo = "Hello, how are you?";
-            nextLesson();
-          }}>{t("使用示例原文", "Use sample text")}</button
-        >
-      {:else if lesson === 1}<label
-          >{t("演示原文", "Demo source")}<textarea
-            bind:value={demo}
-            placeholder="Hello, how are you?"></textarea></label
-        >
+      </li>
+      <li>
+        <strong>{t("翻译", "Translate")}</strong>
         <p>
           {t(
-            "核对截图识别的文字，并确认原文语言和目标语言。示例：英语 → 简体中文。",
-            "Check captured text and confirm the source and target languages. Example: English → Simplified Chinese.",
+            "核对原文，点击“翻译”或按 D / S。编辑文字时不触发。",
+            "Review the text, then click Translate or press D / S. Shortcuts are inactive while editing.",
           )}
         </p>
-        <button disabled={busy} onclick={nextLesson}
-          >{t("确认，继续", "Confirm and continue")}</button
-        >
-      {:else if lesson === 2}<p>{demo || "Hello, how are you?"}</p>
+      </li>
+      <li>
+        <strong>{t("复制", "Copy")}</strong>
         <p>
           {t(
-            "取词后不会立即发送。检查原文，再点击“翻译”；窗口内也可按 D / S，编辑文字时不触发。",
-            "Capturing text does not send it immediately. Review it, then click Translate. D / S also works in the result window when you are not editing text.",
+            "点击“复制译文”，粘贴到需要的位置。",
+            "Click Copy translation, then paste it where needed.",
           )}
         </p>
-        <button
-          disabled={busy}
-          onclick={() => {
-            demoResult = true;
-          }}>{t("显示演示译文", "Show demo translation")}</button
-        >{#if demoResult}<p class="demo-result">
-            {t(
-              "演示结果：你好，你好吗？（固定示例）",
-              "Demo result: 你好，你好吗？ (fixed example)",
-            )}
-          </p>
-          <button disabled={busy} onclick={nextLesson}
-            >{t("继续", "Continue")}</button
-          >{/if}
-      {:else}<p>
-          {t(
-            "复制译文后粘贴到需要的位置。Esc 收起窗口；置顶可让窗口保持在其他应用前方。",
-            "Copy the translation and paste it where needed. Esc hides the window; Pin keeps it above other apps.",
-          )}
-        </p>
-        <div class="guide-actions">
-          <button
-            onclick={() => {
-              copied = true;
-            }}>{t("演示复制", "Practice copying")}</button
-          ><button
-            aria-pressed={demoPinned}
-            onclick={() => (demoPinned = !demoPinned)}
-            >{demoPinned
-              ? t("取消演示置顶", "Unpin demo")
-              : t("演示置顶", "Pin demo")}</button
-          ><button onclick={() => (demoHidden = !demoHidden)}
-            >{demoHidden
-              ? t("重新显示演示", "Show demo again")
-              : t("收起演示", "Hide demo")}</button
-          >
-        </div>
-        {#if !demoHidden}<p class="demo-result">
-            你好，你好吗？
-          </p>{/if}{#if copied}<p role="status">
-            {t(
-              "已完成复制练习；演示没有改动系统剪贴板。",
-              "Copy practice complete. The demo did not change your clipboard.",
-            )}
-          </p>{/if}
-      {/if}
-      <div class="guide-actions">
-        {#if lesson > 0}<button
-            disabled={busy}
-            onclick={() =>
-              run(async () => {
-                await progress({ type: "lesson", lesson: lesson - 1 });
-                lesson--;
-              })}>{t("上一步练习", "Previous exercise")}</button
-          >{/if}<button
-          disabled={busy}
-          onclick={() =>
-            run(async () => {
-              await progress({ type: "lesson", lesson: 0 });
-              lesson = 0;
-              demo = "";
-              demoResult = false;
-              copied = false;
-            })}>{t("重新练习", "Restart practice")}</button
-        >
-      </div>
+      </li>
+    </ol>
+    <div class="guide-demo">
+      <strong>{t("试按 D 或 S", "Try pressing D or S")}</strong>
+      <p>Hello, how are you?</p>
+      <button
+        disabled={busy}
+        aria-keyshortcuts="D S"
+        onclick={() => (demoResult = true)}
+        >{t("翻译示例（D / S）", "Translate sample (D / S)")}</button
+      >
+      {#if demoResult}<p class="demo-result" role="status">
+          {t("示例译文：你好，你好吗？", "Sample translation: 你好，你好吗？")}
+        </p>{/if}
+      <p class="guide-detail">
+        {t(
+          "这里只练习操作，不调用翻译服务。",
+          "This practice does not call a translation service.",
+        )}
+      </p>
     </div>
     {#if status?.shortcuts && !status.shortcuts.registered}<p role="alert">
         {t(
@@ -457,26 +396,6 @@
         run(() => navigate({ section: "translation", profile_id: null }))}
       >{t("修改快捷键", "Change shortcuts")}</button
     >
-    <details bind:open={advanced}>
-      <summary
-        >{t(
-          "进阶：生词、追加内容与回复",
-          "More: vocabulary, adding context and replies",
-        )}</summary
-      >
-      <p>
-        {t(
-          "生词候选需要你点击收录，不会自动展开侧栏。追加内容可把多段文字放到同一任务。语境解析帮助理解表达；构思回复可将你的中文意图写成对方语言的回答。生成后核对内容，再复制发送。",
-          "Save vocabulary candidates explicitly; their arrival never opens the sidebar. Add text to combine context in one task. Explain context to understand an expression, or compose a reply from your intent in the other person's language. Review the result before copying and sending it.",
-        )}
-      </p>
-    </details>
-    {#if status?.progress.tutorial === "completed"}<p role="status">
-        {t(
-          "基础教程已完成，可随时重播。",
-          "Practice completed. You can replay it any time.",
-        )}
-      </p>{/if}
   {/if}
   <footer class="guide-actions">
     {#if step > 0}<button disabled={busy} onclick={() => go(step - 1)}
@@ -496,14 +415,11 @@
         onclick={() =>
           run(async () => {
             await progress({
-              type: lesson === 3 ? "finish_tutorial" : "skip_tutorial",
+              type: demoResult ? "finish_tutorial" : "skip_tutorial",
             });
             await progress({ type: "finish" });
             onclose?.();
-          })}
-        >{lesson === 3
-          ? t("完成教程", "Finish practice")
-          : t("跳过练习，开始使用", "Skip practice and start")}</button
+          })}>{t("开始使用", "Start using Yurelay")}</button
       >{/if}
   </footer>
 </section>

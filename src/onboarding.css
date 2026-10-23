@@ -183,7 +183,11 @@ button.service-identity:hover {
   }
 }
 
-.window-chrome {position:sticky;top:0;z-index:10;}
+.window-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
 
 .workspace-pref-pane > .getting-started {
   min-height: 0;
@@ -191,4 +195,19 @@ button.service-identity:hover {
   overflow: auto;
   box-sizing: border-box;
   padding: 8px 12px;
+}
+
+.guide-basics {
+  padding-left: 22px;
+  margin: 12px 0;
+}
+.guide-basics li {
+  padding: 4px 0;
+}
+.guide-basics p {
+  margin: 3px 0;
+  color: var(--muted);
+}
+.guide-basics kbd {
+  white-space: nowrap;
 }
