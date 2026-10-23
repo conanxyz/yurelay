@@ -232,3 +232,29 @@ button.service-identity:hover {
     height: 56px;
   }
 }
+
+.service-test-feedback {
+  border: 1px solid var(--accent);
+  border-left-width: 4px;
+  border-radius: 9px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.service-test-feedback strong {
+  font-size: 15px;
+  color: var(--accent);
+}
+.service-test-feedback p {
+  margin: 5px 0 0;
+}
+.service-test-feedback[data-state="error"] {
+  border-color: var(--error);
+  background: var(--surface);
+}
+.service-test-feedback[data-state="error"] strong {
+  color: var(--error);
+}

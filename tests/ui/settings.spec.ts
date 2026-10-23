@@ -63,7 +63,7 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
         if(cmd==='default_reply_prompt')return 'Use the source context to express the user intent in natural language for a native reader. Never invent facts or commitments.';
         if(cmd==='operation_list')return structuredClone(w.operations??[]);
         if(cmd==='service_verifications')return structuredClone(w.verifications??[]);
-        if(cmd==='test_connection'){if(w.receiptOnTest&&JSON.stringify(args.profile)===JSON.stringify(w.settings.profiles.find((p:any)=>p.id===args.profile.id))&&!args.keyOverride)w.verifications=[{profile_id:args.profile.id,state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];return {first_content_ms:1,total_ms:2};}
+        if(cmd==='test_connection'){if(w.deferTest)await new Promise<void>(resolve=>w.finishTest=resolve);if(w.testError)throw w.testError;if(w.receiptOnTest&&JSON.stringify(args.profile)===JSON.stringify(w.settings.profiles.find((p:any)=>p.id===args.profile.id))&&!args.keyOverride)w.verifications=[{profile_id:args.profile.id,state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];return {first_content_ms:1,total_ms:2};}
         if (cmd === 'take_settings_route') { const route=w.pendingRoute;w.pendingRoute=null;return route??null; }
         if (cmd === 'permissions') return structuredClone(w.permissions);
         if(cmd==='vocabulary_list')return structuredClone(w.vocabulary);
@@ -776,4 +776,28 @@ test('Zhipu quick setup preserves an existing nondefault model',async({page})=>{
  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',zhipu:true};w.emit('settings-navigate',null);});
  await expect(page.getByLabel('Model',{exact:true})).toHaveValue('existing-synthetic-model');
  await expect(page.getByRole('region',{name:'Zhipu quick setup'})).toHaveCount(0);
+});
+
+
+test('connection feedback is visible beside its button and distinguishes saved versus unsaved configuration',async({page})=>{
+ await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
+ await page.evaluate(()=>{(window as any).deferTest=true;});
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();
+ const feedback=page.locator('.service-test-feedback');
+ await expect(feedback).toContainText('Testing connection');
+ await expect(feedback).toBeInViewport();
+ await expect(page.getByRole('button',{name:'Testing…',exact:true})).toBeDisabled();
+ await page.evaluate(()=>{const w=window as any;w.deferTest=false;w.finishTest();});
+ await expect(feedback).toContainText('Your saved configuration passed');
+ await expect(feedback).toBeInViewport();
+ await page.screenshot({path:'docs/images/first-use/connection-success.png',fullPage:true});
+ await page.getByLabel('API Key',{exact:true}).fill('synthetic-new-key');
+ await expect(feedback).toHaveCount(0);
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();
+ await expect(feedback).toContainText('Save changes to apply');
+ await page.evaluate(()=>{(window as any).testError='Synthetic HTTP 401';});
+ await page.getByRole('button',{name:'Test connection',exact:true}).click();
+ await expect(feedback).toContainText('Connection failed');
+ await expect(feedback).toContainText('Synthetic HTTP 401');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
 });

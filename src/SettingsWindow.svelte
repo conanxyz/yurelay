@@ -434,14 +434,60 @@
   function keyOverride() {
     return selected in keys ? (keys[selected] ?? "") : null;
   }
+  let testEpoch = 0;
+  let testStatus = $state<HTMLDivElement>();
+  let testFeedback = $state<{
+    profileId: string;
+    state: "testing" | "success" | "error";
+    message: string;
+  } | null>(null);
+  $effect(() => {
+    void JSON.stringify(profile);
+    void keys[selected];
+    testEpoch++;
+    testFeedback = null;
+  });
   async function testService(key: string | null) {
+    const epoch = ++testEpoch;
+    const id = selected;
+    const unsaved = dirty;
+    testFeedback = {
+      profileId: id,
+      state: "testing",
+      message: t("正在连接，请稍候…", "Connecting, please wait…"),
+    };
+    await tick();
+    testStatus?.scrollIntoView({ block: "nearest" });
     try {
       await invoke("test_connection", {
         profile: $state.snapshot(profile),
         keyOverride: key,
       });
+      if (epoch === testEpoch)
+        testFeedback = {
+          profileId: id,
+          state: "success",
+          message: unsaved
+            ? t(
+                "当前表单测试成功。请点击保存，让修改生效。",
+                "This form passed the test. Save changes to apply it.",
+              )
+            : t(
+                "已保存的配置测试成功，可以使用。",
+                "Your saved configuration passed the test and is ready to use.",
+              ),
+        };
+    } catch (e) {
+      if (epoch === testEpoch)
+        testFeedback = {
+          profileId: id,
+          state: "error",
+          message: errorText(e, locale),
+        };
     } finally {
       verificationVersion++;
+      await tick();
+      if (epoch === testEpoch) testStatus?.scrollIntoView({ block: "nearest" });
     }
   }
   async function save() {
@@ -595,6 +641,25 @@
     });
   });
 </script>
+
+{#snippet serviceTestFeedback()}
+  {#if testFeedback?.profileId === selected}<div
+      bind:this={testStatus}
+      class="service-test-feedback"
+      data-state={testFeedback.state}
+      role="status"
+      aria-live="polite"
+    >
+      <strong
+        >{testFeedback.state === "testing"
+          ? t("正在测试连接…", "Testing connection…")
+          : testFeedback.state === "success"
+            ? t("✓ 连接成功", "✓ Connection successful")
+            : t("连接失败", "Connection failed")}</strong
+      >
+      <p>{testFeedback.message}</p>
+    </div>{/if}
+{/snippet}
 
 <div
   class="preferences-shell grid min-h-[100dvh] grid-cols-1 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[192px_minmax(0,1fr)] md:grid-rows-1"
@@ -1089,17 +1154,18 @@
                       "The key is saved to Keychain only when you save. If macOS requests authorization, enter your password in its system dialog.",
                     )}
                   </p>
+                  {@render serviceTestFeedback()}
                   <div class="guide-actions">
                     <button
                       disabled={busy || !configured(profile)}
                       onclick={() =>
                         run(async () => {
                           await testService(keyOverride());
-                          message = t(
-                            "连接测试成功；请保存配置。",
-                            "Connection test passed. Save your configuration.",
-                          );
-                        })}>{t("测试连接", "Test connection")}</button
+                        })}
+                      >{testFeedback?.state === "testing" &&
+                      testFeedback.profileId === selected
+                        ? t("测试中…", "Testing…")
+                        : t("测试连接", "Test connection")}</button
                     >
                     <button
                       class="primary"
@@ -1263,15 +1329,12 @@
                             )}
                           </p>
                         </div>
+                        {@render serviceTestFeedback()}
                         <div class="service-actions">
                           <button
                             onclick={() =>
                               run(async () => {
                                 await testService(null);
-                                message = t(
-                                  "系统词典查询成功",
-                                  "System dictionary lookup succeeded",
-                                );
                               })}>{t("测试词典", "Test dictionary")}</button
                           ><button
                             onclick={() =>
@@ -1420,16 +1483,17 @@
                               /></label
                             >{/if}
                         </div>
+                        {@render serviceTestFeedback()}
                         <div class="service-actions">
                           <button
                             onclick={() =>
                               run(async () => {
                                 await testService(keyOverride());
-                                message = t(
-                                  "连接成功，服务已返回测试结果。",
-                                  "Connected. The service returned a test result.",
-                                );
-                              })}>{t("测试连接", "Test connection")}</button
+                              })}
+                            >{testFeedback?.state === "testing" &&
+                            testFeedback.profileId === selected
+                              ? t("测试中…", "Testing…")
+                              : t("测试连接", "Test connection")}</button
                           >
                           {#if usesModel(profile.provider) && !profile.provider.startsWith("minimax")}<button
                               onclick={() =>
