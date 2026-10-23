@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",
-    "@sveltejs/vite-plugin-svelte": "^6.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.0.0",
     "@types/markdown-it": "^14.2.0",
