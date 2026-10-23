@@ -27,6 +27,7 @@ pub struct Bootstrap {
     notice: Option<String>,
     pinned: bool,
     expanded: bool,
+    window_sizing: crate::window_sizing::WindowSizing,
 }
 
 #[tauri::command]
@@ -46,6 +47,11 @@ pub async fn bootstrap(app: AppHandle) -> Result<Bootstrap, String> {
             w.is_maximized().unwrap_or(false) || w.is_fullscreen().unwrap_or(false)
         })
     });
+    let window_sizing = {
+        let mut sizing = s.sizing.lock().unwrap();
+        sizing.observe(view.expanded, false);
+        *sizing
+    };
     Ok(Bootstrap {
         configuration,
         permissions: yurelay_platform::permissions(),
@@ -55,6 +61,7 @@ pub async fn bootstrap(app: AppHandle) -> Result<Bootstrap, String> {
         notice: state::current_notice(&app),
         pinned: view.pinned,
         expanded: view.expanded,
+        window_sizing,
     })
 }
 
@@ -104,26 +111,7 @@ pub fn finish_settings_close(app: AppHandle, request_id: u64) -> Result<(), Stri
 }
 #[tauri::command]
 pub fn set_window_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
-    if expanded {
-        window.maximize().map_err(|_| "无法展开窗口。")?;
-    } else {
-        if window.is_fullscreen().map_err(|_| "无法读取窗口状态。")? {
-            window.set_fullscreen(false).map_err(|_| "无法退出全屏。")?;
-        }
-        window.unmaximize().map_err(|_| "无法恢复小窗口。")?;
-        window
-            .set_size(tauri::LogicalSize::new(
-                460.0
-                    + app
-                        .state::<AppState>()
-                        .vocabulary_sidebar_width
-                        .load(Ordering::Relaxed) as f64,
-                560.0,
-            ))
-            .map_err(|_| "无法调整窗口大小。")?;
-    }
-    Ok(())
+    crate::window_sizing::set_expanded(&app, expanded)
 }
 
 #[tauri::command]
@@ -717,7 +705,23 @@ pub async fn detect_text_language(text: String) -> Result<Option<String>, String
 }
 
 #[tauri::command]
-pub fn fit_result_height(app: AppHandle, height: f64) -> Result<(), String> {
+pub fn fit_result_height(
+    app: AppHandle,
+    height: f64,
+    generation: Option<u64>,
+) -> Result<(), String> {
+    if !height.is_finite() {
+        return Err("窗口高度无效。".into());
+    }
+    if !app
+        .state::<AppState>()
+        .sizing
+        .lock()
+        .unwrap()
+        .accepts(generation)
+    {
+        return Ok(());
+    }
     let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
     if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
         return Ok(());
@@ -1079,4 +1083,14 @@ pub async fn resolve_operation_sensitive(
         .await?
         .resolve_operation_sensitive(&id, allow)
         .await
+}
+
+#[tauri::command]
+pub fn fit_window_to_content(app: AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    let state = app.state::<AppState>();
+    let mut sizing = state.sizing.lock().unwrap();
+    sizing.fit();
+    let _ = app.emit_to("main", "window-mode-changed", *sizing);
+    Ok(())
 }

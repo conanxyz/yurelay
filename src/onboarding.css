@@ -1,0 +1,186 @@
+.getting-started {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 8px 4px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.getting-started h2 {
+  font-size: 21px;
+  line-height: 1.4;
+  margin: 16px 0 10px;
+}
+.getting-started h3 {
+  font-size: 14px;
+  margin: 0;
+}
+.getting-started p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.guide-heading,
+.guide-card-heading,
+.guide-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.guide-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.getting-started button {
+  min-height: 32px;
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.guide-skip {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 12px 0;
+}
+.guide-steps button {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: var(--panel-tint);
+  color: var(--muted);
+  padding: 7px 3px;
+}
+.guide-steps button[aria-current] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.guide-steps button > span {
+  font-variant-numeric: tabular-nums;
+}
+.guide-card,
+.guide-demo {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-tint);
+  padding: 12px;
+  margin: 12px 0;
+}
+.guide-card-heading > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.guide-card-heading > .allowed {
+  color: var(--accent);
+}
+.guide-detail {
+  font-size: 12px;
+  color: var(--muted);
+}
+.guide-readiness {
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+.getting-started details {
+  margin: 12px 0;
+  font-size: 12px;
+}
+.getting-started summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.getting-started footer {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 16px;
+}
+.guide-demo textarea {
+  width: 100%;
+  min-height: 80px;
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+.guide-demo kbd {
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.guide-demo .guide-actions {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+.demo-result {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.getting-started .primary {
+  background: var(--accent);
+  color: var(--surface);
+}
+.start-hint,
+.service-setup-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  padding: 10px 4px;
+}
+.start-hint button,
+.service-setup-hint button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 4px;
+}
+button.service-identity {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 3px;
+  border-radius: 6px;
+}
+button.service-identity:hover {
+  background: var(--hover);
+}
+.disclosure-control.labeled {
+  width: auto;
+  min-width: 52px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.reading-sheet[hidden],
+.capture-hint[hidden] {
+  display: none;
+}
+@media (max-width: 420px) {
+  .window-chrome {
+    gap: 4px;
+    padding-right: 6px;
+  }
+  .window-tools {
+    gap: 0;
+  }
+  .window-name {
+    font-size: 10px;
+  }
+  .guide-steps button {
+    font-size: 11px;
+  }
+}
+
+.window-chrome {position:sticky;top:0;z-index:10;}

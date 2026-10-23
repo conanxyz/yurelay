@@ -64,6 +64,7 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
         if(cmd==='operation_list')return structuredClone(w.operations??[]);
         if(cmd==='service_verifications')return structuredClone(w.verifications??[]);
         if(cmd==='test_connection'){if(w.receiptOnTest&&JSON.stringify(args.profile)===JSON.stringify(w.settings.profiles.find((p:any)=>p.id===args.profile.id))&&!args.keyOverride)w.verifications=[{profile_id:args.profile.id,state:'verified',tested_at:Date.now(),expires_at:Date.now()+86400000,tested_capability:'translation_transport'}];return {first_content_ms:1,total_ms:2};}
+        if (cmd === 'take_settings_route') { const route=w.pendingRoute;w.pendingRoute=null;return route??null; }
         if (cmd === 'permissions') return structuredClone(w.permissions);
         if(cmd==='vocabulary_list')return structuredClone(w.vocabulary);
         if(cmd==='fetch_models')return [{id:'fixture/free-model:free',free:true},{id:'fixture/zero-input-paid-output',free:false},{id:'fixture/unknown',free:null}];
@@ -701,4 +702,48 @@ test('standalone reply history is readable and copyable without attaching it to 
  await page.locator('.operation-history-record>summary').nth(2).click();await page.getByRole('button',{name:'View associated source'}).click();await expect(page.locator('.history-detail')).toContainText('Record 0: A complete source');
  await page.getByRole('button',{name:'Delete record',exact:true}).click();await page.getByRole('button',{name:'Delete permanently',exact:true}).click();await expect(page.locator('.operation-history-record')).toHaveCount(2);await expect(page.locator('.operation-history')).not.toContainText('Associated result.');
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['submit_operation','retry_task','translate_text','resolve_operation_sensitive'].includes(c.cmd)))).toEqual([]);
+});
+
+
+test('settings deep links preserve unsaved service edits and keys', async ({page}) => {
+  await settingsFixture(page, false, 'Custom service', true);
+  await page.getByRole('button',{name:'Services',exact:true}).click();
+  await page.getByLabel('Service name',{exact:true}).fill('Unsaved synthetic name');
+  await page.getByLabel('API Key',{exact:true}).fill('synthetic-only-new-key');
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'translation',profile_id:null};w.emit('settings-navigate',null);});
+  await expect(page.getByRole('heading',{name:'Translation',exact:true})).toBeVisible();
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',profile_id:'default'};w.emit('settings-navigate',null);});
+  await expect(page.getByLabel('Service name',{exact:true})).toHaveValue('Unsaved synthetic name');
+  await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-only-new-key');
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
+});
+
+test('first-use dictionary choice is an explicit draft until saved', async ({page}) => {
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',dictionary:true};w.emit('settings-navigate',null);});
+  await expect(page.getByRole('button',{name:'Test dictionary',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.id===(window as any).settings.active_profile).provider)).toBe('custom');
+  await page.getByRole('button',{name:'Save changes',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).settings.profiles.find((p:any)=>p.id===(window as any).settings.active_profile).provider)).toBe('system_dictionary');
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['test_connection','translate_text','retry_task'].includes(c.cmd)))).toEqual([]);
+});
+
+test('a settings deep link received before bootstrap opens the requested pane',async({page})=>{
+  await settingsFixture(page,true);
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',profile_id:'default'};w.emit('settings-navigate',null);});
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='take_settings_route').length)).toBeGreaterThan(1);
+  await page.evaluate(()=>(window as any).releaseBootstrap());
+  await expect(page.getByLabel('Service name',{exact:true})).toBeVisible();
+});
+
+
+test('translation setup from a dictionary choice opens the model form without saving',async({page})=>{
+  await settingsFixture(page);
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',dictionary:true};w.emit('settings-navigate',null);});
+  await expect(page.getByRole('button',{name:'Test dictionary',exact:true})).toBeVisible();
+  await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',translation:true};w.emit('settings-navigate',null);});
+  await expect(page.getByLabel('API Key',{exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'Model',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
 });

@@ -17,6 +17,8 @@
     primaryCode,
     errorText,
   } from "./locale";
+  import GettingStarted from "./GettingStarted.svelte";
+  import type { SettingsRoute } from "./types";
   import ServiceVerificationBadge from "./ServiceVerificationBadge.svelte";
   import PromptSettings from "./PromptSettings.svelte";
   import ServicePromptReferences from "./ServicePromptReferences.svelte";
@@ -64,7 +66,8 @@
     | "prompts"
     | "vocabulary"
     | "history"
-    | "appearance";
+    | "appearance"
+    | "help";
   let nav = $state<Nav>("translation");
   let replyPromptTemplate = $state(""),
     replyPromptLoading = $state(false),
@@ -180,6 +183,76 @@
     JSON.stringify(settings) !== saved || Object.keys(keys).length > 0,
   );
   const t = (zh: string, en: string) => text(locale, zh, en);
+  let pendingRoute: SettingsRoute | null = null;
+  async function navigateRoute(route: SettingsRoute) {
+    if (!ready) {
+      pendingRoute = route;
+      return;
+    }
+    // Navigation changes only the active pane; unsaved fields and keys survive.
+    nav = route.section;
+    if (route.translation) {
+      add("custom");
+      if (
+        settings.profiles.find((p) => p.id === selected)?.provider !== "custom"
+      ) {
+        error = t(
+          "服务数量已达上限，请先移除不再使用的服务。",
+          "Service limit reached. Remove an unused service first.",
+        );
+      }
+    } else if (route.dictionary) {
+      add("system_dictionary");
+      if (
+        settings.profiles.find((p) => p.id === selected)?.provider ===
+        "system_dictionary"
+      )
+        settings.active_profile = selected;
+      if (
+        settings.profiles.find((p) => p.id === selected)?.provider !==
+        "system_dictionary"
+      ) {
+        error = t(
+          "服务数量已达上限，请先移除不再使用的服务。",
+          "Service limit reached. Remove an unused service first.",
+        );
+        return;
+      }
+      message = t(
+        "已选择系统词典，请点击“保存设置”应用。",
+        "System dictionary selected. Click Save changes to apply.",
+      );
+    } else if (
+      route.profile_id &&
+      settings.profiles.some((p) => p.id === route.profile_id)
+    ) {
+      if (selected !== route.profile_id) models = [];
+      selected = route.profile_id;
+    }
+    await tick();
+    document.querySelector<HTMLElement>(".settings-heading-inner h1")?.focus();
+  }
+  async function consumeRoute() {
+    const route = await invoke<SettingsRoute | null>("take_settings_route");
+    if (route) await navigateRoute(route);
+  }
+  onMount(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    const listener = listen("settings-navigate", () => {
+      void consumeRoute().catch((e) => (error = errorText(e, locale)));
+    });
+    listener.then((off) => {
+      if (disposed) off();
+    });
+    void listener
+      .then(() => consumeRoute())
+      .catch((e) => (error = errorText(e, locale)));
+    return () => {
+      disposed = true;
+      listener.then((off) => off());
+    };
+  });
   const sections: {
     id: Nav;
     icon: string;
@@ -187,6 +260,16 @@
     en: string;
     description: [string, string];
   }[] = [
+    {
+      id: "help",
+      icon: "help",
+      zh: "使用帮助",
+      en: "Getting started",
+      description: [
+        "权限、服务与基础操作。",
+        "Permissions, services and basic operations.",
+      ],
+    },
     {
       id: "translation",
       icon: "translate",
@@ -487,6 +570,11 @@
         permissions = data.permissions;
       shortcutError = data.shortcuts.error;
       ready = true;
+      if (pendingRoute) {
+        const route = pendingRoute;
+        pendingRoute = null;
+        await navigateRoute(route);
+      }
     });
   });
 </script>
@@ -537,7 +625,7 @@
   <div class="flex min-h-0 min-w-0 flex-col overflow-hidden">
     <header class="settings-header">
       <div class="settings-heading-inner">
-        <h1>{locale === "zh" ? section.zh : section.en}</h1>
+        <h1 tabindex="-1">{locale === "zh" ? section.zh : section.en}</h1>
         {#if nav === "history" || nav === "appearance"}<p
             class="subtle mt-3 max-w-[65ch]"
           >
@@ -573,7 +661,17 @@
               nav === "vocabulary"}
             use:panelEntrance
           >
-            {#if nav === "translation"}
+            {#if nav === "help"}<GettingStarted
+                settings={configuration.settings}
+                {locale}
+                navigate={navigateRoute}
+                onclose={() => {
+                  void invoke("show_translation_window").catch(
+                    (e) => (error = errorText(e, locale)),
+                  );
+                }}
+              />
+            {:else if nav === "translation"}
               <fieldset class="form-section guard-setting" disabled={busy}>
                 <ReliabilitySettings bind:settings {locale} />
                 <label class="extraction-setting"

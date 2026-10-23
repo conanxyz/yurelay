@@ -1316,3 +1316,32 @@ test('sensitive confirmation keeps the displayed query service when the default 
   expect(await page.evaluate(()=>(window as any).settings.active_profile)).toBe('another');
   expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='resolve_sensitive').length)).toBe(1);
 });
+
+test('restoring the native window refits unchanged compact content', async ({ page }) => {
+  await fixture(page);
+  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').length)).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Expand', exact: true }).click();
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  // macOS delivers the restored size before the final mode notification.
+  await page.setViewportSize({ width: 460, height: 560 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const fits = await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').length);
+  await page.evaluate(() => (window as any).emit('window-mode-changed', false));
+  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').length)).toBeGreaterThan(fits);
+  const height = await page.locator('.translation-content').evaluate(el => Math.ceil(el.getBoundingClientRect().height + 44));
+  expect(await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').at(-1).args.height)).toBe(height);
+});
+
+test('restoring content height still works when WebKit pauses animation frames', async ({page}) => {
+  await fixture(page);
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='fit_result_height').length)).toBeGreaterThan(0);
+  const before = await page.evaluate(()=>{
+    const w=window as any;
+    w.requestAnimationFrame=()=>0;
+    w.emit('window-mode-changed',true);
+    return w.calls.filter((c:any)=>c.cmd==='fit_result_height').length;
+  });
+  await page.evaluate(()=>(window as any).emit('window-mode-changed',false));
+  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='fit_result_height').length)).toBeGreaterThan(before);
+});

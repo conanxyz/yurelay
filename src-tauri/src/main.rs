@@ -2,6 +2,7 @@
 
 mod capture;
 mod commands;
+mod experience;
 mod placement;
 mod reliability_commands;
 mod settings_guard;
@@ -10,6 +11,7 @@ mod source_commands;
 mod state;
 mod tray;
 mod window_lifecycle;
+mod window_sizing;
 
 use state::AppState;
 use std::sync::atomic::Ordering;
@@ -207,7 +209,17 @@ fn main() {
                     use tauri::Emitter;
                     let expanded = window.is_maximized().unwrap_or(false)
                         || window.is_fullscreen().unwrap_or(false);
-                    let _ = window.emit("window-mode-changed", expanded);
+                    let mut live_resize = false;
+                    #[cfg(target_os = "macos")]
+                    if let Ok(ptr) = window.ns_window() {
+                        // SAFETY: window events run on the main thread with a live NSWindow.
+                        live_resize = unsafe { yurelay_platform::window_live_resize(ptr) };
+                    }
+                    let state = app.state::<AppState>();
+                    let mut sizing = state.sizing.lock().unwrap();
+                    if sizing.observe(expanded, live_resize) {
+                        let _ = window.emit("window-mode-changed", *sizing);
+                    }
                 }
                 tauri::WindowEvent::Focused(focused) => {
                     let blur = app
@@ -272,6 +284,12 @@ fn main() {
             source_commands::capture_append,
             source_commands::capture_with_mode,
             commands::bootstrap,
+            experience::experience_status,
+            experience::update_experience,
+            experience::open_settings_at,
+            experience::take_settings_route,
+            experience::show_translation_window,
+            commands::fit_window_to_content,
             commands::default_translation_prompt,
             commands::resolve_sensitive,
             commands::vocabulary_list,

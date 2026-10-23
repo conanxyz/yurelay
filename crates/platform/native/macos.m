@@ -94,6 +94,10 @@ void ad_copy_text(const char *text) {
     if (NSThread.isMainThread) write(); else dispatch_sync(dispatch_get_main_queue(), write);
 }
 
+bool ad_window_live_resize(void *ptr) {
+    return [(__bridge NSWindow *)ptr inLiveResize];
+}
+
 void ad_configure_window(void *ptr) {
     NSWindow *window = (__bridge NSWindow *)ptr;
     window.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;

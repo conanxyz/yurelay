@@ -14,8 +14,18 @@ Requires **macOS 14 or newer**. When a package is published, download its `.dmg`
 
 1. Allow **Accessibility** for text selection and **Screen Recording** for screenshots.
 2. Choose the system dictionary or configure a model in Settings → Services.
-3. Capture some text; once it is ready, press `D` / `S` or click the arrow.
+3. Capture some text; once it is ready, press `D` / `S` or click Translate / Look up.
 4. If a saved key needs authorization, choose Authorize and continue and follow the macOS prompt.
+
+### Getting started, settings and models
+
+First launch offers **Permissions → Service → Practice**. Grant only the permissions you need, or choose **Set up later**. Completed or skipped setup does not reopen on every launch. Use the title-bar **gear**, app menu, tray menu or `⌘,` for settings. The **question mark** and **Settings → Getting started** replay the guide.
+
+Click the service/model name in the translation window to open that service's settings. Save model changes explicitly; change shortcuts under **Translation**. System dictionary handles words and phrases, translation services handle passages, and generative model services also support context explanations and replies. Configuration is separate from verification: a connection test sends a fixed sample only when requested.
+
+Practice uses a separate demo. It makes no network requests and never replaces your source, clipboard or history. It displays your currently configured shortcuts.
+
+Restoring after zoom uses the normal window bounds kept by macOS. After a manual resize, automatic content height no longer overrides your size. Use **Fit content height** in the title bar to re-enable it.
 
 ### First launch and permissions
 
@@ -29,7 +39,7 @@ Accessibility enables selection from other apps; Screen Recording enables screen
 
 1. **Capture text.** Select it, take a screenshot, or type and paste directly.
 2. **Review the source.** Text opens in reading mode; use the pencil to edit and check OCR or cleanup results.
-3. **Start translation.** Wait for the source, release the shortcut, then press `D` / `S` alone or click the arrow.
+3. **Start translation.** Wait for the source, release the shortcut, then press `D` / `S` alone or click Translate / Look up.
 
 Capture or OCR in progress, held-key repeats, editable inputs and input-method composition do not trigger translation. Reading mode supports paragraphs, headings, lists and code blocks. You can also switch to plain text and copy the translation or Markdown separately.
 
@@ -53,7 +63,7 @@ Explanations and replies can each be stopped, regenerated and revisited in histo
 
 **Looking up a word?** Set **macOS system dictionary** as the default in Settings → Services to query enabled local dictionaries without an API key. With a model service selected, Yurelay chooses dictionary or passage instructions based on the input.
 
-For a sentence or paragraph, the system dictionary offers configured translation services for the current query. Choose one, then press `D` / `S` or click the arrow to translate; your default service stays the same.
+For a sentence or paragraph, the system dictionary offers configured translation services for the current query. Choose one, then press `D` / `S` or click Translate / Look up to translate; your default service stays the same.
 
 **Want to remember an expression?** Click or select an English source word for native lemmatization and a dictionary preview, then click **Add**. You can also collect words suggested by the model.
 

@@ -47,6 +47,8 @@ pub struct ShortcutReport {
 
 pub struct AppState {
     pub root: PathBuf,
+    pub settings_route: Mutex<Option<crate::experience::SettingsRoute>>,
+    pub sizing: Mutex<crate::window_sizing::WindowSizing>,
     pub locale: Mutex<String>,
     pub engine: OnceCell<Arc<Engine>>,
     pub bindings: Mutex<Option<ShortcutBindings>>,
@@ -76,6 +78,8 @@ impl AppState {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
+            settings_route: Mutex::new(None),
+            sizing: Mutex::new(Default::default()),
             locale: Mutex::new("zh".into()),
             engine: OnceCell::new(),
             bindings: Mutex::new(None),

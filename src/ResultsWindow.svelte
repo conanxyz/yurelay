@@ -27,6 +27,60 @@
     languageName,
     languages,
   } from "./locale";
+  import GettingStarted from "./GettingStarted.svelte";
+  import type {
+    Experience,
+    ExperienceStatus,
+    SettingsRoute,
+    WindowSizing,
+  } from "./types";
+  let experience = $state<ExperienceStatus | null>(null);
+  let guideOpen = $state(false);
+  let guideStep = $state(0);
+  let windowGeneration = $state<number | undefined>(undefined);
+  let manualSize = $state(false);
+  let layoutRevision = $state(0);
+  let experienceSequence = 0;
+  let guideOpener: HTMLElement | null = null;
+  async function refreshExperience() {
+    if (!isTauri()) return;
+    const sequence = ++experienceSequence;
+    const result = await invoke<ExperienceStatus>("experience_status");
+    if (sequence === experienceSequence) experience = result;
+  }
+  const serviceStatus = $derived(
+    experience?.services.find((s) => s.profile_id === service?.id),
+  );
+  const setupBlocked = $derived(
+    !!serviceStatus &&
+      ["needs_configuration", "needs_key"].includes(serviceStatus.state),
+  );
+  async function openSettings(route: SettingsRoute) {
+    await action("open_settings_at", { route });
+  }
+  function openGuide() {
+    guideOpener = document.activeElement as HTMLElement;
+    guideStep = experience?.progress.step ?? 0;
+    guideOpen = true;
+    tick().then(() =>
+      content?.querySelector<HTMLButtonElement>(".guide-steps button")?.focus(),
+    );
+  }
+  function closeGuide() {
+    guideOpen = false;
+    void refreshExperience().catch((e) => (error = errorText(e, locale)));
+    tick().then(() =>
+      guideOpener?.isConnected ? guideOpener.focus() : sourceEditor?.focus(),
+    );
+  }
+  function windowMode(value: boolean | WindowSizing) {
+    expanded = typeof value === "boolean" ? value : value.expanded;
+    if (typeof value !== "boolean") {
+      windowGeneration = value.generation;
+      manualSize = value.manual;
+    }
+    layoutRevision++;
+  }
   import PendingCaptures from "./PendingCaptures.svelte";
   import SourceToolbar from "./SourceToolbar.svelte";
   import SourceReadingView from "./SourceReadingView.svelte";
@@ -195,6 +249,7 @@
   let localDictionary = $derived(service?.provider === "system_dictionary");
   let canStart = $derived(
     !!draft.trim() &&
+      !setupBlocked &&
       !current?.sensitive &&
       (!current || !active(current)) &&
       !submitting &&
@@ -354,7 +409,8 @@
     disclosed && !dictionaryHint && (submitting || (attempted && !changed)),
   );
   let toggleDisabled = $derived(
-    !!current?.sensitive ||
+    (setupBlocked && (!current || waiting || changed)) ||
+      !!current?.sensitive ||
       credentialChecking ||
       credentialAuthorizing ||
       (!!current && ["capturing", "recognizing"].includes(current.status)) ||
@@ -529,7 +585,7 @@
   let draftId: string | null = null;
   let sourceVersion = "";
   let lastSourceText = "";
-  let trigger: HTMLButtonElement;
+  let trigger = $state<HTMLButtonElement>();
   $effect(() => {
     const version = `${current?.id}:${current?.original_text}:${current?.edited_text}`;
     if (version !== sourceVersion) {
@@ -737,6 +793,7 @@
       ]);
       permissions = p;
       settings = s;
+      await refreshExperience();
     } catch {
       /* Initial bootstrap reports errors. */
     }
@@ -868,6 +925,7 @@
     const editing =
       'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]:not([aria-readonly="true"]),[role="combobox"]';
     if (
+      guideOpen ||
       !!document.querySelector("dialog[open]") ||
       event.defaultPrevented ||
       event.repeat ||
@@ -909,7 +967,8 @@
     const next = !expanded;
     resizing = true;
     await action("set_window_expanded", { expanded: next });
-    if (!error) expanded = next;
+    // The native resize event is authoritative; it may arrive after this command.
+    if (!error && !isTauri()) expanded = next;
     resizing = false;
   }
   function drag(event: PointerEvent) {
@@ -960,23 +1019,49 @@
     )
       tick().then(() => trigger?.focus({ preventScroll: true }));
   }
-  onMount(() => {
-    let frame = 0,
-      lastHeight = 0;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const height = Math.ceil(content.getBoundingClientRect().height + 44);
-        if (!expanded && height !== lastHeight && isTauri()) {
-          lastHeight = height;
-          invoke("fit_result_height", { height }).catch(() => {});
-        }
+  let fitFrame = 0,
+    fitTimer: ReturnType<typeof setTimeout> | undefined,
+    lastHeight = 0;
+  function scheduleFit(force = false) {
+    cancelAnimationFrame(fitFrame);
+    clearTimeout(fitTimer);
+    if (force) lastHeight = 0;
+    const measure = () => {
+      cancelAnimationFrame(fitFrame);
+      clearTimeout(fitTimer);
+      if (!content || expanded || manualSize || !isTauri()) return;
+      const height = Math.ceil(content.getBoundingClientRect().height + 44);
+      if (height === lastHeight) return;
+      lastHeight = height;
+      invoke("fit_result_height", {
+        height,
+        generation: windowGeneration,
+      }).catch(() => {
+        lastHeight = 0;
       });
-    });
+    };
+    // WKWebView suspends animation frames in hidden/occluded windows. Native
+    // restore must not depend on a frame arriving before the window is shown.
+    fitFrame = requestAnimationFrame(measure);
+    fitTimer = setTimeout(measure, 80);
+  }
+  $effect(() => {
+    void expanded;
+    void layoutRevision;
+    untrack(() => scheduleFit(true));
+  });
+  onMount(() => {
+    const observer = new ResizeObserver(() => scheduleFit());
     observer.observe(content);
+    const shown = () => {
+      if (!document.hidden) scheduleFit(true);
+    };
+    document.addEventListener("visibilitychange", shown);
     return () => {
       observer.disconnect();
-      cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", shown);
+      cancelAnimationFrame(fitFrame);
+      clearTimeout(fitTimer);
     };
   });
   onMount(() => {
@@ -993,6 +1078,7 @@
         const off = await listen<Settings>("configuration-changed", (e) => {
           preferenceEvents++;
           settings = e.payload;
+          void refreshExperience().catch(() => {});
         });
         if (disposed) {
           off();
@@ -1004,6 +1090,7 @@
         if (disposed) return;
         pinned = data.pinned;
         expanded = data.expanded;
+        if (data.window_sizing) windowMode(data.window_sizing);
         permissions = data.permissions;
         if (before === preferenceEvents) settings = data.configuration.settings;
         if (!data.selected) sourceLanguage = settings.source_language ?? "";
@@ -1018,18 +1105,35 @@
         subscription = await invoke("subscribe", { onEvent: channel });
         if (disposed && subscription)
           await invoke("unsubscribe", { subscriptionId: subscription });
-        const offMode = await listen<boolean>(
+        const offMode = await listen<boolean | WindowSizing>(
           "window-mode-changed",
-          (e) => (expanded = e.payload),
+          (e) => windowMode(e.payload),
         );
         if (disposed) offMode();
         else cleanup.push(offMode);
+        const offExperience = await listen<{
+          progress: Experience;
+          close_guide: boolean;
+        }>("experience-changed", (e) => {
+          if (experience) experience.progress = e.payload.progress;
+          if (guideOpen && e.payload.close_guide) closeGuide();
+        });
+        if (disposed) offExperience();
+        else cleanup.push(offExperience);
+        await refreshExperience();
+        if (
+          !disposed &&
+          experience &&
+          ["new", "started"].includes(experience.progress.setup)
+        )
+          openGuide();
       } catch (e) {
         error = String(e);
       }
     })();
     return () => {
       disposed = true;
+      experienceSequence++;
       previewSequence++;
       clearTimeout(previewTimer);
       clearInterval(timer);
@@ -1063,6 +1167,26 @@
     <div class="window-chrome" onpointerdown={drag} role="presentation">
       <span class="window-name">Yurelay</span>
       <div class="window-tools">
+        <button
+          class="icon-button"
+          aria-label={t("设置", "Settings")}
+          title={t("设置（⌘,）", "Settings (⌘,)")}
+          onclick={() => action("show_settings")}
+          ><Icon name="settings" size={16} /></button
+        >
+        <button
+          class="icon-button"
+          aria-label={t("使用帮助", "Usage guide")}
+          title={t("使用帮助", "Usage guide")}
+          onclick={openGuide}><Icon name="help" size={16} /></button
+        >
+        {#if manualSize && !expanded}<button
+            class="icon-button"
+            aria-label={t("适应内容高度", "Fit content height")}
+            title={t("适应内容高度", "Fit content height")}
+            onclick={() => action("fit_window_to_content")}
+            ><Icon name="fit" size={16} /></button
+          >{/if}
         <button
           class="icon-button"
           aria-label={expanded
@@ -1122,7 +1246,27 @@
         {locale}
         onUpdate={(task, choose) => updateSource(task, choose)}
       />
-      <div class="reading-sheet">
+      {#if guideOpen}<GettingStarted
+          {settings}
+          {locale}
+          initialStep={guideStep}
+          onclose={closeGuide}
+          navigate={openSettings}
+        />{/if}
+      {#if !guideOpen && !draft.trim() && !current}<div class="start-hint">
+          <p>
+            {t(
+              "输入或粘贴文字，也可以使用划词或截图快捷键。",
+              "Type or paste text, or use your selection and screenshot shortcuts.",
+            )}
+          </p>
+          <button onclick={openGuide}
+            >{t("查看使用引导", "Getting started")}</button
+          ><button onclick={() => openSettings({ section: "translation" })}
+            >{t("查看或修改快捷键", "View or change shortcuts")}</button
+          >
+        </div>{/if}
+      <div class="reading-sheet" hidden={guideOpen} inert={guideOpen}>
         <section class="source-panel" aria-label={t("原文", "Source")}>
           <div class="reading-caption">
             <h1>{t("原文", "Source")}</h1>
@@ -1276,7 +1420,15 @@
             </p>{/if}
         </section>
         <div class="service-strip">
-          <div
+          <button
+            onclick={() =>
+              openSettings({
+                section: "services",
+                profile_id: shownService?.id,
+              })}
+            aria-label={setupBlocked
+              ? t("配置翻译服务", "Configure translation service")
+              : t("更改服务或模型", "Change service or model")}
             class="service-identity"
             title={`${shownService?.name ?? ""} · ${shownService?.model ?? ""}`}
           >
@@ -1297,7 +1449,7 @@
                   : shownService?.model ||
                     t("选择模型", "Choose a model")}</span
             >
-          </div>
+          </button>
           <div class="translation-controls">
             {#if service?.provider !== "system_dictionary"}<label
                 class="target-language"
@@ -1332,21 +1484,63 @@
                   role="tooltip">{t("停止翻译", "Stop translation")}</span
                 >
               </div>{/if}
-            <button
-              bind:this={trigger!}
-              class="icon-button disclosure-control"
-              class:opened={showResult}
-              title={triggerLabel}
-              aria-label={triggerLabel}
-              aria-expanded={showResult}
-              aria-controls="translation-body"
-              aria-keyshortcuts="D S"
-              disabled={toggleDisabled}
-              onclick={toggleTranslation}
-              ><Icon name="chevron" size={15} /></button
-            >
+            {#if !current || waiting || changed || dictionaryNotFound}
+              <button
+                bind:this={trigger!}
+                class="icon-button disclosure-control labeled"
+                class:opened={showResult}
+                title={triggerLabel}
+                aria-label={triggerLabel}
+                aria-expanded={showResult}
+                aria-controls="translation-body"
+                aria-keyshortcuts="D S"
+                disabled={toggleDisabled}
+                onclick={translate}
+                >{localDictionary
+                  ? t("查询", "Look up")
+                  : t("翻译", "Translate")}<Icon
+                  name="chevron"
+                  size={15}
+                /></button
+              >
+            {:else}
+              <button
+                bind:this={trigger!}
+                class="icon-button disclosure-control labeled"
+                class:opened={showResult}
+                title={triggerLabel}
+                aria-label={triggerLabel}
+                aria-expanded={showResult}
+                aria-controls="translation-body"
+                aria-keyshortcuts="D S"
+                disabled={toggleDisabled}
+                onclick={() => (disclosed = !disclosed)}
+                >{showResult ? t("收起", "Collapse") : t("展开", "Expand")}<Icon
+                  name="chevron"
+                  size={15}
+                /></button
+              >
+            {/if}
           </div>
         </div>
+        {#if setupBlocked}<div class="service-setup-hint" role="status">
+            <p>
+              {serviceStatus?.state === "needs_key"
+                ? t(
+                    "此服务还需要 API 凭据。保存后即可开始翻译。",
+                    "This service needs API credentials. Save them before translating.",
+                  )
+                : t(
+                    "尚未配置可用服务。可以选择系统词典查词，或配置翻译 API。",
+                    "No service is configured. Choose the system dictionary for words, or configure a translation API.",
+                  )}
+            </p>
+            <button
+              onclick={() =>
+                openSettings({ section: "services", profile_id: service?.id })}
+              >{t("配置服务", "Set up a service")}</button
+            ><button onclick={openGuide}>{t("查看引导", "View guide")}</button>
+          </div>{/if}
         {#if dictionaryHint}<section
             class="dictionary-guidance"
             aria-label={t("词典查询提示", "Dictionary lookup guidance")}
@@ -1517,7 +1711,7 @@
           >{current ? statusName(current.status, locale) : ""}</span
         >
       </div>
-      {#if waiting && !submitting && !current?.sensitive && !dictionaryHint}<div
+      {#if !guideOpen && waiting && !submitting && !current?.sensitive && !dictionaryHint}<div
           class="capture-hint"
         >
           <span
