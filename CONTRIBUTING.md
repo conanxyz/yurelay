@@ -58,18 +58,31 @@ notices; do not submit code you are not permitted to distribute.
 
 ## Release maintenance
 
-All release jobs run on `macos-latest`. The workflow validates version equality
-across npm, Cargo and Tauri before building Apple Silicon and Intel targets.
-After CI passes, a `vX.Y.Z` tag or manual run on main creates/updates a draft
-prerelease, uploads `.dmg`, `.app.tar.gz` and per-architecture SHA-256 checksums.
-The draft avoids presenting untested artifacts as stable downloads.
+Publishing a GitHub release or prerelease triggers the Release workflow. Merge
+workflow changes into `main` before creating the release tag: the workflow must
+exist in the tagged commit. Set the tag to `vX.Y.Z`, matching the versions in npm,
+Cargo and Tauri, select `main` as the target and click **Publish release**. Saving
+a draft alone does not start a build; pushing a tag alone no longer starts one.
 
-Before publishing, test both architectures, verify checksums and signatures,
-check the source tag, review privacy-safe screenshots and release notes, and
-record any missing notarization/hardware coverage. Ad-hoc signing is the current
-default. Apple certificate/notarization secret names are documented in the
-workflow; never commit signing material. Future notarization requires a Developer
-ID identity and must also override the current ad-hoc identity in Tauri config.
+All release jobs run on `macos-latest`. After CI passes, the workflow builds Apple
+Silicon and Intel targets and uploads `.dmg`, `.app.tar.gz` and per-architecture
+SHA-256 checksums to the published release. It uses the release ID so the title,
+notes, visibility and prerelease flag stay as entered. The page is visible before
+the packages finish building; if a job fails, use **Re-run failed jobs** in Actions
+to finish the uploads. Keep early releases marked **Pre-release**.
+
+The manual **Run workflow** entry on `main` remains available with a matching
+`tag` input. It creates an unpublished prerelease draft when none exists, or
+uploads to the existing release without changing its metadata. Uploads to a
+published release require the build commit to match its tag; otherwise rerun the
+original release workflow so binaries correspond to the published source.
+
+Before promoting a preview to a stable release, test both architectures and
+verify checksums and signatures. Review the source tag and release notes before
+publishing, and record any missing notarization/hardware coverage. Ad-hoc signing
+is the current default. Apple certificate/notarization secret names are documented
+in the workflow; never commit signing material. Future notarization requires a
+Developer ID identity and must also override the ad-hoc identity in Tauri config.
 
 Configure branch protection to require a PR, a successful `macOS verification`
 check and resolved conversations before merging `main`, and to disallow force
@@ -79,4 +92,4 @@ requests an administrative exception. Workflow YAML alone
 cannot enforce a merge block. Enable private vulnerability reporting and secret
 scanning if available. Dependabot updates are configured for review, not auto-merge.
 
-This setup does not create a GitHub repository or publish a release on its own.
+This setup does not create a GitHub repository or publish drafts on its own.
