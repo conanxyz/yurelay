@@ -376,27 +376,28 @@ button.service-identity:hover {
   gap: 14px;
   margin: 18px 0 6px;
 }
-.shortcut-row.clearable {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+.shortcut-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+}
+.preferences-shell .shortcut-edit-actions .shortcut-clear {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+.optional .shortcut-operation {
   align-items: center;
-  gap: 6px;
-  padding: 4px;
 }
-.clearable > .shortcut-clear {
-  justify-self: center;
-}
-.shortcut-row.clearable > .error {
-  grid-column: 1 / -1;
-}
-.clearable .shortcut-operation {
-  align-items: center;
-}
-.clearable .shortcut-keycaps {
+.optional .shortcut-keycaps {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.clearable .shortcut-recording-text {
+.optional .shortcut-recording-text {
   font-size: 13px;
 }
 @media (prefers-reduced-motion: reduce) {

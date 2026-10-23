@@ -241,7 +241,7 @@ fn main() {
                         }
                     } else {
                         state::release_temporary_top(app);
-                        if blur.is_some() && window.is_minimized().unwrap_or(false) {
+                        if window.is_minimized().unwrap_or(false) {
                             // Native minimize is also an explicit dismissal;
                             // return activation just as Esc/the hide button do.
                             state::hide(app);

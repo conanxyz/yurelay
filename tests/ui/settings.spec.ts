@@ -87,7 +87,7 @@ async function settingsFixture(page: Page, delayLoad = false, initialName = 'Cus
           return record;
         }
         if (cmd === 'begin_shortcut_recording') return 1;
-        if (cmd === 'end_shortcut_recording') return { registered: true, error: null };
+        if (cmd === 'end_shortcut_recording') {if(w.deferEndRecording)await new Promise(resolve=>w.releaseRecording=resolve);return { registered: true, error: null };}
         return null;
       },
     };
@@ -832,15 +832,22 @@ test('append recorders capture key combinations, cancel safely and save cleared 
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
  expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await expect(page.getByRole('button',{name:'Disable append selection shortcut',exact:true})).toHaveCount(0);
+ await selection.click();
  await page.getByRole('button',{name:'Disable append selection shortcut',exact:true}).click();
  await expect(selection.locator('kbd')).toHaveCount(0);
  expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBeNull();
  expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await screenshot.click();await expect(screenshot).toContainText('Press keys…');await page.keyboard.press('Delete');
+ await expect(screenshot.locator('kbd')).toHaveCount(0);
+ expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await page.getByRole('button',{name:'Revert',exact:true}).click();
  for(const width of [1100,850,620]) {
   await page.setViewportSize({width,height:820});
   const a=await selection.boundingBox(),b=await screenshot.boundingBox();expect(b!.y-a!.y-a!.height).toBeGreaterThanOrEqual(14);
+  for(const recorder of [selection,screenshot]){const outer=await recorder.locator('..').boundingBox(),inner=await recorder.boundingBox();expect(outer!.width-inner!.width).toBeLessThanOrEqual(6);}
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  }
  await page.setViewportSize({width:1100,height:820});
@@ -851,4 +858,20 @@ test('append recorders capture key combinations, cancel safely and save cleared 
  await page.locator('.optional-shortcuts summary').click();
  await page.locator('.optional-shortcuts').screenshot({path:'.ai-notes/append-recorders-dark.png',animations:'disabled'});
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['translate_text','start_capture','retry_task'].includes(c.cmd)))).toEqual([]);
+});
+
+
+test('revert during delayed recorder cleanup preserves restored shortcuts and focus',async({page})=>{
+ await settingsFixture(page);await page.getByText('Optional append shortcuts',{exact:true}).click();
+ await recordAppendShortcut(page,'selection','D');await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ await page.getByLabel('Default translation language',{exact:true}).selectOption('fr');
+ const selection=page.getByRole('button',{name:'Record append selection shortcut',exact:true});
+ await selection.click();await expect(selection).toContainText('Press keys…');
+ await page.evaluate(()=>{(window as any).deferEndRecording=true;});
+ await page.getByRole('button',{name:'Disable append selection shortcut',exact:true}).click();
+ await page.getByRole('button',{name:'Revert',exact:true}).click();
+ const language=page.getByLabel('Default translation language',{exact:true});await language.focus();
+ await page.evaluate(()=>(window as any).releaseRecording());
+ await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
+ await expect(language).toBeFocused();await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
 });

@@ -110,6 +110,11 @@
       onrecordingchange(false);
     }
   }
+  function clear() {
+    if (!optional || phase !== "recording") return;
+    value = "";
+    void finish(false);
+  }
   function keydown(e: KeyboardEvent) {
     if (phase === "idle") return;
     if (e.key === "Tab" && !e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -118,6 +123,18 @@
     }
     e.preventDefault();
     e.stopPropagation();
+    if (
+      optional &&
+      phase === "recording" &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      ["Backspace", "Delete"].includes(e.key)
+    ) {
+      void clear();
+      return;
+    }
     if (e.key === "Escape") {
       finish(false);
       return;
@@ -186,7 +203,7 @@
 </script>
 
 <svelte:window onkeyup={keyup} onblur={() => finish(false)} />
-<div class="shortcut-row" class:clearable={optional}>
+<div class="shortcut-row" class:optional>
   <button
     bind:this={button!}
     class="shortcut-recorder"
@@ -194,8 +211,8 @@
     aria-label={recordLabel}
     title={optional
       ? t(
-          "点击后按组合键；保存后生效",
-          "Click and press your shortcut; save to apply",
+          "点击录入；Delete 清空，Esc 取消；保存后生效",
+          "Click to record; Delete clears, Esc cancels; save to apply",
         )
       : recordLabel}
     onclick={() => (phase === "captured" ? finish(true) : begin())}
@@ -229,15 +246,17 @@
       {:else}{#each keys(draft || value) as key}<kbd>{key}</kbd>{/each}{/if}
     </span>
   </button>
-  {#if optional}<button
-      type="button"
-      class="icon-button shortcut-clear"
-      aria-label={selection
-        ? t("停用追加划词快捷键", "Disable append selection shortcut")
-        : t("停用追加截图快捷键", "Disable append screenshot shortcut")}
-      title={t("清空停用；保存后生效", "Clear to disable; save to apply")}
-      disabled={!value || phase !== "idle"}
-      onclick={() => (value = "")}><Icon name="close" size={14} /></button
-    >{/if}
+  {#if optional && phase === "recording"}<div class="shortcut-edit-actions">
+      <button
+        type="button"
+        class="shortcut-clear"
+        aria-label={selection
+          ? t("停用追加划词快捷键", "Disable append selection shortcut")
+          : t("停用追加截图快捷键", "Disable append screenshot shortcut")}
+        title={t("Delete 清空；保存后生效", "Delete to clear; save to apply")}
+        onpointerdown={(event) => event.preventDefault()}
+        onclick={clear}>{t("清空并停用", "Clear and disable")}</button
+      >
+    </div>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </div>

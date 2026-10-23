@@ -129,7 +129,7 @@ Translation and reply prompts have separate editors in Settings → Prompts. Ser
 
 ### Interaction details and FAQ
 
-- **Can I change the shortcuts?** Click any selection, screenshot or optional append shortcut button and press a key combination. Release the main key to finish, or press Esc to cancel. Clear an optional append binding to disable it. Recording and clearing take effect only after saving; conflicts are reported. The local second-step keys remain `D` / `S`.
+- **Can I change the shortcuts?** Click any selection, screenshot or optional append shortcut button and press a key combination. Release the main key to finish, or press Esc to cancel. While recording an optional append binding, choose Clear and disable or press Delete to clear it. Recording and clearing take effect only after saving; conflicts are reported. The local second-step keys remain `D` / `S`.
 - **Do D and S translate while I am typing?** In an input field, both keys type normally. Click the arrow or move focus outside the field before using the shortcut.
 - **Can I hold D / S until capture completes?** No. Release and press again after the source is ready. `Option` / `Alt`, `Control` or `Command` combinations, input-method composition and editable fields do not submit a translation.
 - **What happens if I press capture twice?** Duplicate requests are ignored during capture. The selection shortcut preserves the result while Yurelay has focus. A new screenshot can start after the current capture finishes or is cancelled.
