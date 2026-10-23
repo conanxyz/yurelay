@@ -915,42 +915,104 @@
                     </div>
                     <details class="optional-shortcuts">
                       <summary
-                        >{t(
-                          "可选追加快捷键",
-                          "Optional append shortcuts",
-                        )}</summary
+                        ><span
+                          >{t(
+                            "可选追加快捷键",
+                            "Optional append shortcuts",
+                          )}</span
+                        ><Icon name="chevron" size={15} /></summary
                       >
-                      <p class="subtle">
+                      <p class="append-shortcuts-note">
                         {t(
-                          "默认不注册额外快捷键。留空停用，保存后生效。",
-                          "No extra shortcuts are registered by default. Leave empty to disable; save to apply.",
+                          "按需启用，将新内容追加到当前原文。清空即停用，保存后生效。",
+                          "Add new captures to the current source. Clear to disable; save to apply.",
                         )}
                       </p>
-                      <label
-                        >{t("追加划词", "Append selection")}<input
-                          aria-label={t(
-                            "追加划词快捷键",
-                            "Append selection shortcut",
-                          )}
-                          value={settings.append_selection_shortcut ?? ""}
-                          onchange={(e) =>
-                            (settings.append_selection_shortcut =
-                              e.currentTarget.value.trim() || null)}
-                          placeholder="Alt+Shift+D"
-                        /></label
-                      ><label
-                        >{t("追加截图", "Append screenshot")}<input
-                          aria-label={t(
-                            "追加截图快捷键",
-                            "Append screenshot shortcut",
-                          )}
-                          value={settings.append_screenshot_shortcut ?? ""}
-                          onchange={(e) =>
-                            (settings.append_screenshot_shortcut =
-                              e.currentTarget.value.trim() || null)}
-                          placeholder="Alt+Shift+S"
-                        /></label
-                      >
+                      <div class="append-shortcut-list">
+                        {#each ["selection", "screenshot"] as kind}
+                          {@const selection = kind === "selection"}
+                          {@const field = selection
+                            ? "append_selection_shortcut"
+                            : "append_screenshot_shortcut"}
+                          <div class="append-shortcut-row">
+                            <label
+                              for={`append-${kind}`}
+                              class="append-shortcut-label"
+                            >
+                              <span class="append-shortcut-symbol"
+                                ><Icon
+                                  name={selection ? "translate" : "image"}
+                                  size={17}
+                                /></span
+                              >
+                              <span
+                                ><strong
+                                  >{selection
+                                    ? t("追加划词", "Append selection")
+                                    : t(
+                                        "追加截图",
+                                        "Append screenshot",
+                                      )}</strong
+                                ><small
+                                  >{selection
+                                    ? t(
+                                        "保留原文，加入选中文字",
+                                        "Add selected text to this source",
+                                      )
+                                    : t(
+                                        "保留原文，加入截图文字",
+                                        "Add captured text to this source",
+                                      )}</small
+                                ></span
+                              >
+                            </label>
+                            <div class="append-shortcut-controls">
+                              <input
+                                id={`append-${kind}`}
+                                aria-label={selection
+                                  ? t(
+                                      "追加划词快捷键",
+                                      "Append selection shortcut",
+                                    )
+                                  : t(
+                                      "追加截图快捷键",
+                                      "Append screenshot shortcut",
+                                    )}
+                                value={settings[field] ?? ""}
+                                oninput={(e) =>
+                                  (settings[field] =
+                                    e.currentTarget.value.trim() || null)}
+                                placeholder={t("未设置", "Not set")}
+                                spellcheck="false"
+                                autocapitalize="off"
+                                autocomplete="off"
+                              />
+                              <button
+                                class="icon-button"
+                                type="button"
+                                disabled={!settings[field]}
+                                aria-label={selection
+                                  ? t(
+                                      "停用追加划词快捷键",
+                                      "Disable append selection shortcut",
+                                    )
+                                  : t(
+                                      "停用追加截图快捷键",
+                                      "Disable append screenshot shortcut",
+                                    )}
+                                title={t("清空快捷键", "Clear shortcut")}
+                                onclick={() => (settings[field] = null)}
+                                ><Icon name="close" size={14} /></button
+                              >
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                      <p class="append-shortcuts-format">
+                        {t("组合键格式示例：", "Shortcut format: ")}<kbd
+                          >Alt+Shift+D</kbd
+                        >
+                      </p>
                     </details>
                     {#if recordingField}<span
                         class="recording-status"

@@ -19,7 +19,7 @@ Requires **macOS 14 or newer**. When a package is published, download its `.dmg`
 
 ### Getting started, settings and models
 
-First launch offers **Permissions → Service → Practice**. Grant only the permissions you need, or choose **Set up later**. Completed or skipped setup does not reopen on every launch. Use the title-bar **gear**, app menu, tray menu or `⌘,` for settings. The **question mark** and **Settings → Getting started** replay the guide.
+First launch offers **Permissions → Service → Practice**. Grant only the permissions you need, or choose **Set up later**. Completed or skipped setup does not reopen on every launch. Use the title-bar **gear**, app menu, tray menu or `⌘,` for settings. The **question mark** and **Settings → Getting started** replay the guide. Clicking the title-bar question mark again performs the same persistent skip as Set up later and returns to reading without clearing your draft. The empty reader no longer repeats a setup banner.
 
 Click the service/model name in the translation window to open that service's settings. Save model changes explicitly; change shortcuts under **Translation**. System dictionary handles words and phrases, translation services handle passages, and generative model services also support context explanations and replies. Configuration is separate from verification: a connection test sends a fixed sample only when requested.
 

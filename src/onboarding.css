@@ -39,10 +39,51 @@
   font-size: 12px;
   padding: 5px 10px;
 }
-.guide-skip {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
+/* An unmistakable exit, with two slow halo pulses rather than flashing text. */
+.getting-started .guide-skip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+.guide-skip::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  pointer-events: none;
+  opacity: 0;
+  animation: guide-exit-hint 1.5s cubic-bezier(0.32, 0.72, 0, 1) 2;
+}
+.guide-skip:hover {
+  filter: brightness(1.06);
+}
+.guide-skip:disabled::after {
+  animation: none;
+}
+@keyframes guide-exit-hint {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  45% {
+    opacity: 0.42;
+    transform: scale(1.02);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-skip::after {
+    animation: none;
+  }
 }
 .guide-steps {
   display: grid;
@@ -131,14 +172,12 @@
   background: var(--accent);
   color: var(--surface);
 }
-.start-hint,
 .service-setup-hint {
   font-size: 12px;
   line-height: 1.6;
   color: var(--muted);
   padding: 10px 4px;
 }
-.start-hint button,
 .service-setup-hint button {
   border: 0;
   background: transparent;
@@ -302,4 +341,112 @@ button.service-identity:hover {
 .reader-resize-handle:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
+}
+
+/* Optional shortcuts use the same row rhythm as the main shortcut controls. */
+.optional-shortcuts {
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--panel-tint);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.optional-shortcuts summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  list-style: none;
+}
+.optional-shortcuts summary::-webkit-details-marker {
+  display: none;
+}
+.optional-shortcuts summary svg {
+  transform: rotate(0);
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.optional-shortcuts[open] summary svg {
+  transform: rotate(90deg);
+}
+.append-shortcuts-note {
+  margin: 10px 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.append-shortcut-list {
+  display: grid;
+  gap: 8px;
+}
+.append-shortcut-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 10px;
+}
+.preferences-shell .append-shortcut-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 170px;
+  margin: 0;
+  min-width: 0;
+}
+.append-shortcut-label strong {
+  display: block;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ink);
+}
+.append-shortcut-label small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.append-shortcut-symbol {
+  display: flex;
+  flex: none;
+  color: var(--accent);
+}
+.append-shortcut-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 224px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+.preferences-shell .append-shortcut-controls input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--panel-tint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.append-shortcuts-format {
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.append-shortcuts-format kbd {
+  font-family: inherit;
+  color: var(--ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .optional-shortcuts summary svg {
+    transition: none;
+  }
 }

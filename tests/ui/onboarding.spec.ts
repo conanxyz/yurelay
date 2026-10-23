@@ -24,6 +24,8 @@ async function setup(page: Page, options: { legacy?: boolean; configured?: boole
         if (cmd === 'permissions') return structuredClone(w.permissions);
         if (cmd === 'experience_status') return { progress: structuredClone(w.progress), services: [{profile_id:'default',state:options.configured?'configured':'needs_configuration',dictionary:!!options.configured,translation:!options.configured,generation:!options.configured}], shortcuts: { registered: !w.shortcutConflict, error: w.shortcutConflict ? 'synthetic conflict' : null } };
         if (cmd === 'update_experience') {
+          if(w.failProgress)throw 'Synthetic progress save failed';
+          if(w.deferProgress)await new Promise(resolve=>w.releaseProgress=resolve);
           const a = args.action;
           if(a.type === 'step') { w.progress.step = a.step; if(w.progress.setup === 'new')w.progress.setup='started'; }
           if(a.type === 'lesson') { w.progress.lesson = a.lesson; w.progress.tutorial='started'; }
@@ -170,4 +172,52 @@ test('tutorial shortcuts ignore modifiers, repeat, composition, editing and dial
  await page.setViewportSize({width:360,height:650});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:'test-results/simple-guide.png',fullPage:true});
+});
+
+
+test('help toggles the same persistent skip action, preserves the draft and removes redundant empty hints',async({page})=>{
+ await setup(page);
+ const help=page.getByRole('button',{name:'Usage guide',exact:true});
+ await expect(help).toHaveAttribute('aria-expanded','true');
+ await help.click();
+ await expect(help).toHaveAttribute('aria-expanded','false');
+ await expect(page.locator('.getting-started')).toHaveCount(0);
+ expect(await page.evaluate(()=>(window as any).progress.setup)).toBe('skipped');
+ await expect(page.locator('.start-hint')).toHaveCount(0);
+ await expect(page.getByRole('textbox',{name:'Source text',exact:true})).toBeVisible();
+ await page.reload();await expect(help).toHaveAttribute('aria-expanded','false');
+ const source=page.getByRole('textbox',{name:'Source text',exact:true});await source.fill('An unsent synthetic draft.');
+ await help.click();await page.getByRole('button',{name:/3\s*Practice/}).click();
+ await help.focus();await page.keyboard.press('Enter');
+ await expect(source).toHaveValue('An unsent synthetic draft.');await expect(help).toBeFocused();
+ expect(await page.evaluate(()=>(window as any).progress.tutorial)).toBe('new');
+ expect(await networkActions(page)).toEqual([]);
+});
+
+test('failed or pending skip retains the guide and never silently loses progress',async({page})=>{
+ await setup(page);
+ const help=page.getByRole('button',{name:'Usage guide',exact:true});
+ await page.evaluate(()=>{(window as any).failProgress=true;});await help.click();
+ await expect(page.getByRole('alert')).toContainText('Synthetic progress save failed');
+ await expect(help).toHaveAttribute('aria-expanded','true');
+ expect(await page.evaluate(()=>(window as any).progress.setup)).toBe('new');
+ await page.evaluate(()=>{(window as any).failProgress=false;(window as any).deferProgress=true;});
+ await page.getByRole('button',{name:'Set up later',exact:true}).click();
+ await expect(help).toBeDisabled();await expect(page.getByRole('button',{name:'Set up later',exact:true})).toBeDisabled();
+ await page.evaluate(()=>(window as any).releaseProgress());
+ await expect(page.locator('.getting-started')).toHaveCount(0);await expect(help).toBeEnabled();
+});
+
+test('skip remains prominent without motion and its optional halo stops after two pulses',async({page})=>{
+ await setup(page);await page.setViewportSize({width:1100,height:820});
+ await page.evaluate(()=>{const w=window as any;w.settings.ui_language='zh';w.settings.theme='dark';w.emit('configuration-changed',structuredClone(w.settings));});
+ const skip=page.getByRole('button',{name:'稍后设置',exact:true});
+ await expect(skip).toBeVisible();await expect(skip).toHaveCSS('color','rgb(174, 213, 182)');
+ expect(await skip.evaluate(el=>getComputedStyle(el,'::after').animationName)).toBe('none');
+ const box=await skip.boundingBox();expect(box!.height).toBeGreaterThanOrEqual(36);
+ await page.screenshot({path:'.ai-notes/guide-clear-exit-dark.png',fullPage:true,animations:'disabled'});
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await expect.poll(()=>skip.evaluate(el=>getComputedStyle(el,'::after').animationIterationCount)).toBe('2');
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await expect.poll(()=>skip.evaluate(el=>getComputedStyle(el,'::after').animationName)).toBe('none');
 });

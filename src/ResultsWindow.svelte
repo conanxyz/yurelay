@@ -50,7 +50,9 @@
   );
   function resizePair(height: number | null, commit: boolean) {
     pairedHeight =
-      height === null ? null : Math.max(240, Math.min(4000, pairedAvailable, Math.round(height)));
+      height === null
+        ? null
+        : Math.max(240, Math.min(4000, pairedAvailable, Math.round(height)));
     pairedViewportHeight = height === null ? null : pairedAvailable;
     if (commit) saveReadingHeight("paired", pairedHeight, pairedViewportHeight);
   }
@@ -118,6 +120,8 @@
   } from "./types";
   let experience = $state<ExperienceStatus | null>(null);
   let guideOpen = $state(false);
+  let guideBusy = $state(false);
+  let guideView = $state<GettingStarted>();
   let guideStep = $state(0);
   let experienceSequence = 0;
   let guideOpener: HTMLElement | null = null;
@@ -137,7 +141,12 @@
   async function openSettings(route: SettingsRoute) {
     await action("open_settings_at", { route });
   }
+  async function toggleGuide() {
+    if (guideOpen) await guideView?.skip();
+    else openGuide();
+  }
   function openGuide() {
+    if (guideOpen) return;
     guideOpener = document.activeElement as HTMLElement;
     guideStep = experience?.progress.step ?? 0;
     guideOpen = true;
@@ -146,7 +155,9 @@
     );
   }
   function closeGuide() {
+    if (!guideOpen) return;
     guideOpen = false;
+    guideBusy = false;
     void refreshExperience().catch((e) => (error = errorText(e, locale)));
     tick().then(() =>
       guideOpener?.isConnected ? guideOpener.focus() : sourceEditor?.focus(),
@@ -1211,8 +1222,14 @@
         <button
           class="icon-button"
           aria-label={t("使用帮助", "Usage guide")}
-          title={t("使用帮助", "Usage guide")}
-          onclick={openGuide}><Icon name="help" size={16} /></button
+          title={guideOpen
+            ? t("关闭引导，稍后设置", "Close guide and set up later")
+            : t("使用帮助", "Usage guide")}
+          class:chosen={guideOpen}
+          aria-expanded={guideOpen}
+          aria-controls="reading-usage-guide"
+          disabled={guideBusy}
+          onclick={toggleGuide}><Icon name="help" size={16} /></button
         >
         <button
           class="icon-button"
@@ -1273,31 +1290,16 @@
         {locale}
         onUpdate={(task, choose) => updateSource(task, choose)}
       />
-      {#if guideOpen}<GettingStarted
-          {settings}
-          {locale}
-          initialStep={guideStep}
-          onclose={closeGuide}
-          navigate={openSettings}
-        />{/if}
-      {#if !guideOpen && !draft.trim() && !current}<div class="start-hint">
-          <p class="start-eyebrow">
-            {t("阅读 · 理解 · 表达", "Read · Understand · Express")}
-          </p>
-          <h1 class="start-title">
-            {t("从一段文字开始", "Start with a few words")}
-          </h1>
-          <p>
-            {t(
-              "输入或粘贴文字，也可以使用划词或截图快捷键。",
-              "Type or paste text, or use your selection and screenshot shortcuts.",
-            )}
-          </p>
-          <button onclick={openGuide}
-            >{t("查看使用引导", "Getting started")}</button
-          ><button onclick={() => openSettings({ section: "translation" })}
-            >{t("查看或修改快捷键", "View or change shortcuts")}</button
-          >
+      {#if guideOpen}<div id="reading-usage-guide">
+          <GettingStarted
+            bind:this={guideView}
+            bind:busy={guideBusy}
+            {settings}
+            {locale}
+            initialStep={guideStep}
+            onclose={closeGuide}
+            navigate={openSettings}
+          />
         </div>{/if}
       <div
         class="reading-sheet"
@@ -1451,8 +1453,8 @@
                     placeholder={sourceProcessing
                       ? ""
                       : t(
-                          "选中文字或截取屏幕区域…",
-                          "Select text or capture a screen region…",
+                          "输入或粘贴文字，也可划词或截图…",
+                          "Type or paste text, or capture a selection…",
                         )}
                     spellcheck="false"></textarea>
                   {#if sourceProcessing}<div

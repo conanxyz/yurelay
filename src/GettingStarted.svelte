@@ -9,23 +9,25 @@
     Experience,
     SettingsRoute,
   } from "./types";
+  import Icon from "./Icons.svelte";
   import ServiceVerificationBadge from "./ServiceVerificationBadge.svelte";
   let {
     settings,
     locale,
     initialStep,
+    busy = $bindable(false),
     onclose,
     navigate,
   }: {
     settings: Settings;
     locale: Locale;
     initialStep?: number;
+    busy?: boolean;
     onclose?: () => void;
     navigate: (route: SettingsRoute) => Promise<void>;
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   let step = $state(untrack(() => initialStep ?? 0)),
-    busy = $state(false),
     error = $state("");
   let permissions = $state({ accessibility: false, screen: false });
   let status = $state<ExperienceStatus | null>(null);
@@ -116,6 +118,9 @@
       onclose?.();
     });
   }
+  export async function skip() {
+    await close(false);
+  }
   onMount(() => {
     let loaded = false;
     const update = () =>
@@ -163,10 +168,11 @@
     <span class="guide-eyebrow"
       >YURELAY · {t("开始使用", "GETTING STARTED")}</span
     >
-    {#if onclose}<button
-        class="guide-skip"
-        disabled={busy}
-        onclick={() => close(false)}>{t("稍后设置", "Set up later")}</button
+    {#if onclose}<button class="guide-skip" disabled={busy} onclick={skip}
+        ><span>{t("稍后设置", "Set up later")}</span><Icon
+          name="close"
+          size={14}
+        /></button
       >{/if}
   </div>
   <nav class="guide-steps" aria-label={t("引导步骤", "Setup steps")}>
