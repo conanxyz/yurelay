@@ -5,6 +5,7 @@ mod history;
 mod history_performance;
 mod onboarding;
 pub mod operations;
+pub mod reading_layout;
 pub mod reliability;
 mod source;
 pub mod vocabulary;

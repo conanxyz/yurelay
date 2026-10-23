@@ -78,3 +78,22 @@ pub fn open_settings_at(app: AppHandle, route: SettingsRoute) -> Result<(), Stri
 pub fn show_translation_window(app: AppHandle) {
     state::show(&app, true);
 }
+
+#[tauri::command]
+pub async fn reading_layout(
+    app: AppHandle,
+) -> Result<yurelay_core::storage::reading_layout::ReadingLayout, String> {
+    state::engine(&app).await?.storage.reading_layout().await
+}
+#[tauri::command]
+pub async fn save_reading_height(
+    app: AppHandle,
+    panel: yurelay_core::storage::reading_layout::ReadingPanel,
+    height: Option<u32>,
+) -> Result<(), String> {
+    state::engine(&app)
+        .await?
+        .storage
+        .save_reading_height(panel, height)
+        .await
+}

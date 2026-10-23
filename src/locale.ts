@@ -76,6 +76,8 @@ export function statusName(value: string, locale: Locale) {
   return statuses[value]?.[locale === "zh" ? 0 : 1] ?? value;
 }
 const errors: Record<string, string> = {
+  "无法读取阅读区尺寸设置。": "Could not read saved reading area sizes.",
+  "阅读区高度须介于 80 和 4000 之间。": "Reading area height must be between 80 and 4000.",
   "窗口调整未完成，请重试。": "The window change did not complete. Please try again.",
   "无法读取使用引导进度。": "Could not read getting-started progress.",
   "引导步骤无效。": "Invalid getting-started step.",

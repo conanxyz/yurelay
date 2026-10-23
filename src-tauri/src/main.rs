@@ -288,6 +288,8 @@ fn main() {
             source_commands::capture_with_mode,
             commands::bootstrap,
             experience::experience_status,
+            experience::reading_layout,
+            experience::save_reading_height,
             experience::update_experience,
             experience::open_settings_at,
             experience::take_settings_route,

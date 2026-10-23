@@ -30,6 +30,44 @@
   import ResizableReading from "./ResizableReading.svelte";
   let sourceHeight = $state<number | null>(null);
   let translationHeight = $state<number | null>(null);
+  let readingLayoutLoading = $state(true);
+  let heightSaveQueue = Promise.resolve();
+  function saveReadingHeight(
+    panel: "source" | "translation",
+    height: number | null,
+  ) {
+    if (!isTauri()) return;
+    heightSaveQueue = heightSaveQueue
+      .then(() => invoke<void>("save_reading_height", { panel, height }))
+      .catch((e) => {
+        error = errorText(e, locale);
+      });
+  }
+  onMount(() => {
+    if (!isTauri()) {
+      readingLayoutLoading = false;
+      return;
+    }
+    let disposed = false;
+    invoke<{ source_height: number | null; translation_height: number | null }>(
+      "reading_layout",
+    )
+      .then((layout) => {
+        if (!disposed && layout) {
+          sourceHeight = layout.source_height;
+          translationHeight = layout.translation_height;
+        }
+      })
+      .catch((e) => {
+        if (!disposed) error = errorText(e, locale);
+      })
+      .finally(() => {
+        if (!disposed) readingLayoutLoading = false;
+      });
+    return () => {
+      disposed = true;
+    };
+  });
   import GettingStarted from "./GettingStarted.svelte";
   import type {
     Experience,
@@ -1313,6 +1351,8 @@
               </details>{/if}
             <ResizableReading
               id="source-reading-viewport"
+              disabled={readingLayoutLoading}
+              onCommit={(height) => saveReadingHeight("source", height)}
               bind:height={sourceHeight}
               label={t(
                 "调整原文高度（拖动或上下键；双击恢复）",
@@ -1571,6 +1611,8 @@
             {/if}
             <ResizableReading
               id="translation-reading-viewport"
+              disabled={readingLayoutLoading}
+              onCommit={(height) => saveReadingHeight("translation", height)}
               bind:height={translationHeight}
               label={t(
                 "调整译文高度（拖动或上下键；双击恢复）",

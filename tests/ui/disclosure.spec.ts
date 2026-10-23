@@ -6,10 +6,11 @@ async function editableSource(page: Page) {
   return page.getByRole('textbox', {name:'Source text',exact:true});
 }
 
-async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='') {
-  await page.addInitScript(({initialSelection, initialSourceLanguage}) => {
+async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='', deferLayout=false) {
+  await page.addInitScript(({initialSelection, initialSourceLanguage, deferLayout}) => {
     const w = window as any;
     w.isTauri = true;
+    w.deferLayout = deferLayout;
     w.calls = [];w.words=[];
     w.keychainRequired = false;
     w.keychainError = '';
@@ -49,6 +50,8 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         w.calls.push({ cmd, args });
         if (cmd === 'plugin:event|listen') { events[args.event] = args.handler; return callback; }
         if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: false, expanded: false };
+        if(cmd==='reading_layout'){if(w.deferLayout)await new Promise(resolve=>w.releaseLayout=resolve);return JSON.parse(localStorage.getItem('fixture-reading-layout')??'{"source_height":null,"translation_height":null}');}
+        if(cmd==='save_reading_height'){if(w.failHeightSave)throw 'Synthetic height save failed';const layout=JSON.parse(localStorage.getItem('fixture-reading-layout')??'{"source_height":null,"translation_height":null}');layout[args.panel+'_height']=args.height;localStorage.setItem('fixture-reading-layout',JSON.stringify(layout));return null;}
         if (cmd === 'configuration_settings') return w.settings;
         if (cmd === 'permissions') return { accessibility: true, screen: true };
         if (cmd === 'credential_authorization_required') return w.keychainRequired;
@@ -104,7 +107,7 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         return null;
       },
     };
-  },{initialSelection:initiallySelected,initialSourceLanguage});
+  },{initialSelection:initiallySelected,initialSourceLanguage,deferLayout});
   await page.goto('/');
   if(initiallySelected)await expect(page.locator('.disclosure-control')).toBeEnabled();else await expect(page.locator('.disclosure-control')).toBeDisabled();
 }
@@ -1372,4 +1375,56 @@ test('source and translation heights can be dragged or adjusted by keyboard with
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
  expect(await requests(page)).toBe(1);
  await translation.dblclick();await expect(page.locator('#translation-body .reader-resize-box')).not.toHaveClass(/has-height/);
+});
+
+
+test('reading heights survive collapse, retranslations, restart and independent reset',async({page})=>{
+ await fixture(page);
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ await expect(source).toHaveAttribute('aria-disabled','false');
+ await source.focus();await page.keyboard.press('ArrowDown');
+ const sourceSize=await page.locator('#source-reading-viewport').evaluate(el=>parseInt((el as HTMLElement).style.height));
+ await expect(source).toHaveAttribute('aria-valuenow',String(sourceSize));
+ await page.locator('.disclosure-control').click();await complete(page);
+ const translation=page.getByRole('separator',{name:/Resize translation height/});
+ await translation.focus();await page.keyboard.press('ArrowDown');
+ const translationSize=await page.locator('#translation-reading-viewport').evaluate(el=>parseInt((el as HTMLElement).style.height));
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!))).toEqual({source_height:sourceSize,translation_height:translationSize});
+ await page.locator('.disclosure-control').click();await page.locator('.disclosure-control').click();
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ await page.getByRole('button',{name:'Translate again',exact:true}).click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ await page.reload();
+ await expect(source).toHaveAttribute('aria-valuenow',String(sourceSize));
+ await page.locator('.disclosure-control').click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height'))).toEqual([]);
+ await source.dblclick();
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!))).toEqual({source_height:null,translation_height:translationSize});
+ await page.reload();await page.locator('.disclosure-control').click();await complete(page);
+ await expect(translation).toHaveAttribute('aria-valuenow',String(translationSize));
+});
+
+test('a failed height save is visible and does not silently replace the persisted size',async({page})=>{
+ await fixture(page);await page.evaluate(()=>{(window as any).failHeightSave=true;});
+ const source=page.getByRole('separator',{name:/Resize source height/});await source.focus();await page.keyboard.press('ArrowDown');
+ await expect(page.getByRole('alert')).toContainText('Synthetic height save failed');
+ expect(await page.evaluate(()=>localStorage.getItem('fixture-reading-layout'))).toBeNull();
+});
+
+
+test('delayed layout restoration blocks edits and does not write defaults', async ({page}) => {
+ await fixture(page, true, '', true);
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ await expect(source).toHaveAttribute('aria-disabled','true');
+ await source.dispatchEvent('keydown',{key:'ArrowDown'});
+ await source.dispatchEvent('dblclick');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height'))).toEqual([]);
+ await page.evaluate(()=>{localStorage.setItem('fixture-reading-layout',JSON.stringify({source_height:280,translation_height:380}));(window as any).releaseLayout();});
+ await expect(source).toHaveAttribute('aria-disabled','false');
+ await expect(source).toHaveAttribute('aria-valuenow','280');
+ await page.locator('.disclosure-control').click();await complete(page);
+ await expect(page.getByRole('separator',{name:/Resize translation height/})).toHaveAttribute('aria-valuenow','380');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_reading_height'))).toEqual([]);
 });

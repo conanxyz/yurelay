@@ -5,11 +5,15 @@
     id,
     height = $bindable<number | null>(null),
     children,
+    disabled = false,
+    onCommit = (_height: number | null) => {},
   }: {
     label: string;
     id: string;
     height?: number | null;
     children: Snippet;
+    disabled?: boolean;
+    onCommit?: (height: number | null) => void;
   } = $props();
   let box: HTMLDivElement;
   let measured = $state(120);
@@ -19,7 +23,7 @@
   const clamp = (value: number) =>
     Math.round(Math.min(maximum, Math.max(minimum, value)));
   function start(event: PointerEvent) {
-    if (event.button !== 0 || drag) return;
+    if (disabled || event.button !== 0 || drag) return;
     event.preventDefault();
     const handle = event.currentTarget as HTMLElement;
     handle.focus({ preventScroll: true });
@@ -37,12 +41,19 @@
   function end(event: PointerEvent) {
     if (drag?.id !== event.pointerId) return;
     drag = null;
+    onCommit(height);
     const handle = event.currentTarget as HTMLElement;
     if (handle.hasPointerCapture(event.pointerId))
       handle.releasePointerCapture(event.pointerId);
   }
   function key(event: KeyboardEvent) {
-    if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing)
+    if (
+      disabled ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.isComposing
+    )
       return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -51,10 +62,17 @@
         measured +
           (event.key === "ArrowDown" ? 24 : -24) * (event.shiftKey ? 4 : 1),
       );
+      onCommit(height);
     } else if (event.key === "Home") {
       event.preventDefault();
       event.stopPropagation();
+      reset();
+    }
+  }
+  function reset() {
+    if (!disabled) {
       height = null;
+      onCommit(null);
     }
   }
   onMount(() => {
@@ -88,14 +106,15 @@
   aria-valuemin={minimum}
   aria-valuemax={Math.max(maximum, measured)}
   aria-valuenow={measured}
-  tabindex="0"
+  aria-disabled={disabled}
+  tabindex={disabled ? -1 : 0}
   onpointerdown={start}
   onpointermove={move}
   onpointerup={end}
   onpointercancel={end}
-  onlostpointercapture={() => (drag = null)}
+  onlostpointercapture={end}
   onkeydown={key}
-  ondblclick={() => (height = null)}
+  ondblclick={reset}
 >
   <span></span>
 </div>
