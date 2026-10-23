@@ -77,9 +77,12 @@ def prepare_release(tag, repository, source_sha):
         release = matches[0]
         validate_draft(release, tag)
         if release.get('target_commitish') != source_sha:
-            # Pin the draft, leaving its title, notes and prerelease flag untouched.
+            # GitHub can replace a draft's tag with an untagged placeholder when
+            # PATCH omits tag_name. Preserve it while pinning the build commit.
             release = github_json(f"repos/{repository}/releases/{release['id']}",
-                                  method='PATCH', payload={'target_commitish': source_sha})
+                                  method='PATCH', payload={
+                                      'tag_name': tag, 'target_commitish': source_sha,
+                                  })
     else:
         release = github_json(f'repos/{repository}/releases', method='POST', payload={
             'tag_name': tag, 'target_commitish': source_sha,
@@ -218,8 +221,11 @@ def publish_release(tag, repository, source_sha, release_id):
     tag_exists = verify_tag_source(repository, tag, source_sha)
     if not tag_exists and release.get('target_commitish') != source_sha:
         raise ValueError('Draft target changed during the build; keeping the draft private.')
-    result = github_json(resource, method='PATCH', payload={'draft': False})
-    if result.get('draft') is not False or result.get('id') != int(release_id):
+    result = github_json(resource, method='PATCH', payload={
+        'tag_name': tag, 'target_commitish': source_sha, 'draft': False,
+    })
+    if (result.get('draft') is not False or result.get('id') != int(release_id)
+            or result.get('tag_name') != tag):
         raise ValueError('Publication was not confirmed.')
 
 

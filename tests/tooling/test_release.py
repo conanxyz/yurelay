@@ -43,6 +43,8 @@ class FakeGitHub:
         if resource.endswith('/releases') and method == 'POST':
             self.release = {'id': 42, 'assets': [], **payload}
         elif payload:
+            if self.release['draft'] and 'tag_name' not in payload:
+                self.release['tag_name'] = 'untagged-fixture'
             self.release.update(payload)
         return copy.deepcopy(self.release)
 
@@ -92,7 +94,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(api.release['name'], release['name'])
         self.assertFalse(api.release['prerelease'])
         self.assertTrue(api.release['draft'])
-        self.assertEqual(api.calls[-1][1], {'target_commitish': SHA})
+        self.assertEqual(api.release['tag_name'], TAG)
+        self.assertEqual(api.calls[-1][1], {'tag_name': TAG, 'target_commitish': SHA})
 
     def test_existing_published_release_is_never_overwritten(self):
         release = draft()
@@ -178,8 +181,11 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(api.release['body'], release['body'])
                 self.assertEqual(api.release['name'], release['name'])
                 self.assertEqual(api.release['prerelease'], prerelease)
+                self.assertEqual(api.release['tag_name'], TAG)
                 self.assertEqual(api.publication_calls(), [
-                    (f'repos/{REPO}/releases/42', {'draft': False}),
+                    (f'repos/{REPO}/releases/42', {
+                        'tag_name': TAG, 'target_commitish': SHA, 'draft': False,
+                    }),
                 ])
                 self.assertEqual({a['name'] for a in api.release['assets']}, {
                     'Yurelay_0.1.0_aarch64.dmg', 'Yurelay_0.1.0_x64.dmg', 'SHA256SUMS.txt',
@@ -252,7 +258,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual({a['name'] for a in api.release['assets']}, {
             'Yurelay_0.1.0_aarch64.dmg', 'Yurelay_0.1.0_x64.dmg', 'SHA256SUMS.txt',
         })
-        self.assertEqual(api.calls[-1], (f'repos/{REPO}/releases/42', {'draft': False}))
+        self.assertEqual(api.calls[-1], (f'repos/{REPO}/releases/42', {
+            'tag_name': TAG, 'target_commitish': SHA, 'draft': False,
+        }))
 
     def test_retry_after_partial_cleanup_uses_combined_checksums(self):
         release, files, _ = installer_fixture()
