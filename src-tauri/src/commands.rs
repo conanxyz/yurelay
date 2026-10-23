@@ -705,45 +705,6 @@ pub async fn detect_text_language(text: String) -> Result<Option<String>, String
 }
 
 #[tauri::command]
-pub fn fit_result_height(
-    app: AppHandle,
-    height: f64,
-    generation: Option<u64>,
-) -> Result<(), String> {
-    if !height.is_finite() {
-        return Err("窗口高度无效。".into());
-    }
-    if !app
-        .state::<AppState>()
-        .sizing
-        .lock()
-        .unwrap()
-        .accepts(generation)
-    {
-        return Ok(());
-    }
-    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
-    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
-        return Ok(());
-    }
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let width = window.inner_size().map_err(|e| e.to_string())?.width as f64 / scale;
-    let max_height = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .map(|m| m.work_area().size.height as f64 / m.scale_factor() - 40.0)
-        .unwrap_or(720.0)
-        .min(720.0);
-    window
-        .set_size(tauri::LogicalSize::new(
-            width,
-            height.clamp(220.0, max_height.max(220.0)),
-        ))
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn open_dictionary(kind: String, text: String) -> Result<(), String> {
     yurelay_platform::open_dictionary(&kind, &text)
 }
@@ -991,57 +952,11 @@ pub fn set_vocabulary_sidebar(app: AppHandle, width: u32) -> Result<u32, String>
     if !matches!(width, 0 | 40 | 220) {
         return Err("无效的生词栏尺寸。".into());
     }
-    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
-    let state = app.state::<AppState>();
-    let old = state.vocabulary_sidebar_width.load(Ordering::Relaxed) as f64;
-    if old == f64::from(width) {
-        return Ok(width);
-    }
-    let scale = window.scale_factor().map_err(|_| "无法读取窗口比例。")?;
-    let size = window.inner_size().map_err(|_| "无法读取窗口大小。")?;
-    let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "无法读取屏幕。")?
-        .ok_or("屏幕不可用。")?;
-    let area = monitor.work_area();
-    let (point, size, applied) = crate::placement::sidebar_bounds(
-        [f64::from(position.x) / scale, f64::from(position.y) / scale],
-        [
-            f64::from(size.width) / scale,
-            f64::from(size.height) / scale,
-        ],
-        [
-            f64::from(area.position.x) / scale,
-            f64::from(area.position.y) / scale,
-            f64::from(area.size.width) / scale,
-            f64::from(area.size.height) / scale,
-        ],
-        old,
-        width,
-    );
-    window
-        .set_min_size(Some(tauri::LogicalSize::new(
-            360.0 + f64::from(applied),
-            220.0,
-        )))
-        .map_err(|_| "无法调整生词栏。")?;
-    if !window.is_maximized().unwrap_or(false) && !window.is_fullscreen().unwrap_or(false) {
-        window
-            .set_size(tauri::LogicalSize::new(size[0], size[1]))
-            .map_err(|_| "无法调整生词栏。")?;
-        state
-            .vocabulary_sidebar_width
-            .store(u64::from(applied), Ordering::Relaxed);
-        window
-            .set_position(tauri::LogicalPosition::new(point[0], point[1]))
-            .map_err(|_| "无法调整生词栏位置。")?;
-    } else {
-        state
-            .vocabulary_sidebar_width
-            .store(u64::from(applied), Ordering::Relaxed);
-    }
-    Ok(applied)
+    // Sidebars change the internal layout, never the user's native bounds.
+    app.state::<AppState>()
+        .vocabulary_sidebar_width
+        .store(u64::from(width), Ordering::Relaxed);
+    Ok(width)
 }
 
 #[tauri::command]
@@ -1083,14 +998,4 @@ pub async fn resolve_operation_sensitive(
         .await?
         .resolve_operation_sensitive(&id, allow)
         .await
-}
-
-#[tauri::command]
-pub fn fit_window_to_content(app: AppHandle) -> Result<(), String> {
-    use tauri::Emitter;
-    let state = app.state::<AppState>();
-    let mut sizing = state.sizing.lock().unwrap();
-    sizing.fit();
-    let _ = app.emit_to("main", "window-mode-changed", *sizing);
-    Ok(())
 }

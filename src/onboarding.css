@@ -211,3 +211,24 @@ button.service-identity:hover {
 .guide-basics kbd {
   white-space: nowrap;
 }
+
+/* Keep narrow-window reading width stable without covering the source. */
+@media (max-width: 579px) {
+  .translation-window.with-vocabulary {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  .translation-window .vocabulary-sidebar {
+    grid-column: 2;
+    grid-row: 2;
+    position: static;
+    width: 100%;
+    height: auto;
+    max-height: 360px;
+    padding: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .translation-window .vocabulary-sidebar.collapsed {
+    padding: 4px 12px;
+    height: 56px;
+  }
+}

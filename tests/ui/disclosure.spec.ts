@@ -1317,31 +1317,32 @@ test('sensitive confirmation keeps the displayed query service when the default 
   expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='resolve_sensitive').length)).toBe(1);
 });
 
-test('restoring the native window refits unchanged compact content', async ({ page }) => {
-  await fixture(page);
-  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').length)).toBeGreaterThan(0);
-  await page.getByRole('button', { name: 'Expand', exact: true }).click();
-  await page.setViewportSize({ width: 1000, height: 800 });
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  // macOS delivers the restored size before the final mode notification.
-  await page.setViewportSize({ width: 460, height: 560 });
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const fits = await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').length);
-  await page.evaluate(() => (window as any).emit('window-mode-changed', false));
-  await expect.poll(() => page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').length)).toBeGreaterThan(fits);
-  const height = await page.locator('.translation-content').evaluate(el => Math.ceil(el.getBoundingClientRect().height + 44));
-  expect(await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'fit_result_height').at(-1).args.height)).toBe(height);
+test('content, guide and native mode changes never request automatic sizing', async ({page}) => {
+ await fixture(page);
+ await page.locator('.disclosure-control').click();await complete(page);
+ await page.getByRole('button',{name:'Usage guide',exact:true}).click();
+ await page.getByRole('button',{name:'Set up later',exact:true}).click();
+ await page.evaluate(()=>{const w=window as any;w.emit('window-mode-changed',true);});
+ await page.setViewportSize({width:1000,height:800});
+ await page.evaluate(()=>{const w=window as any;w.emit('window-mode-changed',false);});
+ await page.setViewportSize({width:520,height:560});
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
+ await expect(page.getByRole('button',{name:'Fit content height'})).toHaveCount(0);
+ await expect(page.locator('.translation-prose')).toBeVisible();
 });
 
-test('restoring content height still works when WebKit pauses animation frames', async ({page}) => {
-  await fixture(page);
-  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='fit_result_height').length)).toBeGreaterThan(0);
-  const before = await page.evaluate(()=>{
-    const w=window as any;
-    w.requestAnimationFrame=()=>0;
-    w.emit('window-mode-changed',true);
-    return w.calls.filter((c:any)=>c.cmd==='fit_result_height').length;
-  });
-  await page.evaluate(()=>(window as any).emit('window-mode-changed',false));
-  await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='fit_result_height').length)).toBeGreaterThan(before);
+
+test('narrow vocabulary opens inside the existing window without shifting the reading column',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:520,height:560});
+ await page.locator('.disclosure-control').click();await complete(page);
+ const before=await page.locator('.translation-main').boundingBox();
+ await page.evaluate(()=>{const w=window as any;w.task.vocabulary=[{word:'model',surface:'model',phonetic:'',pos:'n.',context_meaning:'模型',context_sentence:'A model.',dict_meaning:'',sentence_trans:'',difficulty:'B1'}];w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id,notice:null});});
+ await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
+ await expect(page.locator('.vocabulary-side-card')).toHaveCount(1);
+ const after=await page.locator('.translation-main').boundingBox();
+ expect(after!.x).toBe(before!.x);expect(after!.width).toBe(before!.width);
+ const rail=await page.locator(".vocabulary-sidebar").boundingBox();expect(rail!.y).toBeGreaterThanOrEqual(after!.y+after!.height);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
 });

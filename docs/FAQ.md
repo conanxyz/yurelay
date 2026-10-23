@@ -25,7 +25,7 @@ Click the service/model name in the translation window to open that service's se
 
 Practice uses a separate demo. It makes no network requests and never replaces your source, clipboard or history. It displays your currently configured shortcuts.
 
-Restoring after zoom uses the normal window bounds kept by macOS. After a manual resize, automatic content height no longer overrides your size. Use **Fit content height** in the title bar to re-enable it.
+The main window defaults to 520 × 560 macOS logical pixels. Content, guide and vocabulary changes never resize it; overflow scrolls. Manual sizes persist across launches, and zoom restores the previous normal bounds. In narrow windows vocabulary appears below the reading content without covering it or changing the reading column width.
 
 The guide offers a Zhipu quick setup: register with BigModel, create a standard model API key, paste it and choose Save and use. The free `glm-4.7-flash` model and endpoint are preset. Coding Plan keys use a different endpoint. Existing model configurations are preserved, and advanced settings remain available.
 

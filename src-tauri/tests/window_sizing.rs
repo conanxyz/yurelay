@@ -33,6 +33,13 @@ async fn until(mut check: impl FnMut() -> bool) -> Result<(), &'static str> {
 }
 async fn verify(app: &tauri::AppHandle) -> Result<(), String> {
     let window = app.get_webview_window("main").unwrap();
+    let initial = window_sizing::initial_size(
+        &std::env::temp_dir().join("yurelay-no-saved-window-size"),
+        [1440.0, 900.0],
+    );
+    if initial != [520.0, 560.0] {
+        return Err("wrong default size".into());
+    }
     let original = window
         .inner_size()
         .map_err(|_| "cannot read initial size")?;
@@ -50,7 +57,7 @@ async fn verify(app: &tauri::AppHandle) -> Result<(), String> {
         until(|| {
             let s = app.state::<state::AppState>();
             let sizing = s.sizing.lock().unwrap();
-            sizing.accepts(Some(sizing.generation))
+            sizing.settled()
         })
         .await?;
         if window
@@ -69,7 +76,7 @@ async fn verify(app: &tauri::AppHandle) -> Result<(), String> {
     until(|| {
         let s = app.state::<state::AppState>();
         let sizing = s.sizing.lock().unwrap();
-        !window.is_fullscreen().unwrap_or(true) && sizing.accepts(Some(sizing.generation))
+        !window.is_fullscreen().unwrap_or(true) && sizing.settled()
     })
     .await?;
     app.state::<state::AppState>()
@@ -96,13 +103,9 @@ async fn verify(app: &tauri::AppHandle) -> Result<(), String> {
     })
     .await?;
     let s = app.state::<state::AppState>();
-    let mut sizing = s.sizing.lock().unwrap();
-    if sizing.accepts(Some(sizing.generation)) {
+    let sizing = s.sizing.lock().unwrap();
+    if !sizing.manual || !sizing.settled() {
         return Err("manual sizing was lost".into());
-    }
-    sizing.fit();
-    if !sizing.accepts(Some(sizing.generation)) {
-        return Err("explicit content fit did not resume".into());
     }
     if s.failure.load(Ordering::SeqCst) {
         return Err("native transition failed".into());
@@ -125,7 +128,7 @@ fn main() {
             )
             .title("Yurelay window test")
             .visible(false)
-            .inner_size(460.0, 373.0)
+            .inner_size(520.0, 560.0)
             .build()?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

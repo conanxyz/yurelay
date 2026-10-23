@@ -215,6 +215,9 @@ fn main() {
                         // SAFETY: window events run on the main thread with a live NSWindow.
                         live_resize = unsafe { yurelay_platform::window_live_resize(ptr) };
                     }
+                    if live_resize && !expanded {
+                        state::remember_result_size(app);
+                    }
                     let state = app.state::<AppState>();
                     let mut sizing = state.sizing.lock().unwrap();
                     if sizing.observe(expanded, live_resize) {
@@ -289,7 +292,6 @@ fn main() {
             experience::open_settings_at,
             experience::take_settings_route,
             experience::show_translation_window,
-            commands::fit_window_to_content,
             commands::default_translation_prompt,
             commands::resolve_sensitive,
             commands::vocabulary_list,
@@ -316,7 +318,6 @@ fn main() {
             commands::stop_task,
             commands::retry_task,
             commands::detect_text_language,
-            commands::fit_result_height,
             commands::set_vocabulary_sidebar,
             commands::retry_save,
             commands::select_task,

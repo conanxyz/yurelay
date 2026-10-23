@@ -37,15 +37,8 @@ impl WindowSizing {
         }
         changed
     }
-    pub fn fit(&mut self) {
-        self.manual = false;
-        self.generation += 1;
-    }
-    pub fn accepts(&self, generation: Option<u64>) -> bool {
-        !self.expanded
-            && !self.manual
-            && self.transition.is_none()
-            && generation.is_none_or(|g| g == self.generation)
+    pub fn settled(&self) -> bool {
+        !self.expanded && self.transition.is_none()
     }
 }
 /// Some AppKit transitions (notably hidden fullscreen windows) do not resize.
@@ -99,31 +92,42 @@ pub fn set_expanded(app: &tauri::AppHandle, expanded: bool) -> Result<(), String
     result.map_err(String::from)
 }
 
+pub fn initial_size(path: &std::path::Path, area: [f64; 2]) -> [f64; 2] {
+    let saved = std::fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice::<[f64; 2]>(&data).ok())
+        .filter(|s| s.iter().all(|n| n.is_finite() && *n > 0.0));
+    let [w, h] = saved.unwrap_or([520.0, 560.0]);
+    [
+        w.clamp(360.0, (area[0] - 32.0).max(360.0)),
+        h.clamp(320.0, (area[1] - 32.0).max(320.0)),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
-    fn stale_measurements_and_maximized_sizes_never_override_restore() {
+    fn manual_size_mode_survives_native_zoom() {
         let mut s = super::WindowSizing::default();
-        let old = s.generation;
-        s.begin(true);
-        assert!(!s.accepts(Some(old)));
-        s.observe(true, false);
-        s.begin(false);
-        assert!(!s.accepts(None));
-        s.observe(false, false);
-        assert!(!s.accepts(Some(old)));
-        assert!(s.accepts(Some(s.generation)));
-    }
-    #[test]
-    fn user_size_survives_expand_restore_until_explicit_fit() {
-        let mut s = super::WindowSizing::default();
+        assert!(s.settled());
         s.observe(false, true);
         s.begin(true);
+        assert!(!s.settled());
         s.observe(true, false);
         s.begin(false);
+        assert!(!s.settled());
         s.observe(false, false);
-        assert!(!s.accepts(Some(s.generation)));
-        s.fit();
-        assert!(s.accepts(Some(s.generation)));
+        assert!(s.settled() && s.manual);
+    }
+    #[test]
+    fn saved_size_reopens_and_only_screen_bounds_constrain_it() {
+        let path = std::env::temp_dir().join(format!("yurelay-size-{}.json", uuid::Uuid::new_v4()));
+        assert_eq!(super::initial_size(&path, [1440.0, 900.0]), [520.0, 560.0]);
+        std::fs::write(&path, b"[680,640]").unwrap();
+        assert_eq!(super::initial_size(&path, [1440.0, 900.0]), [680.0, 640.0]);
+        assert_eq!(super::initial_size(&path, [600.0, 600.0]), [568.0, 568.0]);
+        std::fs::write(&path, b"corrupt").unwrap();
+        assert_eq!(super::initial_size(&path, [1440.0, 900.0]), [520.0, 560.0]);
+        std::fs::remove_file(path).unwrap();
     }
 }

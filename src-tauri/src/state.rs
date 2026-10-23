@@ -71,6 +71,7 @@ pub struct AppState {
     pub last_position: Mutex<Option<[i32; 2]>>,
     pub position_ready: AtomicBool,
     pub position_epoch: AtomicU64,
+    pub size_epoch: AtomicU64,
     pub vocabulary_sidebar_width: AtomicU64,
 }
 
@@ -104,6 +105,7 @@ impl AppState {
             last_position: Mutex::new(None),
             position_ready: AtomicBool::new(false),
             position_epoch: AtomicU64::new(0),
+            size_epoch: AtomicU64::new(0),
             vocabulary_sidebar_width: AtomicU64::new(0),
         }
     }
@@ -576,12 +578,20 @@ pub fn initialize_result_position(app: &AppHandle) {
     if let Some(monitor) = monitor {
         let area = monitor.work_area();
         let scale = monitor.scale_factor();
+        let initial = crate::window_sizing::initial_size(
+            &app.state::<AppState>().root.join("window-size.json"),
+            [
+                f64::from(area.size.width) / scale,
+                f64::from(area.size.height) / scale,
+            ],
+        );
+        let _ = window.set_size(tauri::LogicalSize::new(initial[0], initial[1]));
         let margin = (16.0 * scale).round() as i32;
         let size = window
             .outer_size()
             .ok()
             .map(|s| [s.width as i32, s.height as i32])
-            .unwrap_or([(460.0 * scale) as i32, (560.0 * scale) as i32]);
+            .unwrap_or([(520.0 * scale) as i32, (560.0 * scale) as i32]);
         let area = [
             area.position.x,
             area.position.y,
@@ -602,7 +612,7 @@ pub fn initialize_result_position(app: &AppHandle) {
         .store(true, Ordering::Relaxed);
 }
 
-pub fn remember_result_position(app: &AppHandle, mut position: [i32; 2]) {
+pub fn remember_result_position(app: &AppHandle, position: [i32; 2]) {
     let state = app.state::<AppState>();
     if !state.position_ready.load(Ordering::Relaxed) {
         return;
@@ -611,11 +621,6 @@ pub fn remember_result_position(app: &AppHandle, mut position: [i32; 2]) {
         && (window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false))
     {
         return;
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        let scale = window.scale_factor().unwrap_or(1.0);
-        position[0] +=
-            (state.vocabulary_sidebar_width.load(Ordering::Relaxed) as f64 * scale).round() as i32;
     }
     *state.last_position.lock().unwrap() = Some(position);
     let epoch = state.position_epoch.fetch_add(1, Ordering::Relaxed) + 1;
@@ -717,4 +722,48 @@ mod append_shortcut_tests {
         assert!(parse_shortcuts("Alt+D", "Alt+S", Some("Alt+D"), None).is_err());
         assert!(parse_shortcuts("Alt+D", "Alt+S", Some("Shift+A"), None).is_err());
     }
+}
+
+/// Debounce native user drags; content and mode changes never save a new size.
+pub fn remember_result_size(app: &AppHandle) {
+    let epoch = app
+        .state::<AppState>()
+        .size_epoch
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let state = app.state::<AppState>();
+        if state.size_epoch.load(Ordering::Relaxed) != epoch
+            || !state.sizing.lock().unwrap().settled()
+        {
+            return;
+        }
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        if window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true) {
+            return;
+        }
+        let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else {
+            return;
+        };
+        let size = [
+            f64::from(size.width) / scale,
+            f64::from(size.height) / scale,
+        ];
+        let path = state.root.join("window-size.json");
+        let temporary = state.root.join(format!("window-size-{epoch}.tmp"));
+        if tokio::fs::write(&temporary, serde_json::to_vec(&size).unwrap_or_default())
+            .await
+            .is_ok()
+        {
+            if state.size_epoch.load(Ordering::Relaxed) == epoch {
+                let _ = tokio::fs::rename(&temporary, path).await;
+            } else {
+                let _ = tokio::fs::remove_file(&temporary).await;
+            }
+        }
+    });
 }

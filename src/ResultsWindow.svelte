@@ -37,9 +37,6 @@
   let experience = $state<ExperienceStatus | null>(null);
   let guideOpen = $state(false);
   let guideStep = $state(0);
-  let windowGeneration = $state<number | undefined>(undefined);
-  let manualSize = $state(false);
-  let layoutRevision = $state(0);
   let experienceSequence = 0;
   let guideOpener: HTMLElement | null = null;
   async function refreshExperience() {
@@ -75,12 +72,8 @@
   }
   function windowMode(value: boolean | WindowSizing) {
     expanded = typeof value === "boolean" ? value : value.expanded;
-    if (typeof value !== "boolean") {
-      windowGeneration = value.generation;
-      manualSize = value.manual;
-    }
-    layoutRevision++;
   }
+
   import PendingCaptures from "./PendingCaptures.svelte";
   import SourceToolbar from "./SourceToolbar.svelte";
   import SourceReadingView from "./SourceReadingView.svelte";
@@ -1019,51 +1012,6 @@
     )
       tick().then(() => trigger?.focus({ preventScroll: true }));
   }
-  let fitFrame = 0,
-    fitTimer: ReturnType<typeof setTimeout> | undefined,
-    lastHeight = 0;
-  function scheduleFit(force = false) {
-    cancelAnimationFrame(fitFrame);
-    clearTimeout(fitTimer);
-    if (force) lastHeight = 0;
-    const measure = () => {
-      cancelAnimationFrame(fitFrame);
-      clearTimeout(fitTimer);
-      if (!content || expanded || manualSize || !isTauri()) return;
-      const height = Math.ceil(content.getBoundingClientRect().height + 44);
-      if (height === lastHeight) return;
-      lastHeight = height;
-      invoke("fit_result_height", {
-        height,
-        generation: windowGeneration,
-      }).catch(() => {
-        lastHeight = 0;
-      });
-    };
-    // WKWebView suspends animation frames in hidden/occluded windows. Native
-    // restore must not depend on a frame arriving before the window is shown.
-    fitFrame = requestAnimationFrame(measure);
-    fitTimer = setTimeout(measure, 80);
-  }
-  $effect(() => {
-    void expanded;
-    void layoutRevision;
-    untrack(() => scheduleFit(true));
-  });
-  onMount(() => {
-    const observer = new ResizeObserver(() => scheduleFit());
-    observer.observe(content);
-    const shown = () => {
-      if (!document.hidden) scheduleFit(true);
-    };
-    document.addEventListener("visibilitychange", shown);
-    return () => {
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", shown);
-      cancelAnimationFrame(fitFrame);
-      clearTimeout(fitTimer);
-    };
-  });
   onMount(() => {
     if (!isTauri()) return;
     let disposed = false;
@@ -1180,13 +1128,6 @@
           title={t("使用帮助", "Usage guide")}
           onclick={openGuide}><Icon name="help" size={16} /></button
         >
-        {#if manualSize && !expanded}<button
-            class="icon-button"
-            aria-label={t("适应内容高度", "Fit content height")}
-            title={t("适应内容高度", "Fit content height")}
-            onclick={() => action("fit_window_to_content")}
-            ><Icon name="fit" size={16} /></button
-          >{/if}
         <button
           class="icon-button"
           aria-label={expanded
