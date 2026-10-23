@@ -27,6 +27,9 @@
     languageName,
     languages,
   } from "./locale";
+  import ResizableReading from "./ResizableReading.svelte";
+  let sourceHeight = $state<number | null>(null);
+  let translationHeight = $state<number | null>(null);
   import GettingStarted from "./GettingStarted.svelte";
   import type {
     Experience,
@@ -1308,53 +1311,62 @@
                     alt={t("原始截图选区", "Original screenshot selection")}
                   />{/if}
               </details>{/if}
-            {#if !sourceEditing && current && !sourceProcessing && !!draft.trim()}
-              <SourceReadingView
-                task={current}
-                text={draft}
-                {locale}
-                enabled={settings.encounter_highlight !== false &&
-                  vocabularyEligible}
-                onSelect={chooseSourceRange}
-              />
-            {:else}<div class="source-editor-frame">
-                <textarea
-                  class="source-editor"
-                  bind:this={sourceEditor!}
-                  aria-label={t("原文内容", "Source text")}
-                  aria-busy={sourceProcessing}
-                  aria-describedby={sourceProcessing
-                    ? "source-processing-status"
-                    : undefined}
-                  bind:value={draft}
-                  readonly={!!current && active(current)}
-                  onselect={captureSelection}
-                  onmouseup={selectWordAtCaret}
-                  oninput={clearSelection}
-                  placeholder={sourceProcessing
-                    ? ""
-                    : t(
-                        "选中文字或截取屏幕区域…",
-                        "Select text or capture a screen region…",
-                      )}
-                  spellcheck="false"></textarea>
-                {#if sourceProcessing}<div
-                    class="source-processing"
-                    id="source-processing-status"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    <LoadingSpinner size={20} />
-                    <span
-                      >{current?.status === "capturing"
-                        ? t("正在准备截图…", "Preparing screenshot…")
-                        : t(
-                            "正在识别截图文字…",
-                            "Recognizing screenshot text…",
-                          )}</span
+            <ResizableReading
+              id="source-reading-viewport"
+              bind:height={sourceHeight}
+              label={t(
+                "调整原文高度（拖动或上下键；双击恢复）",
+                "Resize source height (drag or arrow keys; double-click to reset)",
+              )}
+            >
+              {#if !sourceEditing && current && !sourceProcessing && !!draft.trim()}
+                <SourceReadingView
+                  task={current}
+                  text={draft}
+                  {locale}
+                  enabled={settings.encounter_highlight !== false &&
+                    vocabularyEligible}
+                  onSelect={chooseSourceRange}
+                />
+              {:else}<div class="source-editor-frame">
+                  <textarea
+                    class="source-editor"
+                    bind:this={sourceEditor!}
+                    aria-label={t("原文内容", "Source text")}
+                    aria-busy={sourceProcessing}
+                    aria-describedby={sourceProcessing
+                      ? "source-processing-status"
+                      : undefined}
+                    bind:value={draft}
+                    readonly={!!current && active(current)}
+                    onselect={captureSelection}
+                    onmouseup={selectWordAtCaret}
+                    oninput={clearSelection}
+                    placeholder={sourceProcessing
+                      ? ""
+                      : t(
+                          "选中文字或截取屏幕区域…",
+                          "Select text or capture a screen region…",
+                        )}
+                    spellcheck="false"></textarea>
+                  {#if sourceProcessing}<div
+                      class="source-processing"
+                      id="source-processing-status"
+                      role="status"
+                      aria-live="polite"
                     >
-                  </div>{/if}
-              </div>{/if}
+                      <LoadingSpinner size={20} />
+                      <span
+                        >{current?.status === "capturing"
+                          ? t("正在准备截图…", "Preparing screenshot…")
+                          : t(
+                              "正在识别截图文字…",
+                              "Recognizing screenshot text…",
+                            )}</span
+                      >
+                    </div>{/if}
+                </div>{/if}
+            </ResizableReading>
           {/if}
           {#if current?.image_error}<p class="inline-feedback">
               {errorText(current.image_error, locale)}
@@ -1557,26 +1569,35 @@
                 {t("授权已保存密钥", "Authorize saved key")}
               </button>
             {/if}
-            {#if current?.translation && !submitting}<TranslationContent
-                text={current.translation}
-                {locale}
-                identity={`${current.id}:${current.attempt}`}
-                streaming={active(current)}
-                plain={localDictionary}
-                highlights={activeHighlights}
-              />
-            {:else if submitting || (current && active(current))}<div
-                class="translation-skeleton"
-                aria-busy="true"
-              >
-                <i></i><i></i>
-                <p>{t("正在翻译…", "Translating…")}</p>
-              </div>
-            {:else}<p class="result-empty">
-                {localDictionary
-                  ? t("暂无释义，可重新查询", "No definition yet. Try again.")
-                  : t("尚无译文，可重试", "No translation yet. Try again.")}
-              </p>{/if}
+            <ResizableReading
+              id="translation-reading-viewport"
+              bind:height={translationHeight}
+              label={t(
+                "调整译文高度（拖动或上下键；双击恢复）",
+                "Resize translation height (drag or arrow keys; double-click to reset)",
+              )}
+            >
+              {#if current?.translation && !submitting}<TranslationContent
+                  text={current.translation}
+                  {locale}
+                  identity={`${current.id}:${current.attempt}`}
+                  streaming={active(current)}
+                  plain={localDictionary}
+                  highlights={activeHighlights}
+                />
+              {:else if submitting || (current && active(current))}<div
+                  class="translation-skeleton"
+                  aria-busy="true"
+                >
+                  <i></i><i></i>
+                  <p>{t("正在翻译…", "Translating…")}</p>
+                </div>
+              {:else}<p class="result-empty">
+                  {localDictionary
+                    ? t("暂无释义，可重新查询", "No definition yet. Try again.")
+                    : t("尚无译文，可重试", "No translation yet. Try again.")}
+                </p>{/if}
+            </ResizableReading>
             {#if service?.provider === "youdao" && draft.trim() && draft.length <= 512}<button
                 class="dictionary-link"
                 disabled={!draft.trim() || draft.length > 512}

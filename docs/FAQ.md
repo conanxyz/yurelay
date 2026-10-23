@@ -35,6 +35,8 @@ The current workflow produces ad-hoc-signed development builds without Apple not
 
 Accessibility enables selection from other apps; Screen Recording enables screenshots. Typing, pasting and local dictionary lookup do not require those two permissions. They are separate from signing, notarization and Keychain access. After updating a development build, consult Yurelay's permission recovery guide if needed.
 
+Drag the handle below either reading area to adjust its height, or focus it and use the arrow keys. Double-click resets natural height. Long text scrolls inside a manually sized area; the outer window stays unchanged.
+
 <a id="workflow"></a>
 
 ## Read and reply

@@ -1346,3 +1346,30 @@ test('narrow vocabulary opens inside the existing window without shifting the re
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
 });
+
+
+test('source and translation heights can be dragged or adjusted by keyboard without resizing the window',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:800,height:900});
+ const source=page.getByRole('separator',{name:/Resize source height/});
+ const start=Number(await source.getAttribute('aria-valuenow'));
+ const box=await source.boundingBox();
+ await page.mouse.move(box!.x+box!.width/2,box!.y+9);await page.mouse.down();await page.mouse.move(box!.x+box!.width/2,box!.y+129,{steps:6});await page.mouse.up();
+ await expect.poll(async()=>Number(await source.getAttribute('aria-valuenow'))).toBeGreaterThan(start+100);
+ expect(await requests(page)).toBe(0);
+ const resized=Number(await source.getAttribute('aria-valuenow'));
+ await (await editableSource(page)).fill('A synthetic source.');
+ await expect(source).toHaveAttribute('aria-valuenow',String(resized));
+ await page.locator('.disclosure-control').click();await complete(page);
+ const translation=page.getByRole('separator',{name:/Resize translation height/});
+ await translation.focus();const before=Number(await translation.getAttribute('aria-valuenow'));
+ await page.keyboard.press('ArrowDown');
+ await expect(translation).toHaveAttribute('aria-valuenow',String(before+24));
+ await page.locator('.disclosure-control').click();await page.locator('.disclosure-control').click();
+ await expect(translation).toHaveAttribute('aria-valuenow',String(before+24));
+ await page.evaluate(()=>{const w=window as any;w.task.translation='Long synthetic paragraph.\n\n'.repeat(100);w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ await expect(page.locator('.reading-block')).toHaveCount(100);
+ const scroll=await page.locator('#translation-body .reader-resize-box').evaluate(el=>({scroll:el.scrollHeight,client:el.clientHeight}));expect(scroll.scroll).toBeGreaterThan(scroll.client);
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['fit_result_height','fit_window_to_content'].includes(c.cmd)))).toEqual([]);
+ expect(await requests(page)).toBe(1);
+ await translation.dblclick();await expect(page.locator('#translation-body .reader-resize-box')).not.toHaveClass(/has-height/);
+});

@@ -258,3 +258,48 @@ button.service-identity:hover {
 .service-test-feedback[data-state="error"] strong {
   color: var(--error);
 }
+
+.reader-resize-box {
+  min-height: 80px;
+  min-width: 0;
+}
+.reader-resize-box.has-height {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.reader-resize-box .source-editor {
+  resize: none;
+}
+.reader-resize-box.has-height .source-editor-frame {
+  height: 100%;
+}
+.reading-sheet .reader-resize-box.has-height .source-editor {
+  height: 100%;
+  min-height: 0;
+}
+.reader-resize-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+.reader-resize-handle span {
+  height: 3px;
+  width: 32px;
+  border-radius: 3px;
+  background: currentColor;
+}
+.reader-resize-handle:hover,
+.reader-resize-handle:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.reader-resize-handle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
