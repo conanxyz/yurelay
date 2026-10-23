@@ -35,7 +35,7 @@ The current workflow produces ad-hoc-signed development builds without Apple not
 
 Accessibility enables selection from other apps; Screen Recording enables screenshots. Typing, pasting and local dictionary lookup do not require those two permissions. They are separate from signing, notarization and Keychain access. After updating a development build, consult Yurelay's permission recovery guide if needed.
 
-Drag the handle below either reading area to adjust its height, or focus it and use the arrow keys. Double-click resets natural height. The two heights are saved independently and restored after collapsing, retranslating or restarting the app, until you adjust or reset them. Long text scrolls inside a manually sized area; the outer window stays unchanged.
+Drag the handle below either reading area to adjust its height, or focus it and use the arrow keys. Wide windows show source and translation side by side; compact windows stack them. Each manually adjusted height is saved relative to the window height, so resizing scales your preferred proportions. Collapsing, retranslating and restarting preserve them; double-click or press Home to return to the responsive default. Long text scrolls inside a manually sized area; the outer window stays unchanged.
 
 <a id="workflow"></a>
 

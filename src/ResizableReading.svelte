@@ -4,24 +4,38 @@
     label,
     id,
     height = $bindable<number | null>(null),
+    viewportHeight = $bindable<number | null>(null),
     children,
     disabled = false,
-    onCommit = (_height: number | null) => {},
+    onCommit = (_height: number | null, _viewportHeight: number | null) => {},
   }: {
     label: string;
     id: string;
     height?: number | null;
+    viewportHeight?: number | null;
     children: Snippet;
     disabled?: boolean;
-    onCommit?: (height: number | null) => void;
+    onCommit?: (height: number | null, viewportHeight: number | null) => void;
   } = $props();
-  let box: HTMLDivElement;
-  let measured = $state(120);
-  let drag: { id: number; y: number; height: number } | null = null;
   const minimum = 80,
     maximum = 4000;
   const clamp = (value: number) =>
     Math.round(Math.min(maximum, Math.max(minimum, value)));
+  let windowHeight = $state(560);
+  // Use the original default window height as the reference for legacy pixel preferences.
+  const referenceHeight = $derived(Math.max(240, windowHeight));
+  const displayedHeight = $derived(
+    height === null
+      ? null
+      : clamp((height * referenceHeight) / (viewportHeight ?? 560)),
+  );
+  function setHeight(value: number) {
+    height = clamp(value);
+    viewportHeight = referenceHeight;
+  }
+  let box: HTMLDivElement;
+  let measured = $state(120);
+  let drag: { id: number; y: number; height: number } | null = null;
   function start(event: PointerEvent) {
     if (disabled || event.button !== 0 || drag) return;
     event.preventDefault();
@@ -36,12 +50,12 @@
   }
   function move(event: PointerEvent) {
     if (drag?.id !== event.pointerId) return;
-    height = clamp(drag.height + event.clientY - drag.y);
+    setHeight(drag.height + event.clientY - drag.y);
   }
   function end(event: PointerEvent) {
     if (drag?.id !== event.pointerId) return;
     drag = null;
-    onCommit(height);
+    onCommit(height, viewportHeight);
     const handle = event.currentTarget as HTMLElement;
     if (handle.hasPointerCapture(event.pointerId))
       handle.releasePointerCapture(event.pointerId);
@@ -58,11 +72,11 @@
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       event.stopPropagation();
-      height = clamp(
-        measured +
+      setHeight(
+        box.getBoundingClientRect().height +
           (event.key === "ArrowDown" ? 24 : -24) * (event.shiftKey ? 4 : 1),
       );
-      onCommit(height);
+      onCommit(height, viewportHeight);
     } else if (event.key === "Home") {
       event.preventDefault();
       event.stopPropagation();
@@ -72,7 +86,8 @@
   function reset() {
     if (!disabled) {
       height = null;
-      onCommit(null);
+      viewportHeight = null;
+      onCommit(null, null);
     }
   }
   onMount(() => {
@@ -84,11 +99,13 @@
   });
 </script>
 
+<svelte:window bind:innerHeight={windowHeight} />
+
 <div
   {id}
   class="reader-resize-box"
   class:has-height={height !== null}
-  style:height={height === null ? undefined : `${height}px`}
+  style:height={displayedHeight === null ? undefined : `${displayedHeight}px`}
   bind:this={box!}
 >
   {@render children()}

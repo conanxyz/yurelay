@@ -90,10 +90,11 @@ pub async fn save_reading_height(
     app: AppHandle,
     panel: yurelay_core::storage::reading_layout::ReadingPanel,
     height: Option<u32>,
+    viewport_height: Option<u32>,
 ) -> Result<(), String> {
     state::engine(&app)
         .await?
         .storage
-        .save_reading_height(panel, height)
+        .save_reading_height(panel, height, viewport_height)
         .await
 }

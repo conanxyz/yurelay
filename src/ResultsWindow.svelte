@@ -30,15 +30,20 @@
   import ResizableReading from "./ResizableReading.svelte";
   let sourceHeight = $state<number | null>(null);
   let translationHeight = $state<number | null>(null);
+  let sourceViewportHeight = $state<number | null>(null);
+  let translationViewportHeight = $state<number | null>(null);
   let readingLayoutLoading = $state(true);
   let heightSaveQueue = Promise.resolve();
   function saveReadingHeight(
     panel: "source" | "translation",
     height: number | null,
+    viewportHeight: number | null,
   ) {
     if (!isTauri()) return;
     heightSaveQueue = heightSaveQueue
-      .then(() => invoke<void>("save_reading_height", { panel, height }))
+      .then(() =>
+        invoke<void>("save_reading_height", { panel, height, viewportHeight }),
+      )
       .catch((e) => {
         error = errorText(e, locale);
       });
@@ -49,13 +54,19 @@
       return;
     }
     let disposed = false;
-    invoke<{ source_height: number | null; translation_height: number | null }>(
-      "reading_layout",
-    )
+    invoke<{
+      source_height: number | null;
+      translation_height: number | null;
+      source_viewport_height?: number | null;
+      translation_viewport_height?: number | null;
+    }>("reading_layout")
       .then((layout) => {
         if (!disposed && layout) {
           sourceHeight = layout.source_height;
           translationHeight = layout.translation_height;
+          sourceViewportHeight = layout.source_viewport_height ?? null;
+          translationViewportHeight =
+            layout.translation_viewport_height ?? null;
         }
       })
       .catch((e) => {
@@ -1236,6 +1247,12 @@
           navigate={openSettings}
         />{/if}
       {#if !guideOpen && !draft.trim() && !current}<div class="start-hint">
+          <p class="start-eyebrow">
+            {t("阅读 · 理解 · 表达", "Read · Understand · Express")}
+          </p>
+          <h1 class="start-title">
+            {t("从一段文字开始", "Start with a few words")}
+          </h1>
           <p>
             {t(
               "输入或粘贴文字，也可以使用划词或截图快捷键。",
@@ -1352,7 +1369,9 @@
             <ResizableReading
               id="source-reading-viewport"
               disabled={readingLayoutLoading}
-              onCommit={(height) => saveReadingHeight("source", height)}
+              onCommit={(height, viewport) =>
+                saveReadingHeight("source", height, viewport)}
+              bind:viewportHeight={sourceViewportHeight}
               bind:height={sourceHeight}
               label={t(
                 "调整原文高度（拖动或上下键；双击恢复）",
@@ -1586,98 +1605,143 @@
               >
             {/if}
           </section>{/if}
-        {#if showResult}<section
-            id="translation-body"
-            class="translation-body"
-            use:panelEntrance
-            aria-label={localDictionary
-              ? t("释义", "Definition")
-              : t("译文", "Translation")}
-          >
-            {#if current?.error && !captureFailure}<p
-                class="inline-feedback"
-                role="alert"
-              >
-                {errorText(current.error, locale)}
-              </p>{/if}
-            {#if current?.error?.includes("密钥需要授权") || current?.error?.includes("API Key 需要系统钥匙串授权")}
-              <button
-                class="subtle-button"
-                disabled={!canStart}
-                onclick={translate}
-              >
-                {t("授权已保存密钥", "Authorize saved key")}
-              </button>
-            {/if}
-            <ResizableReading
-              id="translation-reading-viewport"
-              disabled={readingLayoutLoading}
-              onCommit={(height) => saveReadingHeight("translation", height)}
-              bind:height={translationHeight}
-              label={t(
-                "调整译文高度（拖动或上下键；双击恢复）",
-                "Resize translation height (drag or arrow keys; double-click to reset)",
-              )}
+        <div class="translation-output" class:has-result={showResult}>
+          <div class="reading-caption output-caption">
+            <h2>
+              {localDictionary
+                ? t("释义", "Definition")
+                : t("译文", "Translation")}
+            </h2>
+            <span
+              >{localDictionary
+                ? t("本机查询", "Local lookup")
+                : languageName(targetLanguage, locale)}</span
             >
-              {#if current?.translation && !submitting}<TranslationContent
-                  text={current.translation}
-                  {locale}
-                  identity={`${current.id}:${current.attempt}`}
-                  streaming={active(current)}
-                  plain={localDictionary}
-                  highlights={activeHighlights}
-                />
-              {:else if submitting || (current && active(current))}<div
-                  class="translation-skeleton"
-                  aria-busy="true"
+          </div>
+          {#if showResult}<section
+              id="translation-body"
+              class="translation-body"
+              use:panelEntrance
+              aria-label={localDictionary
+                ? t("释义", "Definition")
+                : t("译文", "Translation")}
+            >
+              {#if current?.error && !captureFailure}<p
+                  class="inline-feedback"
+                  role="alert"
                 >
-                  <i></i><i></i>
-                  <p>{t("正在翻译…", "Translating…")}</p>
-                </div>
-              {:else}<p class="result-empty">
-                  {localDictionary
-                    ? t("暂无释义，可重新查询", "No definition yet. Try again.")
-                    : t("尚无译文，可重试", "No translation yet. Try again.")}
+                  {errorText(current.error, locale)}
                 </p>{/if}
-            </ResizableReading>
-            {#if service?.provider === "youdao" && draft.trim() && draft.length <= 512}<button
-                class="dictionary-link"
-                disabled={!draft.trim() || draft.length > 512}
-                onclick={() =>
-                  action("open_dictionary", {
-                    kind: "youdao",
-                    text: draft.trim(),
-                  })}
-                >{t("在有道词典中查看", "View in Youdao dictionary")}</button
-              >{/if}
-            {#if current}<div class="result-actions">
+              {#if current?.error?.includes("密钥需要授权") || current?.error?.includes("API Key 需要系统钥匙串授权")}
                 <button
-                  class="copy-translation"
-                  disabled={active(current) || !current.translation}
-                  onclick={() =>
-                    action("copy_text", {
-                      text: localDictionary
-                        ? current!.translation
-                        : translationPlainText(current!.translation),
-                    })}>{t("复制译文", "Copy translation")}</button
-                >
-                {#if current.vocabulary_state === "extracting"}<button
-                    class="quiet-tail-stop"
-                    aria-label={t("停止生词提炼", "Stop vocabulary extraction")}
-                    title={t("停止生词提炼", "Stop vocabulary extraction")}
-                    onclick={() => action("stop_task", { id: current!.id })}
-                    ><Icon name="stop" size={12} /></button
-                  >{/if}
-                <button
-                  class="retry-link"
+                  class="subtle-button"
                   disabled={!canStart}
                   onclick={translate}
-                  >{localDictionary
-                    ? t("重新查询", "Look up again")
-                    : t("重新翻译", "Translate again")}</button
                 >
-              </div>{/if}
-          </section>{/if}
+                  {t("授权已保存密钥", "Authorize saved key")}
+                </button>
+              {/if}
+              <ResizableReading
+                id="translation-reading-viewport"
+                disabled={readingLayoutLoading}
+                onCommit={(height, viewport) =>
+                  saveReadingHeight("translation", height, viewport)}
+                bind:viewportHeight={translationViewportHeight}
+                bind:height={translationHeight}
+                label={t(
+                  "调整译文高度（拖动或上下键；双击恢复）",
+                  "Resize translation height (drag or arrow keys; double-click to reset)",
+                )}
+              >
+                {#if current?.translation && !submitting}<TranslationContent
+                    text={current.translation}
+                    {locale}
+                    identity={`${current.id}:${current.attempt}`}
+                    streaming={active(current)}
+                    plain={localDictionary}
+                    highlights={activeHighlights}
+                  />
+                {:else if submitting || (current && active(current))}<div
+                    class="translation-skeleton"
+                    aria-busy="true"
+                  >
+                    <i></i><i></i>
+                    <p>{t("正在翻译…", "Translating…")}</p>
+                  </div>
+                {:else}<p class="result-empty">
+                    {localDictionary
+                      ? t(
+                          "暂无释义，可重新查询",
+                          "No definition yet. Try again.",
+                        )
+                      : t("尚无译文，可重试", "No translation yet. Try again.")}
+                  </p>{/if}
+              </ResizableReading>
+              {#if service?.provider === "youdao" && draft.trim() && draft.length <= 512}<button
+                  class="dictionary-link"
+                  disabled={!draft.trim() || draft.length > 512}
+                  onclick={() =>
+                    action("open_dictionary", {
+                      kind: "youdao",
+                      text: draft.trim(),
+                    })}
+                  >{t("在有道词典中查看", "View in Youdao dictionary")}</button
+                >{/if}
+              {#if current}<div class="result-actions">
+                  <button
+                    class="copy-translation"
+                    disabled={active(current) || !current.translation}
+                    onclick={() =>
+                      action("copy_text", {
+                        text: localDictionary
+                          ? current!.translation
+                          : translationPlainText(current!.translation),
+                      })}>{t("复制译文", "Copy translation")}</button
+                  >
+                  {#if current.vocabulary_state === "extracting"}<button
+                      class="quiet-tail-stop"
+                      aria-label={t(
+                        "停止生词提炼",
+                        "Stop vocabulary extraction",
+                      )}
+                      title={t("停止生词提炼", "Stop vocabulary extraction")}
+                      onclick={() => action("stop_task", { id: current!.id })}
+                      ><Icon name="stop" size={12} /></button
+                    >{/if}
+                  <button
+                    class="retry-link"
+                    disabled={!canStart}
+                    onclick={translate}
+                    >{localDictionary
+                      ? t("重新查询", "Look up again")
+                      : t("重新翻译", "Translate again")}</button
+                  >
+                </div>{/if}
+            </section>{/if}
+          {#if !showResult}<div class="reading-empty">
+              <span class="empty-reading-mark" aria-hidden="true"
+                ><Icon name="translate" size={24} /></span
+              >
+              <p>
+                {current?.translation
+                  ? t("译文已收起", "Translation collapsed")
+                  : localDictionary
+                    ? t("释义将在这里呈现", "Your definition appears here")
+                    : t("译文将在这里呈现", "Your translation appears here")}
+              </p>
+              <span
+                >{current?.translation
+                  ? t(
+                      "点击展开，继续对照阅读。",
+                      "Expand to continue reading side by side.",
+                    )
+                  : t(
+                      "准备好原文，再开始。",
+                      "Start when your source is ready.",
+                    )}</span
+              >
+            </div>{/if}
+        </div>
         {#if changed && current?.translation && !active(current)}<details
             class="previous-translation"
             open
