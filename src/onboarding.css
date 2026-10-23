@@ -371,79 +371,33 @@ button.service-identity:hover {
 .optional-shortcuts[open] summary svg {
   transform: rotate(90deg);
 }
-.append-shortcuts-note {
-  margin: 10px 0 14px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--muted);
-}
 .append-shortcut-list {
   display: grid;
-  gap: 8px;
+  gap: 14px;
+  margin: 18px 0 6px;
 }
-.append-shortcut-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 16px;
-  padding: 12px;
-  background: var(--surface);
-  border-radius: 10px;
-}
-.preferences-shell .append-shortcut-label {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  flex: 1 1 170px;
-  margin: 0;
-  min-width: 0;
-}
-.append-shortcut-label strong {
-  display: block;
-  font-weight: 500;
-  font-size: 13px;
-  color: var(--ink);
-}
-.append-shortcut-label small {
-  display: block;
-  margin-top: 3px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--muted);
-}
-.append-shortcut-symbol {
-  display: flex;
-  flex: none;
-  color: var(--accent);
-}
-.append-shortcut-controls {
-  display: flex;
+.shortcut-row.clearable {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   gap: 6px;
-  flex: 0 1 224px;
-  min-width: 0;
-  max-width: 100%;
-  margin-left: auto;
+  padding: 4px;
 }
-.preferences-shell .append-shortcut-controls input {
-  width: 100%;
-  min-width: 0;
-  min-height: 36px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: var(--panel-tint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+.clearable > .shortcut-clear {
+  justify-self: center;
 }
-.append-shortcuts-format {
-  margin: 12px 2px 0;
-  color: var(--muted);
-  font-size: 11px;
+.shortcut-row.clearable > .error {
+  grid-column: 1 / -1;
 }
-.append-shortcuts-format kbd {
-  font-family: inherit;
-  color: var(--ink);
+.clearable .shortcut-operation {
+  align-items: center;
+}
+.clearable .shortcut-keycaps {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.clearable .shortcut-recording-text {
+  font-size: 13px;
 }
 @media (prefers-reduced-motion: reduce) {
   .optional-shortcuts summary svg {

@@ -27,6 +27,8 @@ Practice uses a separate demo. It makes no network requests and never replaces y
 
 The main window defaults to 520 × 560 macOS logical pixels. Content, guide and vocabulary changes never resize it; overflow scrolls. Manual sizes persist across launches, and zoom restores the previous normal bounds. In narrow windows vocabulary appears below the reading content without covering it or changing the reading column width.
 
+The title-bar pin keeps the window on top and prevents automatic hiding when another app gains focus. Unpinning restores your existing auto-hide preference. Esc and the explicit Hide button still hide a pinned window.
+
 The guide offers a Zhipu quick setup: register with BigModel, create a standard model API key, paste it and choose Save and use. The free `glm-4.7-flash` model and endpoint are preset. Coding Plan keys use a different endpoint. Existing model configurations are preserved, and advanced settings remain available.
 
 ### First launch and permissions
@@ -127,7 +129,7 @@ Translation and reply prompts have separate editors in Settings → Prompts. Ser
 
 ### Interaction details and FAQ
 
-- **Can I change the shortcuts?** Global selection, screenshot and optional append bindings can be changed in Translation settings; conflicts are reported. The local second-step keys remain `D` / `S`.
+- **Can I change the shortcuts?** Click any selection, screenshot or optional append shortcut button and press a key combination. Release the main key to finish, or press Esc to cancel. Clear an optional append binding to disable it. Recording and clearing take effect only after saving; conflicts are reported. The local second-step keys remain `D` / `S`.
 - **Do D and S translate while I am typing?** In an input field, both keys type normally. Click the arrow or move focus outside the field before using the shortcut.
 - **Can I hold D / S until capture completes?** No. Release and press again after the source is ready. `Option` / `Alt`, `Control` or `Command` combinations, input-method composition and editable fields do not submit a translation.
 - **What happens if I press capture twice?** Duplicate requests are ignored during capture. The selection shortcut preserves the result while Yurelay has focus. A new screenshot can start after the current capture finishes or is cancelled.

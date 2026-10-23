@@ -259,6 +259,20 @@
     selected = $state<string | null>(null),
     notice = $state<string | null>(null),
     error = $state("");
+  let pinReady = $state(false);
+  let pinBusy = $state(false);
+  async function togglePin() {
+    if (!pinReady || pinBusy) return;
+    pinBusy = true;
+    error = "";
+    try {
+      pinned = await invoke<boolean>("pin_window", { pinned: !pinned });
+    } catch (e) {
+      error = errorText(e, locale);
+    } finally {
+      pinBusy = false;
+    }
+  }
   let pinned = $state(false),
     expanded = $state(false),
     resizing = $state(false),
@@ -1130,6 +1144,7 @@
         const data = await invoke<Bootstrap>("bootstrap");
         if (disposed) return;
         pinned = data.pinned;
+        pinReady = true;
         expanded = data.expanded;
         if (data.window_sizing) windowMode(data.window_sizing);
         permissions = data.permissions;
@@ -1256,13 +1271,18 @@
           class="icon-button"
           class:chosen={pinned}
           aria-label={pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
-          title={pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+          title={pinned
+            ? t(
+                "取消置顶，恢复自动隐藏规则",
+                "Unpin and restore auto-hide behavior",
+              )
+            : t(
+                "置顶，切换应用时保持可见",
+                "Keep on top and visible when switching apps",
+              )}
           aria-pressed={pinned}
-          onclick={async () => {
-            const next = !pinned;
-            await action("pin_window", { pinned: next });
-            if (!error) pinned = next;
-          }}><Icon name="pin" size={16} /></button
+          disabled={!pinReady || pinBusy}
+          onclick={togglePin}><Icon name="pin" size={16} /></button
         >
       </div>
     </div>

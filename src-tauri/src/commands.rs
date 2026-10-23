@@ -119,15 +119,8 @@ pub fn dismiss_notice(app: AppHandle) {
     state::clear_notice(&app);
 }
 #[tauri::command]
-pub fn pin_window(app: AppHandle, pinned: bool) -> Result<(), String> {
-    app.get_webview_window("main")
-        .ok_or("窗口不可用。")?
-        .set_always_on_top(pinned)
-        .map_err(|_| "无法改变窗口置顶状态。")?;
-    app.state::<AppState>()
-        .pinned
-        .store(pinned, Ordering::Relaxed);
-    Ok(())
+pub async fn pin_window(app: AppHandle, pinned: bool) -> Result<bool, String> {
+    state::set_pinned(&app, pinned).await
 }
 #[tauri::command]
 pub async fn copy_text(text: String) -> Result<(), String> {

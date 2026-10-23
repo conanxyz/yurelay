@@ -1,6 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
 import { defaults } from '../../src/types';
 
+async function recordAppendShortcut(page: Page, kind: 'selection' | 'screenshot', key: string) {
+ const button=page.getByRole('button',{name:`Record append ${kind} shortcut`,exact:true});
+ await button.click();await expect(button).toHaveClass(/recording/);
+ await page.keyboard.press(`Alt+Shift+${key}`);
+ await expect(button).not.toHaveClass(/recording/);
+ await expect(button.locator('kbd')).toHaveText(['⌥','⇧',key]);
+}
+
+
 test('authorizing an existing key preserves unsaved service edits and never saves a new key', async ({ page }) => {
   await settingsFixture(page);
   await page.getByRole('button',{name:'Services',exact:true}).click();
@@ -676,7 +685,7 @@ test('one fallback switch uses configured services and saves with optional appen
  await expect(page.getByRole('checkbox',{name:/Automatically tidy PDF line breaks/})).toBeChecked();
  await page.screenshot({path:'artifacts/previews/reading-workflow-settings-simple.png'});
  const order=await page.locator('.guard-setting input').evaluateAll(nodes=>nodes.map(node=>node.parentElement?.textContent??''));expect(order[0]).toContain('Automatic fallback services');expect(order[1]).toContain('Automatically extract vocabulary');
- await page.getByText('Optional append shortcuts',{exact:true}).click();await page.getByLabel('Append selection shortcut',{exact:true}).fill('Alt+Shift+D');await page.getByLabel('Append screenshot shortcut',{exact:true}).fill('Alt+Shift+S');await page.getByLabel('Append screenshot shortcut',{exact:true}).blur();
+ await page.getByText('Optional append shortcuts',{exact:true}).click();await recordAppendShortcut(page,'selection','D');await recordAppendShortcut(page,'screenshot','S');
  expect(await page.evaluate(()=>(window as any).settings.failover)).toEqual({enabled:false,profile_ids:[]});
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['test_connection','retry_task','submit_operation','translate_text'].includes(c.cmd)))).toEqual([]);
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
@@ -803,29 +812,43 @@ test('connection feedback is visible beside its button and distinguishes saved v
 });
 
 
-test('optional shortcut rows stay compact and clearing one stays a draft until saved',async({page})=>{
+
+test('append recorders capture key combinations, cancel safely and save cleared bindings explicitly',async({page})=>{
  await settingsFixture(page);
  await page.getByText('Optional append shortcuts',{exact:true}).click();
- const selection=page.getByLabel('Append selection shortcut',{exact:true});
- const screenshot=page.getByLabel('Append screenshot shortcut',{exact:true});
- await expect(selection).toHaveAttribute('placeholder','Not set');
- await selection.fill('Alt+Shift+D');
- await expect(page.getByRole('button',{name:'Disable append selection shortcut',exact:true})).toBeEnabled();
- await screenshot.fill('Alt+Shift+S');await screenshot.blur();
- const width=(await selection.boundingBox())!.width;expect(width).toBeLessThanOrEqual(210);
- await page.getByRole('button',{name:'Disable append selection shortcut',exact:true}).click();
- await expect(selection).toHaveValue('');await expect(screenshot).toHaveValue('Alt+Shift+S');
+ const selection=page.getByRole('button',{name:'Record append selection shortcut',exact:true});
+ const screenshot=page.getByRole('button',{name:'Record append screenshot shortcut',exact:true});
+ await expect(page.locator('.optional-shortcuts input,.optional-shortcuts small,.append-shortcuts-note,.append-shortcuts-format')).toHaveCount(0);
+ await selection.click();await expect(selection).toHaveClass(/recording/);
+ await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
+ await page.keyboard.down('Alt');await page.keyboard.down('Shift');await page.keyboard.down('D');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='end_shortcut_recording').length)).toBe(0);
+ await page.keyboard.up('D');await page.keyboard.up('Shift');await page.keyboard.up('Alt');
+ await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
+ await recordAppendShortcut(page,'screenshot','S');
+ await selection.click();await page.keyboard.press('Escape');await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
+ await screenshot.click();await page.keyboard.press('Tab');await expect(screenshot).not.toHaveClass(/recording/);await expect(screenshot.locator('kbd')).toHaveText(['⌥','⇧','S']);
  expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut??null)).toBeNull();
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
+ expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ await page.getByRole('button',{name:'Disable append selection shortcut',exact:true}).click();
+ await expect(selection.locator('kbd')).toHaveCount(0);
+ expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBe('Alt+Shift+D');
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  expect(await page.evaluate(()=>(window as any).settings.append_selection_shortcut)).toBeNull();
  expect(await page.evaluate(()=>(window as any).settings.append_screenshot_shortcut)).toBe('Alt+Shift+S');
+ for(const width of [1100,850,620]) {
+  await page.setViewportSize({width,height:820});
+  const a=await selection.boundingBox(),b=await screenshot.boundingBox();expect(b!.y-a!.y-a!.height).toBeGreaterThanOrEqual(14);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.setViewportSize({width:1100,height:820});
  await page.getByRole('button',{name:'Appearance',exact:true}).click();
  await page.getByRole('combobox',{name:'Display language',exact:true}).selectOption('zh');
  await page.getByRole('combobox',{name:'外观',exact:true}).selectOption('dark');
  await page.getByRole('button',{name:'翻译与快捷键',exact:true}).click();
  await page.locator('.optional-shortcuts summary').click();
- await page.locator('.optional-shortcuts').screenshot({path:'.ai-notes/optional-shortcuts-dark.png',animations:'disabled'});
- await page.setViewportSize({width:720,height:820});
- expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- const field=page.getByLabel('追加截图快捷键',{exact:true});await expect(field).toBeVisible();
+ await page.locator('.optional-shortcuts').screenshot({path:'.ai-notes/append-recorders-dark.png',animations:'disabled'});
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['translate_text','start_capture','retry_task'].includes(c.cmd)))).toEqual([]);
 });

@@ -66,7 +66,6 @@ pub struct AppState {
     pub unread: Mutex<HashSet<String>>,
     pub exit_requested: AtomicBool,
     pub exit_ready: AtomicBool,
-    pub pinned: AtomicBool,
     pub temporary_top: AtomicBool,
     pub last_position: Mutex<Option<[i32; 2]>>,
     pub position_ready: AtomicBool,
@@ -100,7 +99,6 @@ impl AppState {
             unread: Mutex::new(HashSet::new()),
             exit_requested: AtomicBool::new(false),
             exit_ready: AtomicBool::new(false),
-            pinned: AtomicBool::new(false),
             temporary_top: AtomicBool::new(false),
             last_position: Mutex::new(None),
             position_ready: AtomicBool::new(false),
@@ -533,7 +531,7 @@ pub struct WindowSnapshot {
 pub fn window_snapshot(state: &AppState, query_expanded: impl FnOnce() -> bool) -> WindowSnapshot {
     // Drop Rust mutex guards before any synchronous dispatch to the UI thread.
     let selected = state.selected.lock().unwrap().clone();
-    let pinned = state.pinned.load(Ordering::Relaxed);
+    let pinned = state.window_lifecycle.lock().unwrap().pinned();
     let expanded = query_expanded();
     WindowSnapshot {
         selected,
@@ -660,7 +658,7 @@ pub fn present_capture(app: &AppHandle, epoch: crate::window_lifecycle::CaptureE
                 return;
             }
             state.temporary_top.store(true, Ordering::Relaxed);
-            let _ = handle.set_always_on_top(true);
+            let _ = apply_top_level(&handle, true);
             let _ = handle.unminimize();
             let _ = handle.show();
             #[cfg(target_os = "macos")]
@@ -676,13 +674,58 @@ pub fn present_capture(app: &AppHandle, epoch: crate::window_lifecycle::CaptureE
     state.resync.notify_one();
 }
 
+// All callers run on the UI thread, with no lifecycle lock held across AppKit.
+fn apply_top_level(window: &tauri::WebviewWindow, pinned: bool) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let pointer = window
+            .ns_window()
+            .map_err(|_| "无法改变窗口置顶状态。".to_string())?;
+        // SAFETY: caller is on the main thread and owns the live window handle.
+        Ok(unsafe { yurelay_platform::set_window_pinned(pointer, pinned) })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window
+            .set_always_on_top(pinned)
+            .map_err(|_| "无法改变窗口置顶状态。".to_string())?;
+        window
+            .is_always_on_top()
+            .map_err(|_| "无法改变窗口置顶状态。".to_string())
+    }
+}
+
+pub async fn set_pinned(app: &AppHandle, pinned: bool) -> Result<bool, String> {
+    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
+    let handle = window.clone();
+    let app = app.clone();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let result = apply_top_level(&handle, pinned);
+            if let Ok(actual) = &result {
+                app.state::<AppState>()
+                    .window_lifecycle
+                    .lock()
+                    .unwrap()
+                    .set_pinned(*actual);
+            }
+            let _ = send.send(result);
+        })
+        .map_err(|_| "无法改变窗口置顶状态。".to_string())?;
+    receive
+        .await
+        .map_err(|_| "无法改变窗口置顶状态。".to_string())?
+}
+
 pub fn release_temporary_top(app: &AppHandle) {
     let state = app.state::<AppState>();
+    let pinned = state.window_lifecycle.lock().unwrap().pinned();
     if state.temporary_top.swap(false, Ordering::Relaxed)
-        && !state.pinned.load(Ordering::Relaxed)
+        && !pinned
         && let Some(window) = app.get_webview_window("main")
     {
-        let _ = window.set_always_on_top(false);
+        let _ = apply_top_level(&window, false);
     }
 }
 

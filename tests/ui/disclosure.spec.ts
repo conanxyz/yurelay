@@ -6,11 +6,11 @@ async function editableSource(page: Page) {
   return page.getByRole('textbox', {name:'Source text',exact:true});
 }
 
-async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='', deferLayout=false) {
-  await page.addInitScript(({initialSelection, initialSourceLanguage, deferLayout}) => {
+async function fixture(page: Page, initiallySelected=true, initialSourceLanguage='', deferLayout=false, deferBootstrap=false) {
+  await page.addInitScript(({initialSelection, initialSourceLanguage, deferLayout, deferBootstrap}) => {
     const w = window as any;
-    w.isTauri = true;
-    w.deferLayout = deferLayout;
+    w.isTauri = true;w.pinned=false;
+    w.deferLayout = deferLayout;w.deferBootstrap=deferBootstrap;
     w.calls = [];w.words=[];
     w.keychainRequired = false;
     w.keychainError = '';
@@ -49,10 +49,12 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
       invoke: async (cmd: string, args: any) => {
         w.calls.push({ cmd, args });
         if (cmd === 'plugin:event|listen') { events[args.event] = args.handler; return callback; }
-        if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: false, expanded: false };
+        if(cmd==='bootstrap'&&w.deferBootstrap)await new Promise(resolve=>w.releaseBootstrap=resolve);
+        if (cmd === 'bootstrap') return { ...snapshot(), configuration: { settings: w.settings }, permissions: { accessibility: true, screen: true }, pinned: w.pinned, expanded: false };
         if(cmd==='reading_layout'){if(w.deferLayout)await new Promise(resolve=>w.releaseLayout=resolve);return JSON.parse(localStorage.getItem('fixture-reading-layout')??'{"source_height":null,"translation_height":null}');}
         if(cmd==='save_reading_height'){if(w.failHeightSave)throw 'Synthetic height save failed';const layout=JSON.parse(localStorage.getItem('fixture-reading-layout')??'{"source_height":null,"translation_height":null}');layout[args.panel+'_height']=args.height;layout[args.panel+'_viewport_height']=args.viewportHeight;localStorage.setItem('fixture-reading-layout',JSON.stringify(layout));return null;}
         if (cmd === 'configuration_settings') return w.settings;
+        if(cmd==='pin_window'){if(w.failPin)throw 'Could not change the window pin state.';if(w.deferPin)await new Promise(resolve=>w.releasePin=resolve);w.pinned=args.pinned;return w.pinned;}
         if (cmd === 'permissions') return { accessibility: true, screen: true };
         if (cmd === 'credential_authorization_required') return w.keychainRequired;
         if (cmd === 'authorize_saved_credential') {
@@ -107,8 +109,9 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         return null;
       },
     };
-  },{initialSelection:initiallySelected,initialSourceLanguage,deferLayout});
+  },{initialSelection:initiallySelected,initialSourceLanguage,deferLayout,deferBootstrap});
   await page.goto('/');
+  if(deferBootstrap)return;
   if(initiallySelected)await expect(page.locator('.disclosure-control')).toBeEnabled();else await expect(page.locator('.disclosure-control')).toBeDisabled();
 }
 
@@ -1543,4 +1546,24 @@ test('wide reader aligns both handles, fills fixed window insets, and keeps assi
  expect((await geometry()).aligned).toBeLessThan(1);
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('fixture-reading-layout')!).paired_height)).toBe(baseHeight-64);
 
+});
+
+
+test('pin reports native confirmation, prevents duplicate clicks and preserves state on failure',async({page})=>{
+ await fixture(page);const pin=page.getByRole('button',{name:'Pin',exact:true});
+ await page.evaluate(()=>{(window as any).failPin=true;});await pin.click();
+ await expect(page.getByRole('alert')).toContainText('Could not change the window pin state.');await expect(pin).toHaveAttribute('aria-pressed','false');
+ await page.evaluate(()=>{(window as any).failPin=false;(window as any).deferPin=true;});await pin.click();await expect(pin).toBeDisabled();await expect(pin).toHaveAttribute('aria-pressed','false');
+ await page.evaluate(()=>(window as any).releasePin());const unpin=page.getByRole('button',{name:'Unpin',exact:true});await expect(unpin).toHaveAttribute('aria-pressed','true');await expect(unpin).toBeEnabled();
+ await page.evaluate(()=>{(window as any).deferPin=false;});await unpin.click();await expect(pin).toHaveAttribute('aria-pressed','false');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='pin_window').map((c:any)=>c.args.pinned))).toEqual([true,true,false]);
+});
+
+
+test('pin waits for the initial native state before accepting a toggle',async({page})=>{
+ await fixture(page,true,'',false,true);
+ const pin=page.getByRole('button',{name:/^(Pin|置顶)$/});await expect(pin).toBeDisabled();
+ await page.evaluate(()=>(window as any).releaseBootstrap());await expect(pin).toBeEnabled();
+ await pin.click();await expect(page.getByRole('button',{name:'Unpin',exact:true})).toHaveAttribute('aria-pressed','true');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='pin_window').length)).toBe(1);
 });
