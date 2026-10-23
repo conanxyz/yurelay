@@ -27,6 +27,8 @@ Practice uses a separate demo. It makes no network requests and never replaces y
 
 Restoring after zoom uses the normal window bounds kept by macOS. After a manual resize, automatic content height no longer overrides your size. Use **Fit content height** in the title bar to re-enable it.
 
+The guide offers a Zhipu quick setup: register with BigModel, create a standard model API key, paste it and choose Save and use. The free `glm-4.7-flash` model and endpoint are preset. Coding Plan keys use a different endpoint. Existing model configurations are preserved, and advanced settings remain available.
+
 ### First launch and permissions
 
 The current workflow produces ad-hoc-signed development builds without Apple notarization. After confirming a trusted source, follow [Apple's instructions](https://support.apple.com/en-us/102445) to use **Open Anyway** in System Settings → Privacy & Security. If macOS reports a damaged file, check the file and release source first.

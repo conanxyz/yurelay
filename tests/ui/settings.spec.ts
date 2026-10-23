@@ -370,7 +370,7 @@ test('service search supports Chinese English and pinyin; panes align and prompt
  const search=page.getByRole('textbox',{name:'Search providers'});
  for(const query of ['智谱','zhipu','zp']){await search.fill(query);await expect(page.locator('.service-scroll .service-item')).toHaveCount(1);await expect(page.locator('.service-scroll')).toContainText('Zhipu')}
  await page.locator('.service-scroll .service-item').click();
- await expect(page.getByLabel('Model',{exact:true})).toHaveValue('glm-4-flash-250414');
+ await expect(page.getByLabel('Model',{exact:true})).toHaveValue('glm-4.7-flash');
  await search.fill('');
  const panes=await page.evaluate(()=>['.service-list','.service-editor-tray'].map(q=>document.querySelector(q)!.getBoundingClientRect().toJSON()));expect(panes[0].height).toBe(panes[1].height);expect(panes[0].y).toBe(panes[1].y);
  await expect(page.locator('.provider-logo')).toHaveCount(13);
@@ -423,7 +423,7 @@ test('service and vocabulary workspaces remain usable in narrow and dark windows
 
 test('free defaults, tier labels and live OpenRouter filtering retain exact model IDs',async({page})=>{
  await settingsFixture(page);await page.getByRole('button',{name:'Services',exact:true}).click();
- for(const [provider,model] of [['Gemini','gemini-2.5-flash-lite'],['SiliconFlow','Qwen/Qwen2.5-7B-Instruct'],['Zhipu','glm-4-flash-250414']]){
+ for(const [provider,model] of [['Gemini','gemini-2.5-flash-lite'],['SiliconFlow','Qwen/Qwen2.5-7B-Instruct'],['Zhipu','glm-4.7-flash']]){
   await page.locator('.service-list').getByRole('button',{name:new RegExp(provider)}).click();await expect(page.getByLabel('Model',{exact:true})).toHaveValue(model);
  }
  await expect(page.locator('.model-suggestions')).toContainText('glm-4.7-flash');await expect(page.locator('.model-suggestions')).toContainText('glm-4.6v-flash');
@@ -746,4 +746,34 @@ test('translation setup from a dictionary choice opens the model form without sa
   await expect(page.getByLabel('API Key',{exact:true})).toBeVisible();
   await expect(page.getByRole('combobox',{name:'Model',exact:true})).toBeVisible();
   expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='save_configuration'))).toEqual([]);
+});
+
+
+test('Zhipu onboarding only requires a key and saves the free model explicitly',async({page})=>{
+ await settingsFixture(page);
+ await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',zhipu:true};w.emit('settings-navigate',null);});
+ const card=page.getByRole('region',{name:'Zhipu quick setup'});
+ await expect(card).toBeVisible();
+ await expect(card.locator('input')).toHaveCount(1);
+ await expect(card.getByLabel('API Key',{exact:true})).toHaveAttribute('type','password');
+ await expect(card.getByRole('button',{name:'Save and use'})).toBeDisabled();
+ await card.getByRole('button',{name:'2. Get an API key'}).click();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='open_translation_link').at(-1).args.url)).toBe('https://bigmodel.cn/usercenter/proj-mgmt/apikeys');
+ await card.getByLabel('API Key',{exact:true}).fill('synthetic-zhipu-key');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>['save_configuration','test_connection'].includes(c.cmd)))).toEqual([]);
+ await card.getByRole('button',{name:'Save and use'}).click();
+ const saved=await page.evaluate(()=>{const w=window as any;return w.settings.profiles.find((p:any)=>p.id===w.settings.active_profile)});
+ expect(saved.provider).toBe('zhipu');expect(saved.model).toBe('glm-4.7-flash');
+ expect(JSON.stringify(saved)).not.toContain('synthetic-zhipu-key');
+ await expect(card.getByLabel('API Key',{exact:true})).toHaveValue('');
+});
+
+test('Zhipu quick setup preserves an existing nondefault model',async({page})=>{
+ await settingsFixture(page);
+ await page.getByRole('button',{name:'Services',exact:true}).click();
+ await page.locator('.service-list').getByRole('button',{name:/Zhipu/}).click();
+ await page.getByLabel('Model',{exact:true}).fill('existing-synthetic-model');
+ await page.evaluate(()=>{const w=window as any;w.pendingRoute={section:'services',zhipu:true};w.emit('settings-navigate',null);});
+ await expect(page.getByLabel('Model',{exact:true})).toHaveValue('existing-synthetic-model');
+ await expect(page.getByRole('region',{name:'Zhipu quick setup'})).toHaveCount(0);
 });

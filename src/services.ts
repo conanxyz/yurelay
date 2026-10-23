@@ -86,7 +86,7 @@ export const servicePresets: ServicePreset[] = [
     zh: "智谱",
     symbol: "Z",
     endpoint: "https://open.bigmodel.cn/api/paas/v4",
-    model: "glm-4-flash-250414",
+    model: "glm-4.7-flash",
     models: ["glm-4-flash-250414", "glm-4.7-flash", "glm-4.6v-flash"],
   },
   {

@@ -334,6 +334,7 @@ export type SettingsRoute = {
   profile_id?: string | null;
   dictionary?: boolean;
   translation?: boolean;
+  zhipu?: boolean;
 };
 export type WindowSizing = {
   expanded: boolean;

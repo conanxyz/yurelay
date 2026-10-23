@@ -184,3 +184,11 @@ button.service-identity:hover {
 }
 
 .window-chrome {position:sticky;top:0;z-index:10;}
+
+.workspace-pref-pane > .getting-started {
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 8px 12px;
+}

@@ -18,6 +18,8 @@ pub struct SettingsRoute {
     pub dictionary: bool,
     #[serde(default)]
     pub translation: bool,
+    #[serde(default)]
+    pub zhipu: bool,
 }
 #[derive(Serialize)]
 pub struct ExperienceStatus {

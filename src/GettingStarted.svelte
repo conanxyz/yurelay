@@ -252,6 +252,23 @@
       >
     </div>
     <div class="guide-card">
+      <h3>{t("智谱 · 免费模型入门", "Zhipu · Start with a free model")}</h3>
+      <p>
+        {t(
+          "注册智谱开放平台账号，创建模型标准 API 的 Key。已预设 GLM-4.7-Flash，只需填 Key 即可配置翻译、语境解析与回复。",
+          "Register with BigModel and create a standard model API key. GLM-4.7-Flash is preset; only your key is needed for translation, explanations and replies.",
+        )}
+      </p>
+      <button
+        disabled={busy}
+        onclick={() =>
+          run(async () => {
+            await progress({ type: "step", step: 1 });
+            await navigate({ section: "services", zhipu: true });
+          })}>{t("使用智谱免费模型", "Set up free Zhipu model")}</button
+      >
+    </div>
+    <div class="guide-card">
       <h3>
         {t(
           "翻译服务 · 句子和段落",
