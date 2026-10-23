@@ -1367,7 +1367,10 @@ test('source and translation heights can be dragged or adjusted by keyboard with
  await expect(source).toHaveAttribute('aria-valuenow',String(resized));
  await page.locator('.disclosure-control').click();await complete(page);
  const translation=page.getByRole('separator',{name:/Resize translation height/});
- await translation.focus();const before=Number(await translation.getAttribute('aria-valuenow'));
+ await expect(page.locator('.translation-prose')).toContainText('模型当前已满，请尝试其他模型。');
+ await page.evaluate(()=>document.fonts.ready);
+ await translation.focus();
+ const before=await page.locator('#translation-reading-viewport').evaluate(el=>Math.round(el.getBoundingClientRect().height));
  await page.keyboard.press('ArrowDown');
  await expect(translation).toHaveAttribute('aria-valuenow',String(before+24));
  await page.locator('.disclosure-control').click();await page.locator('.disclosure-control').click();
