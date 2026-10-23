@@ -1,6 +1,10 @@
 <script lang="ts">
   let { name, size = 20 }: { name: string; size?: number } = $props();
   const paths: Record<string, string> = {
+    settings:
+      "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm-2-5h4l1 3 3 1 3-1 2 4-2 2 0 2 2 2-2 4-3-1-3 1-1 3h-4l-1-3-3-1-3 1-2-4 2-2v-2L1 10l2-4 3 1 3-1 1-3Z",
+    fit: "M4 3h16M4 21h16M12 6v12m-3-9 3-3 3 3m-6 6 3 3 3-3",
+    help: "M9 8a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 4h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z",
     edit: "m15 4 5 5M4 20l4-1L20 7a2 2 0 0 0-4-4L4 15v5Z",
     copy: "M8 8h12v12H8V8ZM4 16V4h12",
     close: "m6 6 12 12M18 6 6 18",

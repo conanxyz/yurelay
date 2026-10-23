@@ -59,7 +59,10 @@ mod macos {
         fn ad_capture(context: *mut c_void, callback: Callback);
         fn ad_copy_text(text: *const c_char);
         fn ad_configure_window(window: *mut c_void);
+        fn ad_window_live_resize(window: *mut c_void) -> bool;
         fn ad_present_window(window: *mut c_void);
+        fn ad_set_window_pinned(window: *mut c_void, pinned: bool) -> bool;
+        fn ad_window_is_pinned(window: *mut c_void) -> bool;
         fn ad_dismiss_window(window: *mut c_void);
     }
 
@@ -222,6 +225,23 @@ mod macos {
         unsafe {
             ad_configure_window(window);
         }
+    }
+    /// Sets the native level synchronously and returns the actual pinned state.
+    /// # Safety
+    /// Must be called on the main thread with a live NSWindow pointer.
+    pub unsafe fn set_window_pinned(window: *mut c_void, pinned: bool) -> bool {
+        unsafe { ad_set_window_pinned(window, pinned) }
+    }
+    /// # Safety
+    /// Must be called on the main thread with a live NSWindow pointer.
+    pub unsafe fn window_is_pinned(window: *mut c_void) -> bool {
+        unsafe { ad_window_is_pinned(window) }
+    }
+    /// Whether the user is currently dragging the native window size.
+    /// # Safety
+    /// Must be called on the main thread with a live NSWindow pointer.
+    pub unsafe fn window_live_resize(window: *mut c_void) -> bool {
+        unsafe { ad_window_live_resize(window) }
     }
 }
 

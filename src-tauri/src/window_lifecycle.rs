@@ -35,6 +35,7 @@ pub struct WindowLifecycle {
     hidden_epoch: u64,
     visible: bool,
     focused: bool,
+    pinned: bool,
     system_dialogs: usize,
 }
 
@@ -45,6 +46,7 @@ impl Default for WindowLifecycle {
             hidden_epoch: 0,
             visible: true,
             focused: true,
+            pinned: false,
             system_dialogs: 0,
         }
     }
@@ -64,8 +66,17 @@ impl WindowLifecycle {
     pub fn focus_changed(&mut self, focused: bool) -> Option<BlurTicket> {
         self.generation += 1;
         self.focused = focused;
-        (!focused && self.visible && self.system_dialogs == 0)
+        (!focused && self.visible && !self.pinned && self.system_dialogs == 0)
             .then_some(BlurTicket(self.generation))
+    }
+
+    pub fn set_pinned(&mut self, pinned: bool) {
+        self.generation += 1;
+        self.pinned = pinned;
+    }
+
+    pub fn pinned(&self) -> bool {
+        self.pinned
     }
 
     pub fn hide(&mut self) {
@@ -76,6 +87,7 @@ impl WindowLifecycle {
 
     pub fn auto_hide(&mut self, ticket: BlurTicket, external_focus: bool) -> bool {
         if !external_focus
+            || self.pinned
             || ticket.0 != self.generation
             || self.focused
             || !self.visible
@@ -239,5 +251,34 @@ mod tests {
         let blur = window.focus_changed(false).unwrap();
         assert!(!window.auto_hide(blur, false));
         assert!(window.present_capture(capture));
+    }
+    #[test]
+    fn pinning_cancels_delayed_blur_and_keeps_the_window_visible() {
+        let mut window = WindowLifecycle::default();
+        let old_blur = window.focus_changed(false).unwrap();
+        window.set_pinned(true);
+        assert!(window.pinned());
+        assert!(!window.auto_hide(old_blur, true));
+        assert!(window.focus_changed(false).is_none());
+        assert!(window.visible());
+        window.set_pinned(false);
+        assert!(!window.auto_hide(old_blur, true));
+        window.focus_changed(true);
+        let fresh_blur = window.focus_changed(false).unwrap();
+        assert!(window.auto_hide(fresh_blur, true));
+    }
+
+    #[test]
+    fn explicit_hide_still_works_while_pinned_and_pin_survives_reopening() {
+        let mut window = WindowLifecycle::default();
+        window.set_pinned(true);
+        let capture = window.capture_started();
+        window.hide();
+        assert!(!window.visible());
+        assert!(!window.present_capture(capture));
+        assert!(window.pinned());
+        window.show();
+        assert!(window.visible());
+        assert!(window.focus_changed(false).is_none());
     }
 }

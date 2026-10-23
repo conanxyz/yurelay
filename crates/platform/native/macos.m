@@ -94,10 +94,25 @@ void ad_copy_text(const char *text) {
     if (NSThread.isMainThread) write(); else dispatch_sync(dispatch_get_main_queue(), write);
 }
 
+bool ad_window_live_resize(void *ptr) {
+    return [(__bridge NSWindow *)ptr inLiveResize];
+}
+
 void ad_configure_window(void *ptr) {
     NSWindow *window = (__bridge NSWindow *)ptr;
     window.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
     window.hidesOnDeactivate = NO;
+}
+
+// Called on the main thread: setting and reading the level is one operation.
+bool ad_window_is_pinned(void *ptr) {
+    return [(__bridge NSWindow *)ptr level] > NSNormalWindowLevel;
+}
+
+bool ad_set_window_pinned(void *ptr, bool pinned) {
+    NSWindow *window = (__bridge NSWindow *)ptr;
+    window.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
+    return ad_window_is_pinned(ptr);
 }
 
 void ad_present_window(void *ptr) {

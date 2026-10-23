@@ -5,6 +5,22 @@
 #import "ocr_pipeline_cases.m"
 
 
+@interface ADPinTestWindow : NSObject
+@property(nonatomic) NSWindowLevel level;
+@end
+@implementation ADPinTestWindow
+@end
+
+static BOOL ADTestWindowPin(void) {
+    ADPinTestWindow *window = [ADPinTestWindow new];
+    void *ptr = (__bridge void *)window;
+    BOOL pinned = ad_set_window_pinned(ptr, true);
+    BOOL raised = pinned && window.level == NSFloatingWindowLevel && ad_window_is_pinned(ptr);
+    BOOL unpinned = !ad_set_window_pinned(ptr, false) && window.level == NSNormalWindowLevel && !ad_window_is_pinned(ptr);
+    printf("Window pin synchronous-level passed=%s\n", raised && unpinned ? "true" : "false");
+    return raised && unpinned;
+}
+
 // These fakes exercise the production dismissal helper without changing the
 // real application's focus or visibility.
 @interface ADDismissTestWindow : NSObject
@@ -315,6 +331,7 @@ int main(void) {
             printf("Lemma %s -> %s passed=%s\n",[fixture[0] UTF8String],lemma.UTF8String,passed?"true":"false");
             if(!passed)return 1;
         }
+        if (!ADTestWindowPin()) return 1;
         if (!ADTestWindowDismissal()) return 1;
         [NSApplication sharedApplication];
         if (getenv("YURELAY_OCR_MATRIX")) {

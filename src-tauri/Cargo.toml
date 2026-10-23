@@ -24,3 +24,8 @@ tauri-plugin-single-instance = "2"
 name = "tray_threading"
 path = "tests/tray_threading.rs"
 harness = false
+
+[[test]]
+name = "window_sizing"
+path = "tests/window_sizing.rs"
+harness = false

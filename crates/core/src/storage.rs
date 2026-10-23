@@ -3,7 +3,9 @@
 mod history;
 #[cfg(test)]
 mod history_performance;
+mod onboarding;
 pub mod operations;
+pub mod reading_layout;
 pub mod reliability;
 mod source;
 pub mod vocabulary;
@@ -318,6 +320,7 @@ impl Database {
             .transpose()?
             .unwrap_or_default();
         settings.validate()?;
+        onboarding::initialize(&connection)?;
         reliability::sync_configuration(&connection, &settings, &settings)?;
         // No requests from the previous process survive startup. Old tombstones
         // can now be discarded, but unfinished work must never restart itself.

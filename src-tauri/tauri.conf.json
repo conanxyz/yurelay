@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Yurelay",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.autodict.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "Yurelay",
-        "width": 460,
-        "height": 300,
+        "width": 520,
+        "height": 560,
         "minWidth": 360,
-        "minHeight": 220,
+        "minHeight": 320,
         "visible": false,
         "resizable": true,
         "titleBarStyle": "Overlay",
@@ -25,7 +25,7 @@
       },
       {
         "label": "settings",
-        "title": "Yurelay \u8bbe\u7f6e",
+        "title": "Yurelay 设置",
         "url": "index.html?window=settings",
         "width": 1100,
         "height": 800,

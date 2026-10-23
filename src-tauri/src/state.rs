@@ -47,6 +47,8 @@ pub struct ShortcutReport {
 
 pub struct AppState {
     pub root: PathBuf,
+    pub settings_route: Mutex<Option<crate::experience::SettingsRoute>>,
+    pub sizing: Mutex<crate::window_sizing::WindowSizing>,
     pub locale: Mutex<String>,
     pub engine: OnceCell<Arc<Engine>>,
     pub bindings: Mutex<Option<ShortcutBindings>>,
@@ -64,11 +66,11 @@ pub struct AppState {
     pub unread: Mutex<HashSet<String>>,
     pub exit_requested: AtomicBool,
     pub exit_ready: AtomicBool,
-    pub pinned: AtomicBool,
     pub temporary_top: AtomicBool,
     pub last_position: Mutex<Option<[i32; 2]>>,
     pub position_ready: AtomicBool,
     pub position_epoch: AtomicU64,
+    pub size_epoch: AtomicU64,
     pub vocabulary_sidebar_width: AtomicU64,
 }
 
@@ -76,6 +78,8 @@ impl AppState {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
+            settings_route: Mutex::new(None),
+            sizing: Mutex::new(Default::default()),
             locale: Mutex::new("zh".into()),
             engine: OnceCell::new(),
             bindings: Mutex::new(None),
@@ -95,11 +99,11 @@ impl AppState {
             unread: Mutex::new(HashSet::new()),
             exit_requested: AtomicBool::new(false),
             exit_ready: AtomicBool::new(false),
-            pinned: AtomicBool::new(false),
             temporary_top: AtomicBool::new(false),
             last_position: Mutex::new(None),
             position_ready: AtomicBool::new(false),
             position_epoch: AtomicU64::new(0),
+            size_epoch: AtomicU64::new(0),
             vocabulary_sidebar_width: AtomicU64::new(0),
         }
     }
@@ -527,7 +531,7 @@ pub struct WindowSnapshot {
 pub fn window_snapshot(state: &AppState, query_expanded: impl FnOnce() -> bool) -> WindowSnapshot {
     // Drop Rust mutex guards before any synchronous dispatch to the UI thread.
     let selected = state.selected.lock().unwrap().clone();
-    let pinned = state.pinned.load(Ordering::Relaxed);
+    let pinned = state.window_lifecycle.lock().unwrap().pinned();
     let expanded = query_expanded();
     WindowSnapshot {
         selected,
@@ -572,12 +576,20 @@ pub fn initialize_result_position(app: &AppHandle) {
     if let Some(monitor) = monitor {
         let area = monitor.work_area();
         let scale = monitor.scale_factor();
+        let initial = crate::window_sizing::initial_size(
+            &app.state::<AppState>().root.join("window-size.json"),
+            [
+                f64::from(area.size.width) / scale,
+                f64::from(area.size.height) / scale,
+            ],
+        );
+        let _ = window.set_size(tauri::LogicalSize::new(initial[0], initial[1]));
         let margin = (16.0 * scale).round() as i32;
         let size = window
             .outer_size()
             .ok()
             .map(|s| [s.width as i32, s.height as i32])
-            .unwrap_or([(460.0 * scale) as i32, (560.0 * scale) as i32]);
+            .unwrap_or([(520.0 * scale) as i32, (560.0 * scale) as i32]);
         let area = [
             area.position.x,
             area.position.y,
@@ -598,7 +610,7 @@ pub fn initialize_result_position(app: &AppHandle) {
         .store(true, Ordering::Relaxed);
 }
 
-pub fn remember_result_position(app: &AppHandle, mut position: [i32; 2]) {
+pub fn remember_result_position(app: &AppHandle, position: [i32; 2]) {
     let state = app.state::<AppState>();
     if !state.position_ready.load(Ordering::Relaxed) {
         return;
@@ -607,11 +619,6 @@ pub fn remember_result_position(app: &AppHandle, mut position: [i32; 2]) {
         && (window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false))
     {
         return;
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        let scale = window.scale_factor().unwrap_or(1.0);
-        position[0] +=
-            (state.vocabulary_sidebar_width.load(Ordering::Relaxed) as f64 * scale).round() as i32;
     }
     *state.last_position.lock().unwrap() = Some(position);
     let epoch = state.position_epoch.fetch_add(1, Ordering::Relaxed) + 1;
@@ -651,7 +658,7 @@ pub fn present_capture(app: &AppHandle, epoch: crate::window_lifecycle::CaptureE
                 return;
             }
             state.temporary_top.store(true, Ordering::Relaxed);
-            let _ = handle.set_always_on_top(true);
+            let _ = apply_top_level(&handle, true);
             let _ = handle.unminimize();
             let _ = handle.show();
             #[cfg(target_os = "macos")]
@@ -667,13 +674,58 @@ pub fn present_capture(app: &AppHandle, epoch: crate::window_lifecycle::CaptureE
     state.resync.notify_one();
 }
 
+// All callers run on the UI thread, with no lifecycle lock held across AppKit.
+fn apply_top_level(window: &tauri::WebviewWindow, pinned: bool) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let pointer = window
+            .ns_window()
+            .map_err(|_| "无法改变窗口置顶状态。".to_string())?;
+        // SAFETY: caller is on the main thread and owns the live window handle.
+        Ok(unsafe { yurelay_platform::set_window_pinned(pointer, pinned) })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window
+            .set_always_on_top(pinned)
+            .map_err(|_| "无法改变窗口置顶状态。".to_string())?;
+        window
+            .is_always_on_top()
+            .map_err(|_| "无法改变窗口置顶状态。".to_string())
+    }
+}
+
+pub async fn set_pinned(app: &AppHandle, pinned: bool) -> Result<bool, String> {
+    let window = app.get_webview_window("main").ok_or("窗口不可用。")?;
+    let handle = window.clone();
+    let app = app.clone();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let result = apply_top_level(&handle, pinned);
+            if let Ok(actual) = &result {
+                app.state::<AppState>()
+                    .window_lifecycle
+                    .lock()
+                    .unwrap()
+                    .set_pinned(*actual);
+            }
+            let _ = send.send(result);
+        })
+        .map_err(|_| "无法改变窗口置顶状态。".to_string())?;
+    receive
+        .await
+        .map_err(|_| "无法改变窗口置顶状态。".to_string())?
+}
+
 pub fn release_temporary_top(app: &AppHandle) {
     let state = app.state::<AppState>();
+    let pinned = state.window_lifecycle.lock().unwrap().pinned();
     if state.temporary_top.swap(false, Ordering::Relaxed)
-        && !state.pinned.load(Ordering::Relaxed)
+        && !pinned
         && let Some(window) = app.get_webview_window("main")
     {
-        let _ = window.set_always_on_top(false);
+        let _ = apply_top_level(&window, false);
     }
 }
 
@@ -713,4 +765,48 @@ mod append_shortcut_tests {
         assert!(parse_shortcuts("Alt+D", "Alt+S", Some("Alt+D"), None).is_err());
         assert!(parse_shortcuts("Alt+D", "Alt+S", Some("Shift+A"), None).is_err());
     }
+}
+
+/// Debounce native user drags; content and mode changes never save a new size.
+pub fn remember_result_size(app: &AppHandle) {
+    let epoch = app
+        .state::<AppState>()
+        .size_epoch
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let state = app.state::<AppState>();
+        if state.size_epoch.load(Ordering::Relaxed) != epoch
+            || !state.sizing.lock().unwrap().settled()
+        {
+            return;
+        }
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        if window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true) {
+            return;
+        }
+        let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else {
+            return;
+        };
+        let size = [
+            f64::from(size.width) / scale,
+            f64::from(size.height) / scale,
+        ];
+        let path = state.root.join("window-size.json");
+        let temporary = state.root.join(format!("window-size-{epoch}.tmp"));
+        if tokio::fs::write(&temporary, serde_json::to_vec(&size).unwrap_or_default())
+            .await
+            .is_ok()
+        {
+            if state.size_epoch.load(Ordering::Relaxed) == epoch {
+                let _ = tokio::fs::rename(&temporary, path).await;
+            } else {
+                let _ = tokio::fs::remove_file(&temporary).await;
+            }
+        }
+    });
 }
