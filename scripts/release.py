@@ -87,7 +87,7 @@ def prepare_release(tag, repository, source_sha):
         release = github_json(f'repos/{repository}/releases', method='POST', payload={
             'tag_name': tag, 'target_commitish': source_sha,
             'name': f'Yurelay {tag}', 'body': DEFAULT_NOTES,
-            'draft': True, 'prerelease': True,
+            'draft': True, 'prerelease': False,
         })
     validate_draft(release, tag)
     return str(release['id'])
@@ -223,6 +223,7 @@ def publish_release(tag, repository, source_sha, release_id):
         raise ValueError('Draft target changed during the build; keeping the draft private.')
     result = github_json(resource, method='PATCH', payload={
         'tag_name': tag, 'target_commitish': source_sha, 'draft': False,
+        'make_latest': 'false' if release['prerelease'] else 'true',
     })
     if (result.get('draft') is not False or result.get('id') != int(release_id)
             or result.get('tag_name') != tag):

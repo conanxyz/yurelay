@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Build and publish this version after verification, for example v0.1.0'
+        description: 'Build and publish as stable + Latest by default, for example v0.1.0'
         required: true
         type: string
 

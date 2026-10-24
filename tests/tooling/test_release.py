@@ -73,12 +73,13 @@ class ReleaseTests(unittest.TestCase):
     def prepare(self):
         return RELEASE.prepare_release(TAG, REPO, SHA)
 
-    def test_new_release_stays_a_private_prerelease_draft(self):
+    def test_new_release_defaults_to_stable_but_stays_private(self):
         api = FakeGitHub()
         with patch.object(RELEASE, 'github_json', api):
             self.assertEqual(self.prepare(), '42')
         self.assertTrue(api.release['draft'])
-        self.assertTrue(api.release['prerelease'])
+        self.assertFalse(api.release['prerelease'])
+        self.assertEqual(api.release['name'], f'Yurelay {TAG}')
         self.assertEqual(api.release['target_commitish'], SHA)
         self.assertEqual(api.publication_calls(), [])
 
@@ -105,6 +106,16 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'already public'):
                 self.prepare()
         self.assertTrue(all(payload is None for _, payload in api.calls))
+
+    def test_explicit_prerelease_draft_is_preserved_when_preparing(self):
+        release = draft()
+        release['target_commitish'] = 'main'
+        api = FakeGitHub(release)
+        with patch.object(RELEASE, 'github_json', api):
+            self.assertEqual(self.prepare(), '42')
+        self.assertTrue(api.release['prerelease'])
+        self.assertTrue(api.release['draft'])
+        self.assertEqual(api.publication_calls(), [])
 
     def test_existing_tag_must_match_build_commit(self):
         for sha in [SHA, 'b' * 40]:
@@ -171,6 +182,18 @@ class ReleaseTests(unittest.TestCase):
                 self.last_uploader = uploader
         return api
 
+    def test_default_release_is_published_as_stable_and_latest_after_verification(self):
+        api = FakeGitHub()
+        with patch.object(RELEASE, 'github_json', api):
+            self.prepare()
+        packaged, files, _ = installer_fixture()
+        release = api.release
+        release['assets'] = packaged['assets']
+        published = self.publish(release, files).release
+        self.assertFalse(published['draft'])
+        self.assertFalse(published['prerelease'])
+        self.assertEqual(published['make_latest'], 'true')
+
     def test_both_architectures_and_checksums_are_verified_before_publication(self):
         for prerelease in [False, True]:
             release, files, _ = installer_fixture()
@@ -185,6 +208,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(api.publication_calls(), [
                     (f'repos/{REPO}/releases/42', {
                         'tag_name': TAG, 'target_commitish': SHA, 'draft': False,
+                        'make_latest': 'false' if prerelease else 'true',
                     }),
                 ])
                 self.assertEqual({a['name'] for a in api.release['assets']}, {
@@ -260,6 +284,7 @@ class ReleaseTests(unittest.TestCase):
         })
         self.assertEqual(api.calls[-1], (f'repos/{REPO}/releases/42', {
             'tag_name': TAG, 'target_commitish': SHA, 'draft': False,
+            'make_latest': 'false',
         }))
 
     def test_retry_after_partial_cleanup_uses_combined_checksums(self):
