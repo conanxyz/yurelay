@@ -569,3 +569,28 @@ async fn queued_main_translation_precedes_an_earlier_queued_assistant() {
     );
     engine.shutdown().await;
 }
+
+#[tokio::test]
+async fn reply_marker_with_markdown_spacing_is_reference_not_visible_body() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, count) = fixture(
+        root.path().into(),
+        "Morgan is our technical contact.\n---BACK_TRANSLATION---  \n",
+        10,
+    )
+    .await;
+    let mut input = request(OperationKind::Reply);
+    input.source_text = "Tell us the contact (\"Alice is our technical contact\").".into();
+    input.intent = "Morgan是我们的技术联系人。".into();
+    let started = engine.submit_operation(input).await.unwrap();
+    let done = until(&engine, &started.id, |r| {
+        r.status == OperationStatus::Completed
+    })
+    .await;
+    assert_eq!(done.primary_text.trim(), "Morgan is our technical contact.");
+    assert_eq!(done.back_translation.trim(), "参考译文。");
+    assert_eq!(done.back_translation_state, BackTranslationState::Complete);
+    assert!(done.error.is_none());
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    engine.shutdown().await;
+}

@@ -1219,3 +1219,23 @@ test("a single nonlegacy screenshot is visible and loads only when opened", asyn
   ).toBe("new-draft-image");
   expect(await remote(page)).toEqual([]);
 });
+
+test('reply regeneration sends the latest intent separately from quoted examples and copies only the reply',async({page})=>{
+ await setup(page);
+ const context='Tell us who handles support ("Alice is our technical contact"). Good news: the node is healthy again.';
+ await page.evaluate(context=>{const w=window as any;w.task.original_text=context;w.task.edited_text=null;w.task.source_revision++;w.task.revision++;w.update();},context);
+ await page.getByRole('button',{name:'Compose reply',exact:true}).click();
+ let previous:string|null=null;
+ for(const [index,name] of ['Morgan','Riley'].entries()){
+  await page.getByRole('textbox',{name:'Reply intent'}).fill(`${name}是我们的技术联系人。`);
+  await page.getByRole('button',{name:index?'Regenerate reply':'Generate reply',exact:true}).click();
+  await expect.poll(async()=> (await remote(page)).length).toBe(index+1);
+  const request=(await remote(page)).at(-1).args.request;
+  expect(request).toMatchObject({source_text:context,intent:`${name}是我们的技术联系人。`,reply_language:'en',target_language:'zh-Hans',include_back_translation:true,previous_operation_id:previous});
+  previous=await page.evaluate(()=> (window as any).operations.at(-1).id);
+  await page.evaluate(name=>(window as any).progress({status:'completed',primary_text:`${name} is our technical contact.`,back_translation:`${name}是我们的技术联系人。`,back_translation_state:'complete',error:null}),name);
+  const output=page.getByRole('region',{name:'Generated reply'});await expect(output).toContainText(`${name} is our technical contact.`);
+  await page.getByRole('button',{name:'Copy reply',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toBe(`${name} is our technical contact.`);
+ }
+});

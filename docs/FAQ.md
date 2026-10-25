@@ -59,7 +59,7 @@ Switching apps hides the result window by default; disable this in Appearance se
 
 ### Explain context and compose replies
 
-Select a passage to explicitly generate a contextual explanation. To respond, open Compose reply, describe your intent in your own language and choose Generate reply. The reply uses the current service and source language. Its reference back-translation uses the translation language and starts collapsed; it is an auxiliary paraphrase, not an independent verification.
+Select a passage to explicitly generate a contextual explanation. To respond, open Compose reply, describe your intent in your own language and choose Generate reply. The reply uses the current service and source language. Its reference back-translation uses the translation language and starts collapsed; it is an auxiliary paraphrase, not an independent verification. The reply should preserve names, facts and commitments in your reply intent; example answers in the original message are not your identity or intended response. The reference translates the generated reply, not the entire original message.
 
 Explanations and replies can each be stopped, regenerated and revisited in history independently. Copy reply copies only the reply body; it never pastes or sends it automatically. Changing the source or intent marks the old reply as stale until you explicitly regenerate it.
 
