@@ -658,3 +658,21 @@
 .operation-output .reply-result-card .translation-prose {
   padding: 8px 0;
 }
+
+.global-prompts .prompt-help {
+  display: block;
+  line-height: 1.6;
+}
+.reply-compose {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.reply-compose > textarea {
+  display: block;
+  margin: 0;
+  font-size: 12px;
+}
+.reply-compose > button {
+  justify-self: start;
+}

@@ -249,7 +249,7 @@
       <h3>{t("系统词典 · 无需 API", "System dictionary · No API key")}</h3>
       <p>
         {t(
-          "查询单词和短语；不提供整句翻译、语境解析或构思回复。",
+          "查询单词和短语；不提供整句翻译、语境解析或表达/回复。",
           "Definitions for words and phrases. It does not translate passages, explain context or compose replies.",
         )}
       </p>
@@ -292,7 +292,7 @@
       </h3>
       <p>
         {t(
-          "选择服务商，填写 API 凭据和模型，测试后保存。支持生成的模型服务还可解析语境、构思回复；普通翻译 API 按实际能力使用。",
+          "选择服务商，填写 API 凭据和模型，测试后保存。支持生成的模型服务还可解析语境、表达/回复；普通翻译 API 按实际能力使用。",
           "Choose a provider, enter credentials and a model, then test and save. Generative model services also support context explanations and replies; other translation APIs have fewer capabilities.",
         )}
       </p>

@@ -348,7 +348,7 @@ test("reply remains local until Generate; streaming copy excludes back-translati
 }) => {
   await setup(page);
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await page
     .getByRole("textbox", { name: "Reply intent" })
@@ -410,7 +410,7 @@ test("reply remains local until Generate; streaming copy excludes back-translati
     ),
   ).toEqual([]);
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await expect(
     page.getByRole("region", { name: "Generated reply" }),
@@ -724,7 +724,7 @@ test("reply drawer supports dark narrow windows, reduced motion and Escape focus
     w.emit("configuration-changed", w.settings);
   });
   const trigger = page.getByRole("button", {
-    name: "Compose reply",
+    name: "Write / Reply",
     exact: true,
   });
   await trigger.click();
@@ -762,7 +762,7 @@ test("operation events reject old revisions, retain a single past attempt and ke
 }) => {
   await setup(page);
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await page.getByRole("textbox", { name: "Reply intent" }).fill("Thank them.");
   await page
@@ -1156,7 +1156,7 @@ test("unknown reply language points to the existing source language control with
         : original(cmd, args);
   });
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await page
     .getByRole("textbox", { name: "Reply intent" })
@@ -1225,7 +1225,7 @@ test('reply regeneration sends the latest intent separately from quoted examples
  await setup(page);
  const context='Tell us who handles support ("Alice is our technical contact"). Good news: the node is healthy again.';
  await page.evaluate(context=>{const w=window as any;w.task.original_text=context;w.task.edited_text=null;w.task.source_revision++;w.task.revision++;w.update();},context);
- await page.getByRole('button',{name:'Compose reply',exact:true}).click();
+ await page.getByRole('button',{name:'Write / Reply',exact:true}).click();
  let previous:string|null=null;
  for(const [index,name] of ['Morgan','Riley'].entries()){
   await page.getByRole('textbox',{name:'Reply intent'}).fill(`${name}是我们的技术联系人。`);
@@ -1244,7 +1244,10 @@ test('reply regeneration sends the latest intent separately from quoted examples
 
 test('reply shows original and translation directly with one copy icon safely inside the top-right header',async({page})=>{
  await setup(page);
- await page.getByRole('button',{name:'Compose reply',exact:true}).click();
+ await page.getByRole('button',{name:'Write / Reply',exact:true}).click();
+
+ await expect(page.getByRole('dialog',{name:'Write / Reply'}).getByRole('heading',{name:'Write / Reply',exact:true})).toBeVisible();
+ await expect(page.getByRole('dialog')).not.toContainText('What would you like to say?');
  await page.getByRole('textbox',{name:'Reply intent'}).fill('Thank them and confirm the next step.');
  await page.getByRole('button',{name:'Generate reply',exact:true}).click();
  const output=page.getByRole('region',{name:'Generated reply'});
