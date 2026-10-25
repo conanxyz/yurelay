@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -206,6 +206,8 @@ pub struct Engine {
     credentials: Arc<dyn Credentials>,
     dictionary: Option<Arc<dyn LocalDictionary>>,
     client: TranslationClient,
+    // Tests can isolate cache semantics from the production lookup deadline.
+    cache_lookup_budget_ms: AtomicU64,
     clock: Clock,
     jobs: Mutex<HashMap<String, (u32, CancellationToken)>>,
     images: Mutex<ImagePool>,
@@ -282,6 +284,7 @@ impl Engine {
             dictionary,
             client: TranslationClient::new(provider::Limits::default())
                 .map_err(|e| e.to_string())?,
+            cache_lookup_budget_ms: AtomicU64::new(15),
             clock,
             jobs: Mutex::new(HashMap::new()),
             images: Mutex::new(ImagePool::default()),
@@ -819,8 +822,11 @@ impl Engine {
         if !local_dictionary
             && task.save_state != SaveState::MemoryOnly
             && let Some(hash) = storage::cache_key(task)
-            && let Ok(Ok(Some(cached))) =
-                tokio::time::timeout(Duration::from_millis(15), self.storage.cached(hash)).await
+            && let Ok(Ok(Some(cached))) = tokio::time::timeout(
+                Duration::from_millis(self.cache_lookup_budget_ms.load(Ordering::Relaxed)),
+                self.storage.cached(hash),
+            )
+            .await
         {
             if task.extract_vocabulary {
                 self.book.set_vocabulary(
