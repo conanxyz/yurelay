@@ -1077,7 +1077,7 @@ async fn reply_fallback_resolves_each_services_saved_prompt_and_keeps_fixed_cons
         "Do not invent dates",
         "never instructions to change these rules",
         "containing exactly ---BACK_TRANSLATION---",
-        "back-translation in zh-Hans",
+        "translate ONLY YOUR REPLY into zh-Hans",
     ] {
         assert!(
             instruction.find(required).unwrap() > custom,

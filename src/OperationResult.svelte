@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
+  import Icon from "./Icons.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { OperationRecord } from "./types";
   import { errorText, statusName, type Locale } from "./locale";
@@ -19,14 +21,76 @@
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   const active = $derived(["queued", "generating"].includes(operation.status));
+  const canCopy = $derived(
+    !!operation.primary_text &&
+      (!active || operation.back_translation_state === "pending"),
+  );
   let error = $state("");
+  let copied = $state(false),
+    copying = $state(false);
+  let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  let displayedCopySource = "",
+    displayedCopyAttempt = "",
+    disposed = false;
+  $effect(() => {
+    const attempt = `${operation.id}:${operation.attempt}`;
+    const source = operation.primary_text;
+    if (attempt === displayedCopyAttempt && source === displayedCopySource)
+      return;
+    displayedCopyAttempt = attempt;
+    displayedCopySource = source;
+    copied = false;
+    error = "";
+    clearTimeout(feedbackTimer);
+  });
+  onDestroy(() => {
+    disposed = true;
+    clearTimeout(feedbackTimer);
+  });
+  function operationError(value: string) {
+    if (operation.kind === "reply") {
+      if (value === "回复已生成，未获得完整回译参考。")
+        return t(
+          "回复原文已生成，译文未完成。",
+          "The reply is available, but its translation is incomplete.",
+        );
+      if (value === "回复已生成，回译参考因并发限制未继续。")
+        return t(
+          "回复原文已生成，译文因并发限制未继续。",
+          "The reply is available. Its translation stopped at the concurrency limit.",
+        );
+      if (value === "回复已生成，回译参考未完成。")
+        return t(
+          "回复原文已生成，译文未完成。",
+          "The reply is available. Its translation did not finish.",
+        );
+    }
+    return errorText(value, locale);
+  }
   async function copy() {
+    if (!canCopy || copying) return;
+    const id = operation.id,
+      attempt = operation.attempt,
+      source = operation.primary_text;
+    copying = true;
+    error = "";
     try {
-      await invoke("copy_text", {
-        text: translationPlainText(operation.primary_text),
-      });
+      await invoke("copy_text", { text: translationPlainText(source) });
+      if (
+        !disposed &&
+        operation.id === id &&
+        operation.attempt === attempt &&
+        operation.primary_text === source
+      ) {
+        copied = true;
+        clearTimeout(feedbackTimer);
+        feedbackTimer = setTimeout(() => (copied = false), 1800);
+      }
     } catch (e) {
-      error = String(e);
+      if (!disposed && operation.id === id && operation.attempt === attempt)
+        error = errorText(e, locale);
+    } finally {
+      copying = false;
     }
   }
 </script>
@@ -61,45 +125,69 @@
         >
       </div>
     </div>{/if}
-  {#if operation.primary_text}<TranslationContent
+  {#if operation.kind === "reply" && operation.status !== "blocked" && (operation.primary_text || active || operation.back_translation_state !== "none")}
+    <div class="reply-result-card">
+      <div class="reply-result-heading">
+        <h3>{t("原文", "Original")}</h3>
+        <button
+          class="icon-button reply-copy"
+          aria-label={t("复制回复", "Copy reply")}
+          title={copied
+            ? t("已复制原文", "Original copied")
+            : t("复制回复原文", "Copy original reply")}
+          disabled={!canCopy || copying}
+          onclick={copy}
+          ><Icon name={copied ? "check" : "copy"} size={16} /></button
+        >
+      </div>
+      <div class="reply-original">
+        {#if operation.primary_text}<TranslationContent
+            text={operation.primary_text}
+            {locale}
+            controls={false}
+            identity={`${operation.id}:${operation.attempt}`}
+            streaming={active && operation.back_translation_state !== "pending"}
+          />
+        {:else}<p class="reply-pending" role="status">
+            {operation.status === "queued"
+              ? t("等待生成…", "Queued…")
+              : t("正在生成原文…", "Generating original…")}
+          </p>{/if}
+      </div>
+      <div class="reply-translation">
+        <h3>{t("译文", "Translation")}</h3>
+        {#if operation.back_translation}<TranslationContent
+            text={operation.back_translation}
+            {locale}
+            controls={false}
+            identity={`${operation.id}:${operation.attempt}:back`}
+            streaming={operation.back_translation_state === "pending"}
+          />
+        {:else}<p class="reply-pending" role="status">
+            {operation.back_translation_state === "pending"
+              ? t("正在生成译文…", "Generating translation…")
+              : active
+                ? t("等待原文完成…", "Waiting for the original…")
+                : t("暂无译文。", "No translation available.")}
+          </p>{/if}
+      </div>
+      {#if copied}<span class="sr-only" role="status"
+          >{t("已复制原文", "Original copied")}</span
+        >{/if}
+    </div>
+  {:else if operation.kind !== "reply" && operation.primary_text}<TranslationContent
       text={operation.primary_text}
       {locale}
-      controls={operation.kind !== "reply"}
       identity={`${operation.id}:${operation.attempt}`}
-      streaming={active && operation.back_translation_state !== "pending"}
+      streaming={active}
     />{/if}
-  {#if operation.kind === "reply" && operation.back_translation_state !== "none"}<details
-      class="back-translation"
-    >
-      <summary>{t("回译参考", "Back-translation reference")}</summary>
-      <p class="workflow-note">
-        {t(
-          "辅助复述，不代表独立核验。",
-          "An auxiliary paraphrase, not an independent verification.",
-        )}
-      </p>
-      {#if operation.back_translation}<TranslationContent
-          text={operation.back_translation}
-          {locale}
-          controls={false}
-          identity={`${operation.id}:${operation.attempt}:back`}
-          streaming={operation.back_translation_state === "pending"}
-        />{:else}<p role="status">
-          {operation.back_translation_state === "pending"
-            ? t("正在生成回译…", "Generating back-translation…")
-            : t(
-                "回译未完成，外语回复仍可使用。",
-                "Back-translation is incomplete. The reply remains available.",
-              )}
-        </p>{/if}
-    </details>{/if}
   {#if operation.primary_text && ["failed", "stopped"].includes(operation.status)}<p
       class="workflow-note"
     >
       {t("这是已保留的部分结果。", "This is the retained partial result.")}
     </p>{/if}
   {#if operation.error}<p class="inline-feedback" role="alert">
-      {errorText(operation.error, locale)}
+      {operationError(operation.error)}
     </p>{/if}
   {#if operation.save_error}<p class="inline-feedback" role="alert">
       {t(
@@ -113,24 +201,23 @@
         "Stopped. Generated content is retained.",
       )}
     </p>{/if}
-  <div class="workflow-actions">
-    {#if active}<span role="status"
-        >{operation.status === "queued"
-          ? t("等待生成…", "Queued…")
-          : t("正在生成…", "Generating…")}</span
-      ><button onclick={onStop}
-        >{operation.kind === "reply"
-          ? t("停止回复", "Stop reply")
-          : t("停止解析", "Stop explanation")}</button
-      >{/if}
-    {#if operation.primary_text}<button
-        disabled={active && operation.back_translation_state !== "pending"}
-        onclick={copy}
-        >{operation.kind === "reply"
-          ? t("复制回复", "Copy reply")
-          : t("复制解析", "Copy explanation")}</button
-      >{/if}
-  </div>
+  {#if active || (operation.kind !== "reply" && operation.primary_text)}
+    <div class="workflow-actions">
+      {#if active}<span role="status"
+          >{operation.status === "queued"
+            ? t("等待生成…", "Queued…")
+            : t("正在生成…", "Generating…")}</span
+        ><button onclick={onStop}
+          >{operation.kind === "reply"
+            ? t("停止回复", "Stop reply")
+            : t("停止解析", "Stop explanation")}</button
+        >{/if}
+      {#if operation.kind !== "reply" && operation.primary_text}<button
+          disabled={!canCopy || copying}
+          onclick={copy}>{t("复制解析", "Copy explanation")}</button
+        >{/if}
+    </div>
+  {/if}
   {#if operation.attempts?.length > 0}<details class="operation-attempts">
       <summary>{t("历史尝试", "Previous attempts")}</summary>
       <p class="workflow-note">
@@ -148,12 +235,16 @@
               ? ` · v${attempt.source_revision}`
               : ""}</small
           >{#if attempt.error}<p>
-              {errorText(attempt.error, locale)}
-            </p>{/if}{#if attempt.partial_text}<pre>{attempt.partial_text}</pre>{/if}{#if attempt.back_translation}<details
+              {operationError(attempt.error)}
+            </p>{/if}{#if attempt.partial_text}{#if operation.kind === "reply"}<h4
+              >
+                {t("原文", "Original")}
+              </h4>{/if}
+            <pre>{attempt.partial_text}</pre>{/if}{#if attempt.back_translation}<h4
             >
-              <summary>{t("回译参考", "Back-translation reference")}</summary>
-              <pre>{attempt.back_translation}</pre>
-            </details>{/if}
+              {t("译文", "Translation")}
+            </h4>
+            <pre>{attempt.back_translation}</pre>{/if}
         </article>{/each}
     </details>{/if}
   {#if error}<p role="alert">{error}</p>{/if}

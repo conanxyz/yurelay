@@ -241,7 +241,7 @@
   ><button
     disabled={!sourceText.trim() || !!task?.sensitive}
     aria-expanded={open === "reply"}
-    onclick={(e) => show("reply", e)}>{t("构思回复", "Compose reply")}</button
+    onclick={(e) => show("reply", e)}>{t("表达/回复", "Write / Reply")}</button
   >{#if !open && activeRecords.some( (r) => ["queued", "generating"].includes(r.status) )}<small
       role="status"
       >{t("独立任务正在生成", "An assistant task is generating")}</small
@@ -255,7 +255,7 @@
     role="dialog"
     aria-modal="false"
     aria-label={open === "reply"
-      ? t("回复抽屉", "Reply drawer")
+      ? t("表达/回复", "Write / Reply")
       : t("语境解析", "Context explanation")}
     onkeydown={(e) => {
       if (e.key === "Escape") {
@@ -269,7 +269,7 @@
       <header>
         <h2>
           {open === "reply"
-            ? t("构思回复", "Compose reply")
+            ? t("表达/回复", "Write / Reply")
             : t("语境解析", "Explain context")}
         </h2>
         <button

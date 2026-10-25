@@ -57,17 +57,6 @@
       >{t("恢复内置", "Restore built-in")}</button
     >
   </div>
-  <p class="subtle">
-    {kind === "translation"
-      ? t(
-          "所有模型服务默认引用这套翻译提示词；服务中可单独自定义。",
-          "Model services use these translation instructions by default. Each service can override them.",
-        )
-      : t(
-          "结合原文理解你的意思，把回复优化成目标读者习惯的自然表达，不添加你未提供的承诺或事实。",
-          "Use source context to express your intent naturally for the reader, without adding facts or commitments you did not provide.",
-        )}
-  </p>
   {#if kind === "reply" && replyLoading}<p class="subtle" role="status">
       {t("正在读取内置提示词…", "Loading built-in instructions…")}
     </p>{/if}
@@ -75,6 +64,7 @@
       {replyError}
     </p>{/if}
   <textarea
+    aria-describedby="global-prompt-help"
     class:default-prompt={!custom?.trim()}
     aria-label={kind === "translation"
       ? t("翻译提示词", "Translation prompt")
@@ -84,10 +74,15 @@
     rows="15"
     maxlength="32000"
     spellcheck="false"></textarea>
-  <small class="subtle"
-    >{t(
-      "修改后点击保存。清空内容会恢复内置提示词。",
-      "Click Save after editing. Empty content uses the built-in instructions.",
-    )}</small
-  >
+  <small id="global-prompt-help" class="subtle prompt-help">
+    {kind === "translation"
+      ? t(
+          "模型服务默认使用，可按服务自定义。修改后保存，清空恢复内置。",
+          "Default for model services; override per service. Save edits; clear to restore built-in.",
+        )
+      : t(
+          "结合原文自然表达你的意思，不新增事实或承诺。修改后保存，清空恢复内置。",
+          "Use context to express your intent naturally, without added facts or promises. Save edits; clear to restore built-in.",
+        )}
+  </small>
 </section>

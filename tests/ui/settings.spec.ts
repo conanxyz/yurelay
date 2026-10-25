@@ -450,6 +450,12 @@ test('free defaults, tier labels and live OpenRouter filtering retain exact mode
 test('shared translation and reply prompts save independently and services inherit or override them',async({page})=>{
  await settingsFixture(page);await page.getByRole('button',{name:'Prompts',exact:true}).click();
  const translation=page.getByRole('textbox',{name:'Translation prompt',exact:true});await expect(translation).toHaveValue(/Mode: sentence translation/);
+ await expect(translation).toHaveAttribute('aria-describedby','global-prompt-help');
+ const help=page.locator('.global-prompts .prompt-help');await expect(help).toHaveCount(1);
+ await expect(help).toContainText('override per service');
+ expect((await help.boundingBox())!.y).toBeGreaterThanOrEqual((await translation.boundingBox())!.y+(await translation.boundingBox())!.height);
+ await expect(page.locator('.global-prompts > p.subtle:not([role])')).toHaveCount(0);
+
  await page.screenshot({path:'artifacts/previews/reading-workflow-prompts-simple.png'});
  await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
  await translation.fill('Keep domain terms precise.');await page.getByRole('button',{name:'Save changes',exact:true}).click();expect(await page.evaluate(()=>(window as any).settings.translation_prompt)).toBe('Keep domain terms precise.');

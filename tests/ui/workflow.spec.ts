@@ -258,6 +258,7 @@ async function setup(page: Page) {
           return;
         }
         if (cmd === "speech_voices") return [];
+        if (cmd === "copy_text" && w.copyFailure) throw 'Synthetic clipboard error';
         if (cmd === "operation_list")
           return structuredClone(
             w.operations.filter((o: any) => o.task_id === args.taskId),
@@ -347,7 +348,7 @@ test("reply remains local until Generate; streaming copy excludes back-translati
 }) => {
   await setup(page);
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await page
     .getByRole("textbox", { name: "Reply intent" })
@@ -409,7 +410,7 @@ test("reply remains local until Generate; streaming copy excludes back-translati
     ),
   ).toEqual([]);
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await expect(
     page.getByRole("region", { name: "Generated reply" }),
@@ -438,7 +439,7 @@ test("reply remains local until Generate; streaming copy excludes back-translati
     }),
   );
   await page.setViewportSize({ width: 680, height: 950 });
-  await page.locator(".back-translation summary").click();
+  await expect(page.locator(".reply-translation")).toContainText("Merci pour ces exemples.");
   await page.screenshot({
     path: "artifacts/previews/reading-workflow-reply-light.png",
     fullPage: true,
@@ -723,7 +724,7 @@ test("reply drawer supports dark narrow windows, reduced motion and Escape focus
     w.emit("configuration-changed", w.settings);
   });
   const trigger = page.getByRole("button", {
-    name: "Compose reply",
+    name: "Write / Reply",
     exact: true,
   });
   await trigger.click();
@@ -761,7 +762,7 @@ test("operation events reject old revisions, retain a single past attempt and ke
 }) => {
   await setup(page);
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await page.getByRole("textbox", { name: "Reply intent" }).fill("Thank them.");
   await page
@@ -810,7 +811,7 @@ test("operation events reject old revisions, retain a single past attempt and ke
     "40 operations",
   );
   await expect(page.locator(".operation-output>.inline-feedback")).toHaveText(
-    "The reply is available, but the back-translation is incomplete.",
+    "The reply is available, but its translation is incomplete.",
   );
 });
 
@@ -1155,7 +1156,7 @@ test("unknown reply language points to the existing source language control with
         : original(cmd, args);
   });
   await page
-    .getByRole("button", { name: "Compose reply", exact: true })
+    .getByRole("button", { name: "Write / Reply", exact: true })
     .click();
   await page
     .getByRole("textbox", { name: "Reply intent" })
@@ -1218,4 +1219,74 @@ test("a single nonlegacy screenshot is visible and loads only when opened", asyn
     ),
   ).toBe("new-draft-image");
   expect(await remote(page)).toEqual([]);
+});
+
+test('reply regeneration sends the latest intent separately from quoted examples and copies only the reply',async({page})=>{
+ await setup(page);
+ const context='Tell us who handles support ("Alice is our technical contact"). Good news: the node is healthy again.';
+ await page.evaluate(context=>{const w=window as any;w.task.original_text=context;w.task.edited_text=null;w.task.source_revision++;w.task.revision++;w.update();},context);
+ await page.getByRole('button',{name:'Write / Reply',exact:true}).click();
+ let previous:string|null=null;
+ for(const [index,name] of ['Morgan','Riley'].entries()){
+  await page.getByRole('textbox',{name:'Reply intent'}).fill(`${name}是我们的技术联系人。`);
+  await page.getByRole('button',{name:index?'Regenerate reply':'Generate reply',exact:true}).click();
+  await expect.poll(async()=> (await remote(page)).length).toBe(index+1);
+  const request=(await remote(page)).at(-1).args.request;
+  expect(request).toMatchObject({source_text:context,intent:`${name}是我们的技术联系人。`,reply_language:'en',target_language:'zh-Hans',include_back_translation:true,previous_operation_id:previous});
+  previous=await page.evaluate(()=> (window as any).operations.at(-1).id);
+  await page.evaluate(name=>(window as any).progress({status:'completed',primary_text:`${name} is our technical contact.`,back_translation:`${name}是我们的技术联系人。`,back_translation_state:'complete',error:null}),name);
+  const output=page.getByRole('region',{name:'Generated reply'});await expect(output).toContainText(`${name} is our technical contact.`);
+  await page.getByRole('button',{name:'Copy reply',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toBe(`${name} is our technical contact.`);
+ }
+});
+
+
+test('reply shows original and translation directly with one copy icon safely inside the top-right header',async({page})=>{
+ await setup(page);
+ await page.getByRole('button',{name:'Write / Reply',exact:true}).click();
+
+ await expect(page.getByRole('dialog',{name:'Write / Reply'}).getByRole('heading',{name:'Write / Reply',exact:true})).toBeVisible();
+ await expect(page.getByRole('dialog')).not.toContainText('What would you like to say?');
+ await page.getByRole('textbox',{name:'Reply intent'}).fill('Thank them and confirm the next step.');
+ await page.getByRole('button',{name:'Generate reply',exact:true}).click();
+ const output=page.getByRole('region',{name:'Generated reply'});
+ const copy=output.getByRole('button',{name:'Copy reply',exact:true});
+ await expect(copy).toBeDisabled();
+ await page.evaluate(()=>(window as any).progress({primary_text:'Thank you. We will confirm the next step.',back_translation:'谢谢。我们会确认下一步。',back_translation_state:'pending'}));
+ await expect(copy).toBeEnabled();
+ await expect(output.locator('.reply-original')).toContainText('Thank you.');
+ await expect(output.locator('.reply-translation')).toContainText('谢谢。');
+ await expect(output.locator('.back-translation')).toHaveCount(0);
+ await expect(output).not.toContainText('independent verification');
+ await expect(copy).toHaveText('');await expect(copy.locator('svg')).toHaveCount(1);
+ await copy.focus();await page.keyboard.press('Enter');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toBe('Thank you. We will confirm the next step.');
+ await expect(output.getByRole('status').filter({hasText:'Original copied'})).toBeVisible();
+ await page.evaluate(()=>(window as any).progress({status:'completed',back_translation_state:'complete'}));
+ await expect(output.getByRole('status').filter({hasText:'Original copied'})).toBeVisible();
+ await page.evaluate(()=>{const w=window as any;w.copyFailure=true;});await copy.click();
+ await expect(output.getByRole('alert')).toContainText('Synthetic clipboard error');
+ await page.evaluate(()=>{(window as any).copyFailure=false;});await copy.click();await expect(output.getByRole('alert')).toHaveCount(0);
+ for(const width of [360,680,1440]) {
+  await page.setViewportSize({width,height:900});
+  const boxes=await output.evaluate(el=>{
+   const card=el.querySelector('.reply-result-card')!.getBoundingClientRect(),icon=el.querySelector('.reply-copy')!.getBoundingClientRect(),text=el.querySelector('.reply-original .translation-prose')!.getBoundingClientRect();
+   return {right:card.right-icon.right,top:icon.top-card.top,inside:icon.right<=card.right&&icon.left>=card.left,clear:text.top>=icon.bottom};
+  });
+  expect(boxes.inside).toBe(true);expect(boxes.right).toBeGreaterThanOrEqual(10);expect(boxes.right).toBeLessThanOrEqual(18);expect(boxes.top).toBeGreaterThanOrEqual(10);expect(boxes.clear).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.evaluate(()=>{const w=window as any;w.settings.ui_language='zh';w.settings.theme='dark';w.emit('configuration-changed',structuredClone(w.settings));});
+ await expect(page.locator('.reply-result-heading h3')).toHaveText('原文');await expect(page.locator('.reply-translation h3')).toHaveText('译文');
+ await expect(page.locator('.reply-result-card')).not.toContainText('回译参考');
+ await expect(page.getByRole('button',{name:'复制回复',exact:true})).toHaveAttribute('title','复制回复原文');
+ await page.locator('.assistant-drawer').focus();
+ await page.locator('.assistant-drawer').screenshot({path:'.ai-notes/reply-result-direct-dark.png',animations:'disabled'});
+ await page.setViewportSize({width:360,height:800});await page.locator('.assistant-drawer').screenshot({path:'.ai-notes/reply-result-direct-narrow.png',animations:'disabled'});
+ await page.evaluate(()=>(window as any).progress({status:'stopped',back_translation:'',back_translation_state:'cancelled'}));
+ await expect(page.locator('.reply-translation')).toContainText('暂无译文。');
+ await expect(page.getByRole('button',{name:'复制回复',exact:true})).toBeEnabled();
+ await page.evaluate(()=>(window as any).progress({status:'blocked',primary_text:'Blocked synthetic content',back_translation:'Blocked synthetic translation',sensitive:'API_SECRET'}));
+ await expect(page.locator('.reply-result-card')).toHaveCount(0);await expect(page.locator('.operation-output')).not.toContainText('Blocked synthetic content');await expect(page.getByRole('button',{name:'复制回复',exact:true})).toHaveCount(0);
 });
