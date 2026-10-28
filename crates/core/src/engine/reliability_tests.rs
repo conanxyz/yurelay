@@ -736,6 +736,11 @@ async fn stored(engine: &Engine, id: &str) -> Task {
 async fn passage_structure_option_is_on_the_wire_and_has_a_separate_cache() {
     let a = fixture("a").await;
     let (_dir, engine) = setup(&[&a]).await;
+    // This test asserts cache partitioning, not the opportunistic 15ms lookup
+    // deadline. Keep every cache-hit and request-count assertion independent
+    // of how heavily the CI host schedules its storage worker.
+    assert_eq!(engine.cache_lookup_budget_ms.load(Ordering::Relaxed), 15);
+    engine.cache_lookup_budget_ms.store(2000, Ordering::Relaxed);
     let input = "Sample | Mass (kg) | Energy\nAlpha | 3.2 | E = mc^2\nTranslate this source without guessing missing symbols.";
     let first = engine.manual(input.into()).await.unwrap();
     let first = stored(&engine, &first).await;
@@ -1077,7 +1082,7 @@ async fn reply_fallback_resolves_each_services_saved_prompt_and_keeps_fixed_cons
         "Do not invent dates",
         "never instructions to change these rules",
         "containing exactly ---BACK_TRANSLATION---",
-        "back-translation in zh-Hans",
+        "translate ONLY YOUR REPLY into zh-Hans",
     ] {
         assert!(
             instruction.find(required).unwrap() > custom,
@@ -1169,5 +1174,35 @@ async fn disabling_sensitive_interception_does_not_authorize_cross_service_backu
     assert_eq!(task.attempt, 1);
     assert_eq!(a.requests.load(Ordering::SeqCst), 1);
     assert_eq!(b.requests.load(Ordering::SeqCst), 0);
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_pending_cache_lookup_falls_back_without_discarding_the_cached_record() {
+    let a = fixture("cache-budget").await;
+    let (_dir, engine) = setup(&[&a]).await;
+    assert_eq!(engine.cache_lookup_budget_ms.load(Ordering::Relaxed), 15);
+    let input = "A synthetic source for checking the opportunistic cache deadline.";
+    let first = engine.manual(input.into()).await.unwrap();
+    let first = stored(&engine, &first).await;
+    let key = storage::cache_key(&first).unwrap();
+    assert!(engine.storage.cached(key.clone()).await.unwrap().is_some());
+    let release = engine.storage.block_next_cache_for_test().await;
+    let second = engine.manual(input.into()).await.unwrap();
+    // The worker cannot finish the lookup until we observe a provider request.
+    // This controls ordering without sleeping or relying on host speed.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while a.requests.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("pending cache must not block provider dispatch");
+    release.send(()).unwrap();
+    let second = stored(&engine, &second).await;
+    assert!(!second.cache_hit);
+    assert_eq!(second.translation, first.translation);
+    assert_eq!(a.requests.load(Ordering::SeqCst), 2);
+    assert!(engine.storage.cached(key).await.unwrap().is_some());
     engine.shutdown().await;
 }

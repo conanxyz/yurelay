@@ -37,7 +37,7 @@ The current workflow produces ad-hoc-signed development builds without Apple not
 
 Accessibility enables selection from other apps; Screen Recording enables screenshots. Typing, pasting and local dictionary lookup do not require those two permissions. They are separate from signing, notarization and Keychain access. After updating a development build, consult Yurelay's permission recovery guide if needed.
 
-Drag the handle below either reading area to adjust its height, or focus it and use the arrow keys. Wide windows keep a 24px inset and fill the available space with aligned source and translation panels. Either handle adjusts both columns together; their shared proportion is saved separately from compact-window heights. Compact windows stack the panels and retain independent adjustments. Expanding Compose reply adds space below without shrinking the reader. Double-click or press Home to restore the default fit; manual proportions survive collapse, retranslation and restart. Long text scrolls inside a manually sized area; the outer window stays unchanged.
+Drag the handle below either reading area to adjust its height, or focus it and use the arrow keys. Wide windows keep a 24px inset and fill the available space with aligned source and translation panels. Either handle adjusts both columns together; their shared proportion is saved separately from compact-window heights. Compact windows stack the panels and retain independent adjustments. Expanding Write / Reply adds space below without shrinking the reader. Double-click or press Home to restore the default fit; manual proportions survive collapse, retranslation and restart. Long text scrolls inside a manually sized area; the outer window stays unchanged.
 
 <a id="workflow"></a>
 
@@ -63,9 +63,9 @@ Use the speaker button at the bottom left of either panel to read with a local s
 
 ### Explain context and compose replies
 
-Select a passage to explicitly generate a contextual explanation. To respond, open Compose reply, describe your intent in your own language and choose Generate reply. The reply uses the current service and source language. Its reference back-translation uses the translation language and starts collapsed; it is an auxiliary paraphrase, not an independent verification.
+Select a passage to explicitly generate a contextual explanation. To respond, open Write / Reply, describe your intent in your own language and choose Generate reply. The result shows Original and Translation directly. Original is the generated reply in the source language using the current service; Translation uses the current translation language. The reply should preserve names, facts and commitments in your reply intent; example answers in the original message are not your identity or intended response. The reference translates the generated reply, not the entire original message.
 
-Explanations and replies can each be stopped, regenerated and revisited in history independently. Copy reply copies only the reply body; it never pastes or sends it automatically. Changing the source or intent marks the old reply as stale until you explicitly regenerate it.
+Explanations and replies can each be stopped, regenerated and revisited in history independently. The copy icon in the top-right of the reply card copies only Original, excluding the translation, labels and history. It never pastes or sends automatically. Changing the source or intent marks the old reply as stale until you explicitly regenerate it.
 
 <a id="vocabulary"></a>
 

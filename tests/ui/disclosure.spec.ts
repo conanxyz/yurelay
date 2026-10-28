@@ -1531,7 +1531,7 @@ test('wide reader aligns both handles, fills fixed window insets, and keeps assi
  await expect.poll(async()=>{const g=await geometry();return Math.abs(g.bottom-24);}).toBeLessThan(2);
  g=await geometry();expect(g.left).toBe(24);expect(g.right).toBe(24);expect(g.aligned).toBeLessThan(1);
  const baseHeight=g.height;
- await page.getByRole('button',{name:'Compose reply',exact:true}).click();
+ await page.getByRole('button',{name:'Write / Reply',exact:true}).click();
  await expect(page.locator('.assistant-drawer')).toBeVisible();
  await expect.poll(async()=>(await geometry()).height).toBe(baseHeight);
  expect((await geometry()).aligned).toBeLessThan(1);

@@ -62,6 +62,18 @@ pub enum SaveOutcome {
 
 impl Storage {
     #[cfg(test)]
+    pub(crate) async fn block_next_cache_for_test(&self) -> std::sync::mpsc::Sender<()> {
+        let (release, wait) = std::sync::mpsc::channel();
+        self.call(move |db| {
+            *db.next_cache_gate.borrow_mut() = Some(wait);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        release
+    }
+
+    #[cfg(test)]
     pub(crate) async fn reject_writes_for_test(&self) {
         self.call(|db| {
             db.connection
@@ -183,6 +195,8 @@ struct Database {
     connection: Connection,
     settings: Settings,
     clock: Clock,
+    #[cfg(test)]
+    next_cache_gate: std::cell::RefCell<Option<std::sync::mpsc::Receiver<()>>>,
 }
 
 fn db_error(_: impl std::fmt::Display) -> String {
@@ -331,6 +345,8 @@ impl Database {
             connection,
             settings,
             clock,
+            #[cfg(test)]
+            next_cache_gate: std::cell::RefCell::new(None),
         };
         db.cleanup()?;
         db.remove_orphans()?;
@@ -447,6 +463,10 @@ impl Database {
     }
 
     fn cached(&self, key: &str) -> Result<Option<Task>, String> {
+        #[cfg(test)]
+        if let Some(wait) = self.next_cache_gate.borrow_mut().take() {
+            let _ = wait.recv();
+        }
         if self.settings.retention == Retention::Disabled {
             return Ok(None);
         }

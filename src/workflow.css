@@ -221,12 +221,10 @@
 .operation-output .reader-tools {
   padding-inline: 0;
 }
-.back-translation,
 .operation-attempts {
   font-size: 12px;
   margin: 10px 0;
 }
-.back-translation summary,
 .operation-attempts summary {
   cursor: pointer;
   color: var(--muted);
@@ -606,4 +604,75 @@
     width: 100%;
     max-width: none;
   }
+}
+
+/* Reply text and its translation share a readable surface; the copy control
+   occupies its own header slot so it never overlaps a line of generated text. */
+.reply-result-card {
+  min-width: 0;
+  padding: 12px 16px 14px;
+  border-radius: 12px;
+  background: var(--panel-tint);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.reply-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  margin-bottom: 4px;
+}
+.reply-result-card h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.reply-result-card .reply-copy {
+  flex: none;
+}
+.reply-translation {
+  margin-top: 14px;
+  padding-top: 14px;
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.reply-pending {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.operation-attempts h4 {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+@media (max-width: 420px) {
+  .reply-result-card {
+    padding: 10px 12px 12px;
+  }
+}
+
+.operation-output .reply-result-card .translation-prose {
+  padding: 8px 0;
+}
+
+.global-prompts .prompt-help {
+  display: block;
+  line-height: 1.6;
+}
+.reply-compose {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.reply-compose > textarea {
+  display: block;
+  margin: 0;
+  font-size: 12px;
+}
+.reply-compose > button {
+  justify-self: start;
 }
