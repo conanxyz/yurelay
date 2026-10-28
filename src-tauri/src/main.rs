@@ -306,6 +306,9 @@ fn main() {
             commands::vocabulary_remove,
             commands::vocabulary_export,
             commands::speak_word,
+            commands::speak_text,
+            commands::speech_status,
+            commands::stop_speech,
             commands::permissions,
             commands::request_permission,
             commands::open_dictionary,
@@ -352,6 +355,7 @@ fn main() {
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => state::show(app, true),
+            tauri::RunEvent::Exit => yurelay_platform::speech::SPEECH.stop(None),
             tauri::RunEvent::ExitRequested { api, .. } => {
                 if state::request_settings_close(app, settings_guard::Intent::Quit) {
                     api.prevent_exit();

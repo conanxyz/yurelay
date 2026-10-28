@@ -16,4 +16,5 @@ pub mod operations;
 pub mod reliability;
 pub mod sensitive;
 pub mod source;
+pub mod speech;
 pub mod vocabulary;

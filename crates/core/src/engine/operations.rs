@@ -436,8 +436,8 @@ impl Engine {
                         .map(|prepared| prepared.instruction)
                         .map_err(provider::Error::Configuration)
                 });
-            let result = if let Some(error) = dispatch.credential_error {
-                Err(provider::Error::Configuration(error))
+            let result = if let Some(error) = &dispatch.credential_error {
+                Err(provider::Error::Configuration(error.clone()))
             } else if let Ok(attempt_instruction) = attempt_instruction {
                 match tokio::time::timeout_at(
                     budget.deadline,
@@ -490,6 +490,24 @@ impl Engine {
             let has_primary = !current.primary_text.trim().is_empty();
             match result {
                 Ok(_) if has_primary => {
+                    let needs_reference =
+                        prepared.back_translation && current.back_translation.trim().is_empty();
+                    let recovery = if needs_reference {
+                        self.recover_reply_translation(
+                            &current,
+                            &dispatch,
+                            &prepared.reference_language,
+                            budget.deadline,
+                            &cancel,
+                        )
+                        .await
+                    } else {
+                        Ok(())
+                    };
+                    if cancel.is_cancelled() {
+                        self.operations.cancel(&record.id, self.now());
+                        break;
+                    }
                     self.operations
                         .change(&record.id, record.attempt, self.now(), |r| {
                             if !r.status.active() {
@@ -498,12 +516,19 @@ impl Engine {
                             r.status = OperationStatus::Completed;
                             r.back_translation_state = if !prepared.back_translation {
                                 BackTranslationState::None
-                            } else if boundary && !r.back_translation.trim().is_empty() {
+                            } else if (boundary || needs_reference)
+                                && !r.back_translation.trim().is_empty()
+                                && recovery.is_ok()
+                            {
                                 BackTranslationState::Complete
                             } else {
                                 BackTranslationState::Failed
                             };
-                            if prepared.back_translation
+                            if let Err(error) = &recovery {
+                                r.failure =
+                                    Some(crate::reliability::FailureSummary::from_error(error));
+                                r.error = Some("回复已生成，译文补全未成功。".into());
+                            } else if prepared.back_translation
                                 && r.back_translation_state == BackTranslationState::Failed
                             {
                                 r.error = Some("回复已生成，未获得完整回译参考。".into());
@@ -597,6 +622,70 @@ impl Engine {
                 });
         }
         self.persist_operation(&record.id).await;
+    }
+
+    /// Recover once after a successful stream omitted its translation. Share
+    /// the operation's deadline and auxiliary limit, retaining the visible body.
+    async fn recover_reply_translation(
+        &self,
+        record: &OperationRecord,
+        dispatch: &DispatchProfile,
+        language: &str,
+        deadline: tokio::time::Instant,
+        cancel: &CancellationToken,
+    ) -> Result<(), provider::Error> {
+        let (input, instruction) =
+            crate::operations::prepare_reply_translation(&record.primary_text, language)
+                .map_err(provider::Error::Configuration)?;
+        if !self
+            .operations
+            .append(&record.id, record.attempt, "", "", true, self.now())
+            .map_err(provider::Error::Protocol)?
+        {
+            return Err(provider::Error::Cancelled);
+        }
+        let _permit = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(provider::Error::Cancelled),
+            permit = tokio::time::timeout_at(deadline, self.metadata_permits.clone().acquire_owned()) => {
+                permit.map_err(|_| provider::Error::Timeout)?
+                    .map_err(|_| provider::Error::Cancelled)?
+            }
+        };
+        tokio::time::timeout_at(
+            deadline,
+            self.client.generate(
+                &dispatch.profile,
+                dispatch.key.as_str(),
+                provider::GenerationRequest {
+                    input: &input,
+                    instruction: &instruction,
+                },
+                cancel.clone(),
+                |part, _| match self.operations.append(
+                    &record.id,
+                    record.attempt,
+                    "",
+                    part,
+                    false,
+                    self.now(),
+                ) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(provider::Error::Cancelled),
+                    Err(error) => Err(provider::Error::Protocol(error)),
+                },
+            ),
+        )
+        .await
+        .map_err(|_| provider::Error::Timeout)??;
+        if self
+            .operations
+            .get(&record.id)
+            .is_none_or(|r| r.attempt != record.attempt || r.back_translation.trim().is_empty())
+        {
+            return Err(provider::Error::Empty);
+        }
+        Ok(())
     }
 
     pub async fn cancel_operation(&self, id: &str) -> Result<(), String> {

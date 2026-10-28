@@ -1290,3 +1290,27 @@ test('reply shows original and translation directly with one copy icon safely in
  await page.evaluate(()=>(window as any).progress({status:'blocked',primary_text:'Blocked synthetic content',back_translation:'Blocked synthetic translation',sensitive:'API_SECRET'}));
  await expect(page.locator('.reply-result-card')).toHaveCount(0);await expect(page.locator('.operation-output')).not.toContainText('Blocked synthetic content');await expect(page.getByRole('button',{name:'复制回复',exact:true})).toHaveCount(0);
 });
+
+test('reply translation failure is separated from the result card and preserves copying',async({page},testInfo)=>{
+ await setup(page);
+ await page.getByRole('button',{name:'Write / Reply',exact:true}).click();
+ await page.getByRole('textbox',{name:'Reply intent'}).fill('Thank them.');
+ await page.getByRole('button',{name:'Generate reply',exact:true}).click();
+ await page.evaluate(()=>(window as any).progress({status:'completed',primary_text:'Thanks, I appreciate it.',back_translation:'',back_translation_state:'failed',error:'回复已生成，未获得完整回译参考。'}));
+ const output=page.getByRole('region',{name:'Generated reply'});
+ await expect(output.getByRole('alert')).toBeVisible();
+ await expect(output.getByRole('button',{name:'Copy reply',exact:true})).toBeEnabled();
+ for (const [width,theme] of [[360,'light'],[1100,'dark']] as const) {
+  await page.setViewportSize({width,height:900});
+  await page.evaluate(theme=>{const w=window as any;w.settings.ui_language='zh';w.settings.theme=theme;w.emit('configuration-changed',structuredClone(w.settings));},theme);
+  const card=page.locator('.operation-output');
+  await expect(page.locator('html')).toHaveAttribute('data-theme',theme);
+  const gap=await card.evaluate(el=>el.querySelector('.inline-feedback')!.getBoundingClientRect().top-el.querySelector('.reply-result-card')!.getBoundingClientRect().bottom);
+  expect(gap).toBeGreaterThanOrEqual(12);
+  await page.evaluate(()=>(window as any).progress({error:'回复已生成，译文补全未成功。'}));
+  await expect(card.getByRole('alert')).toContainText('可重新生成回复');
+  await expect(card.getByRole('button',{name:'复制回复',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await card.screenshot({path:testInfo.outputPath(`translation-feedback-${theme}.png`)});
+ }
+});

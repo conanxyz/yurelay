@@ -594,3 +594,171 @@ async fn reply_marker_with_markdown_spacing_is_reference_not_visible_body() {
     assert_eq!(count.load(Ordering::SeqCst), 1);
     engine.shutdown().await;
 }
+
+async fn missing_reference_fixture(
+    root: PathBuf,
+    reference_status: u16,
+    reference_delay_ms: u64,
+) -> (Arc<Engine>, Arc<Mutex<Vec<serde_json::Value>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                let body = loop {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    bytes.extend_from_slice(&chunk[..n]);
+                    if let Some(at) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..at]);
+                        let size: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if bytes.len() >= at + 4 + size {
+                            break serde_json::from_slice::<serde_json::Value>(
+                                &bytes[at + 4..at + 4 + size],
+                            )
+                            .unwrap();
+                        }
+                    }
+                };
+                let index = {
+                    let mut requests = seen.lock().unwrap();
+                    requests.push(body);
+                    requests.len() - 1
+                };
+                let status = if index == 0 { 200 } else { reference_status };
+                if index > 0 {
+                    tokio::time::sleep(Duration::from_millis(reference_delay_ms)).await;
+                }
+                if status != 200 {
+                    let _=socket.write_all(format!("HTTP/1.1 {status} Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await;
+                    return;
+                }
+                let content = if index == 0 {
+                    "Thanks, I appreciate it."
+                } else {
+                    "谢谢，我很感激。"
+                };
+                let event = serde_json::json!({"choices":[{"delta":{"content":content},"finish_reason":null}]});
+                let wire = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {event}\n\ndata: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n"
+                );
+                let _ = socket.write_all(wire.as_bytes()).await;
+            });
+        }
+    });
+    let engine = Engine::open(root, Arc::new(EmptyCredentials), storage::system_clock())
+        .await
+        .unwrap();
+    let mut settings = engine.configuration().await.settings;
+    settings.profiles[0].endpoint = format!("http://{address}/v1");
+    settings.profiles[0].model = "synthetic-model".into();
+    engine
+        .save_configuration(settings, BTreeMap::new())
+        .await
+        .unwrap();
+    (engine, requests)
+}
+
+#[tokio::test]
+async fn missing_reply_translation_recovers_once_without_rewriting_the_reply() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, requests) = missing_reference_fixture(root.path().into(), 200, 0).await;
+    let record = engine
+        .submit_operation(request(OperationKind::Reply))
+        .await
+        .unwrap();
+    let done = until(&engine, &record.id, |r| !r.status.active()).await;
+    assert_eq!(done.primary_text, "Thanks, I appreciate it.");
+    assert_eq!(done.back_translation, "谢谢，我很感激。");
+    assert_eq!(done.back_translation_state, BackTranslationState::Complete);
+    assert!(done.error.is_none());
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let recovery = serde_json::from_str::<serde_json::Value>(
+        requests[1]["messages"][1]["content"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        recovery,
+        serde_json::json!({"reply":"Thanks, I appreciate it."})
+    );
+    assert!(
+        !requests[1]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Compose a reply")
+    );
+}
+
+#[tokio::test]
+async fn failed_reply_translation_recovery_preserves_body_and_does_not_loop() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, requests) = missing_reference_fixture(root.path().into(), 503, 0).await;
+    let record = engine
+        .submit_operation(request(OperationKind::Reply))
+        .await
+        .unwrap();
+    let done = until(&engine, &record.id, |r| !r.status.active()).await;
+    assert_eq!(done.status, OperationStatus::Completed);
+    assert_eq!(done.primary_text, "Thanks, I appreciate it.");
+    assert!(done.back_translation.is_empty());
+    assert_eq!(done.back_translation_state, BackTranslationState::Failed);
+    assert_eq!(done.error.as_deref(), Some("回复已生成，译文补全未成功。"));
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn stopping_reply_translation_recovery_rejects_late_text() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, requests) = missing_reference_fixture(root.path().into(), 200, 200).await;
+    let record = engine
+        .submit_operation(request(OperationKind::Reply))
+        .await
+        .unwrap();
+    until(&engine, &record.id, |r| {
+        r.back_translation_state == BackTranslationState::Pending
+    })
+    .await;
+    assert_eq!(
+        engine.operations.get(&record.id).unwrap().primary_text,
+        "Thanks, I appreciate it."
+    );
+    engine.cancel_operation(&record.id).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let stopped = engine.operations.get(&record.id).unwrap();
+    assert_eq!(stopped.status, OperationStatus::Stopped);
+    assert_eq!(stopped.primary_text, "Thanks, I appreciate it.");
+    assert!(stopped.back_translation.is_empty());
+    assert_eq!(
+        stopped.back_translation_state,
+        BackTranslationState::Cancelled
+    );
+    assert!(requests.lock().unwrap().len() <= 2);
+}
+
+#[tokio::test]
+async fn reply_without_requested_translation_never_starts_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, requests) = missing_reference_fixture(root.path().into(), 200, 0).await;
+    let mut request = request(OperationKind::Reply);
+    request.include_back_translation = false;
+    let record = engine.submit_operation(request).await.unwrap();
+    let done = until(&engine, &record.id, |r| !r.status.active()).await;
+    assert_eq!(done.primary_text, "Thanks, I appreciate it.");
+    assert_eq!(done.back_translation_state, BackTranslationState::None);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}

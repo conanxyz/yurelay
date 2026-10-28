@@ -61,7 +61,10 @@ notices; do not submit code you are not permitted to distribute.
 Start a release from **Actions → Release → Run workflow** on `main`, with a `tag`
 input such as `v0.1.0` matching npm, Cargo and Tauri. You can first save a release
 draft with your own title, notes and prerelease flag, or let the workflow create a
-prerelease draft. Saving a draft alone does not start a build. Do not click
+draft for a stable release. New releases default to stable and are explicitly set
+as **Latest** when published. To publish a preview, mark the draft as
+**Pre-release** before starting the workflow; previews are not set as Latest.
+Saving a draft alone does not start a build. Do not click
 **Publish release** to start packaging: that button immediately exposes the page.
 
 The workflow runs CI, creates or reuses a private draft pinned to the checked
@@ -74,9 +77,15 @@ archives from the draft, then publishes exactly those three attachments. A retry
 can recover from an interrupted cleanup using the combined manifest. Build
 failure, cancellation, missing assets, checksum errors or a changed source target
 leave the draft unpublished. Existing titles, notes
-and prerelease choices are preserved; early releases should remain **Pre-release**.
+and explicit prerelease choices are preserved.
 GitHub also adds its own source-code ZIP/tarball download links after publication;
 those are separate from the three uploaded attachments.
+
+Use English for release titles and notes. Keep the release title concise, such as
+`Yurelay v0.1.1`, and put the descriptive heading (for example, `Onboarding and
+window improvements`) in the release body, followed by changes, download choices,
+verification and known limitations. Stable release notes must not label the
+release as a preview.
 
 Pushing a matching `vX.Y.Z` tag also starts this build-then-publish flow. Merge
 workflow changes into `main` before creating the tag, so the workflow exists in

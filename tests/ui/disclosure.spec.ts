@@ -76,6 +76,14 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
           return structuredClone(w.words.filter((item:any)=>keys.has(item.word.toLowerCase())));
         }
         if(cmd==='speech_voices')return structuredClone(w.speechVoices);
+        if(cmd==='speak_text') {
+          if(w.failSpeech) throw 'Synthetic speech failure';
+          if(w.deferSpeech) await new Promise(resolve=>w.releaseSpeech=resolve);
+          w.speakingId=args.requestId;return null;
+        }
+        if(cmd==='speech_status')return w.speakingId===args.requestId;
+        if(cmd==='stop_speech'){if(w.speakingId===args.requestId)w.speakingId=null;return null;}
+
         if(cmd==='vocabulary_preview'){
           const word=args.sourceText.slice(args.selectionStart,args.selectionEnd).trim();
           const result=w.previewResults[word] ?? {candidate:{word:word.toLowerCase(),surface:word,phonetic:'',pos:'n.',dict_meaning:'Synthetic local definition',context_meaning:'',context_sentence:args.sourceText,sentence_trans:'',difficulty:''},translation_highlights:[]};
@@ -786,7 +794,6 @@ async function selectSourceWord(page: Page, word: string) {
 for (const [source, language, word] of [
   ['Bonjour tout le monde.', 'fr', 'Bonjour'],
   ['这是包含 API 的中文原文。', 'zh-Hans', 'API'],
-  ['Ambiguous', null, 'Ambiguous'],
 ] as const) {
   test(`non-English or unknown source ${language} does not offer vocabulary`, async ({ page }) => {
     await fixture(page);
@@ -1569,4 +1576,124 @@ test('pin waits for the initial native state before accepting a toggle',async({p
  await page.evaluate(()=>(window as any).releaseBootstrap());await expect(pin).toBeEnabled();
  await pin.click();await expect(page.getByRole('button',{name:'Unpin',exact:true})).toHaveAttribute('aria-pressed','true');
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='pin_window').length)).toBe(1);
+});
+
+for (const language of [null, 'en']) {
+  test(`a standalone source word opens a dictionary preview with detected language ${language}`, async ({page}) => {
+    await fixture(page);
+    await page.evaluate(language => {
+      const w=window as any; w.detectedLanguage=language;
+      Object.assign(w.task,{original_text:'Analytics',detected_language:language,status:'completed',translation:'分析',revision:2, vocabulary:language===null?[{word:'stale',surface:'stale',context_sentence:'Unrelated source.'}]:[]});
+      w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:2},selected:w.task.id});
+    },language);
+    const source=page.getByRole('textbox',{name:'Source reading',exact:true});
+    await expect(source).toHaveText('Analytics');
+    if(language===null) await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
+    await source.click({position:{x:30,y:12}});
+    await expect.poll(()=>previewRequests(page),{timeout:2000}).toHaveLength(1);
+    await expect(page.locator('.vocabulary-sidebar')).toBeVisible();
+    await expect(page.getByRole('button',{name:'Add',exact:true})).toBeEnabled();
+    expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_collect'))).toEqual([]);
+  });
+}
+
+const speechCalls = (page: Page, cmd: string) => page.evaluate(cmd => (window as any).calls.filter((c:any)=>c.cmd===cmd), cmd);
+
+test('source and translation read aloud independently of dictionary and stop when switched', async ({page}) => {
+  await fixture(page);
+  await expect(page.locator('.vocabulary-sidebar')).toHaveCount(0);
+  const source=page.getByRole('button',{name:'Read source aloud',exact:true});
+  await source.focus();await page.keyboard.press('Enter');
+  await expect(page.getByRole('button',{name:'Stop reading source',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect.poll(()=>speechCalls(page,'speak_text')).toHaveLength(1);
+  expect((await speechCalls(page,'speak_text'))[0].args.text).toBe('Selected model is at capacity. Please try a different model.');
+  await complete(page);
+  await page.locator('.disclosure-control').click();
+  await page.evaluate(()=>{const w=window as any;w.task.translation='**分析**与[说明](https://example.com)';w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+  await page.getByRole('button',{name:'Read translation aloud',exact:true}).click();
+  await expect.poll(()=>speechCalls(page,'speak_text')).toHaveLength(2);
+  expect((await speechCalls(page,'speak_text'))[1].args).toMatchObject({text:'分析与说明',language:'zh-Hans'});
+  await expect(source).toBeEnabled();
+  expect((await speechCalls(page,'stop_speech'))[0].args.requestId).toBe((await speechCalls(page,'speak_text'))[0].args.requestId);
+  await page.getByRole('button',{name:'Stop reading translation',exact:true}).click();
+  await expect.poll(()=>speechCalls(page,'stop_speech')).toHaveLength(2);
+  await expect(page.getByRole('button',{name:'Read translation aloud',exact:true})).toHaveAttribute('aria-pressed','false');
+  expect(await previewRequests(page)).toEqual([]);
+});
+
+test('stopping during native startup cannot leave speech running', async ({page}) => {
+  await fixture(page);
+  await page.evaluate(()=>{(window as any).deferSpeech=true;});
+  await page.getByRole('button',{name:'Read source aloud',exact:true}).click();
+  await expect.poll(()=>speechCalls(page,'speak_text')).toHaveLength(1);
+  await page.getByRole('button',{name:'Stop reading source',exact:true}).click();
+  await page.evaluate(()=>{(window as any).releaseSpeech();});
+  await expect.poll(()=>speechCalls(page,'stop_speech')).toHaveLength(1);
+  await expect.poll(()=>page.evaluate(()=>(window as any).speakingId)).toBe(null);
+});
+
+test('changing source stops speech and native failure is retryable', async ({page}) => {
+  await fixture(page);
+  await page.getByRole('button',{name:'Read source aloud',exact:true}).click();
+  await expect.poll(()=>speechCalls(page,'speak_text')).toHaveLength(1);
+  await (await editableSource(page)).fill('A new synthetic sentence.');
+  await expect.poll(()=>speechCalls(page,'stop_speech')).toHaveLength(1);
+  await page.evaluate(()=>{(window as any).failSpeech=true;});
+  await page.getByRole('button',{name:'Read source aloud',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Could not read aloud');
+  await page.evaluate(()=>{(window as any).failSpeech=false;});
+  await page.getByRole('button',{name:'Read source aloud',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Stop reading source',exact:true})).toBeEnabled();
+  await page.evaluate(()=>{(window as any).speakingId=null;});
+  await expect(page.getByRole('button',{name:'Read source aloud',exact:true})).toBeEnabled();
+});
+
+for (const [width, theme] of [[360, 'light'], [1100, 'dark']] as const) {
+  test(`read aloud controls stay inside their panels at ${width}px in ${theme} mode`, async ({page}, testInfo) => {
+    await page.setViewportSize({width,height:760});
+    await fixture(page);
+    await page.evaluate(theme=>{
+      const w=window as any;w.settings.theme=theme;w.detectedLanguage=null;
+      Object.assign(w.task,{original_text:'Analytics',detected_language:null,status:'completed',translation:'分析',revision:2});
+      w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:2},selected:w.task.id});
+      w.emit('configuration-changed',w.settings);
+    },theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme',theme);
+    await page.locator('.disclosure-control').click();
+    for (const [name,panel] of [['Read source aloud','.source-panel'],['Read translation aloud','.translation-body']]) {
+      const button=page.getByRole('button',{name,exact:true});
+      await expect(button).toBeVisible();
+      // ResizeObserver may adjust the paired row between separate protocol calls.
+      // Measure the control and its panel in one layout snapshot.
+      const {control,bounds}=await button.evaluate((el,selector)=>({
+        control:el.getBoundingClientRect().toJSON(),
+        bounds:el.closest(selector)!.getBoundingClientRect().toJSON(),
+      }),panel);
+      expect(control.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(control.x+control.width).toBeLessThanOrEqual(bounds.x+bounds.width);
+      expect(control.y+control.height).toBeLessThanOrEqual(bounds.y+bounds.height);
+    }
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath('read-aloud.png'),fullPage:true});
+  });
+}
+
+
+test('explicit collection saves an uncertain technical word without a dictionary definition', async ({page}) => {
+  await fixture(page);
+  await page.evaluate(()=>{
+    const w=window as any;w.detectedLanguage=null;
+    Object.assign(w.task,{original_text:'moka-runtime-analysis',detected_language:null,status:'completed',translation:'运行时分析',revision:2});
+    w.previewResults.moka={candidate:{word:'moka',surface:'moka',phonetic:'',pos:'',dict_meaning:'',context_meaning:'',context_sentence:'moka-runtime-analysis',sentence_trans:'',difficulty:''},translation_highlights:[]};
+    w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:2},selected:w.task.id});
+  });
+  await selectSourceWord(page,'moka');
+  const card=page.locator('.vocabulary-side-card[data-word="moka"]');
+  await expect(card).toBeVisible();
+  const add=card.getByRole('button',{name:'Add',exact:true});
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(card.getByRole('button',{name:'Saved (×1)',exact:true})).toBeDisabled();
+  expect(await page.evaluate(()=>(window as any).words[0])).toMatchObject({word:'moka',dict_meaning:'',review_count:1});
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_collect'))).toHaveLength(1);
 });
