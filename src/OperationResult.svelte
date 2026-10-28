@@ -49,6 +49,11 @@
   });
   function operationError(value: string) {
     if (operation.kind === "reply") {
+      if (value === "回复已生成，译文补全未成功。")
+        return t(
+          "回复原文已保留，译文补全未成功。可重新生成回复。",
+          "The original reply is retained, but translation recovery failed. Regenerate the reply to try again.",
+        );
       if (value === "回复已生成，未获得完整回译参考。")
         return t(
           "回复原文已生成，译文未完成。",

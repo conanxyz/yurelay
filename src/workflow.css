@@ -3,6 +3,9 @@
 .assistant-entrypoints,
 .workflow-actions,
 .workflow-fields,
+.operation-output > .inline-feedback {
+  margin: 12px 0 0;
+}
 .operation-meta {
   display: flex;
   align-items: center;
