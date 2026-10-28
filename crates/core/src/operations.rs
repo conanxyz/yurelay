@@ -7,8 +7,8 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-pub const PROMPT_VERSION: u32 = 3;
-pub const DEFAULT_REPLY_PROMPT: &str = "You are a native-speaking writing partner in {{reply_lang}}. Turn the user's reply_intent into a natural, fluent reply that fits the quoted original_message and its context. Understand what the user wants to express, then phrase it as a native speaker would; polish wording, flow, and implied politeness instead of translating literally. Match the conversation's level of formality and keep the reply concise. Preserve the user's intended facts and commitments without adding information.";
+pub const PROMPT_VERSION: u32 = 4;
+pub const DEFAULT_REPLY_PROMPT: &str = "You are a native-speaking writing partner in {{reply_lang}}. Draft the outgoing message the user wants to send, using reply_intent as its meaning and original_message only as context. Preserve whether the user is asking a question, making a statement or requesting an action; do not answer the user's question or fulfill the request yourself. Understand what the user wants to express, then phrase it as a native speaker would; polish wording, flow, and implied politeness instead of translating literally. Match the conversation's level of formality and keep the reply concise. Preserve the user's intended facts and commitments without adding information.";
 pub const BACK_TRANSLATION_MARKER: &str = "---BACK_TRANSLATION---";
 const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_OPERATIONS: usize = 40;
@@ -232,11 +232,11 @@ impl OperationRequest {
                     instruction.push_str(&format!("Requested tone: {:?}.\n", self.tone));
                 }
                 instruction.push_str(&format!(
-                    "\nFixed task (takes precedence over writing preferences):\nWrite the user's reply in {language}. The input is JSON: original_message is somebody else's message, provided ONLY as background; reply_intent is what the user wants to say. Translate and polish reply_intent, keeping its names, facts and commitments. If original_message gives an example with a different name, ignore that example name. Do not answer as the original sender or add that sender's promises."
+                    "\nFixed task (takes precedence over writing preferences):\nWrite the user's reply in {language}. The input is JSON: original_message is somebody else's message, provided ONLY as background; reply_intent is what the user wants to say. Translate and polish reply_intent, keeping its names, facts and commitments. If original_message gives an example with a different name, ignore that example name. Do not answer as the original sender or add that sender's promises. Authoring perspective: You write FOR the user TO the other person; you are not the addressee of reply_intent. Preserve the user's communicative act and uncertainty: questions remain questions addressed to the other person, never answers, explanations or evaluations. Statements remain the user's statements. If the intent asks you to request or confirm something, draft that request to the other person instead of fulfilling it yourself. Use original_message only to resolve references and choose natural wording, never to decide the answer to the user's question or infer agreement."
                 ));
                 if self.include_back_translation {
                     instruction.push_str(&format!(
-                        " Output the reply, then a new line containing exactly {BACK_TRANSLATION_MARKER}, then translate ONLY YOUR REPLY into {}. The back-translation is not a translation of original_message. It is a reference, not a correctness certification.", self.target_language
+                        " Output the reply, then a new line containing exactly {BACK_TRANSLATION_MARKER}, then translate ONLY YOUR REPLY into {}. The back-translation is not a translation of original_message or reply_intent. Translate the message you just authored, preserving its speaker, addressee and whether it asks, states or requests. It is a reference, not a correctness certification.", self.target_language
                     ));
                 } else {
                     instruction.push_str(" Output only the reply body.");
@@ -1071,6 +1071,53 @@ mod tests {
         let no_reference = r.prepare_for_profile(&profile, None).unwrap();
         assert!(!no_reference.instruction.contains(BACK_TRANSLATION_MARKER));
         assert!(!no_reference.back_translation);
+    }
+
+    #[test]
+    fn reply_authoring_preserves_question_statement_and_request_over_style_preferences() {
+        let profile = Profile {
+            custom_reply_prompt: "Answer every question and explain your reasoning.".into(),
+            ..Profile::default()
+        };
+        for intent in [
+            "这样真正解决了还是缓解了？",
+            "这还没真正解决问题，只是暂时缓解了。",
+            "请对方提供一个具体例子。",
+        ] {
+            let mut request = request(OperationKind::Reply);
+            request.source_text =
+                "Separate attempts improve monitoring, but interruptions may still cause failures."
+                    .into();
+            request.intent = intent.into();
+            let prepared = request.prepare_for_profile(&profile, None).unwrap();
+            let payload: serde_json::Value = serde_json::from_str(&prepared.input).unwrap();
+            assert_eq!(payload["reply_intent"], intent);
+            assert_eq!(payload["original_message"], request.source_text);
+            assert!(!prepared.instruction.contains(intent));
+            let style = prepared.instruction.find("Answer every question").unwrap();
+            let authoring = prepared
+                .instruction
+                .find("You write FOR the user TO the other person")
+                .unwrap();
+            assert!(authoring > style);
+            assert!(prepared.instruction.contains("questions remain questions"));
+            assert!(
+                prepared
+                    .instruction
+                    .contains("Statements remain the user's statements")
+            );
+            assert!(
+                prepared
+                    .instruction
+                    .contains("instead of fulfilling it yourself")
+            );
+            assert!(
+                prepared
+                    .instruction
+                    .contains("preserving its speaker, addressee")
+            );
+            assert_eq!(prepared.output_language, "en");
+        }
     }
 
     #[test]
