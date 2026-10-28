@@ -1663,7 +1663,12 @@ for (const [width, theme] of [[360, 'light'], [1100, 'dark']] as const) {
     for (const [name,panel] of [['Read source aloud','.source-panel'],['Read translation aloud','.translation-body']]) {
       const button=page.getByRole('button',{name,exact:true});
       await expect(button).toBeVisible();
-      const control=(await button.boundingBox())!,bounds=(await page.locator(panel).boundingBox())!;
+      // ResizeObserver may adjust the paired row between separate protocol calls.
+      // Measure the control and its panel in one layout snapshot.
+      const {control,bounds}=await button.evaluate((el,selector)=>({
+        control:el.getBoundingClientRect().toJSON(),
+        bounds:el.closest(selector)!.getBoundingClientRect().toJSON(),
+      }),panel);
       expect(control.x).toBeGreaterThanOrEqual(bounds.x);
       expect(control.x+control.width).toBeLessThanOrEqual(bounds.x+bounds.width);
       expect(control.y+control.height).toBeLessThanOrEqual(bounds.y+bounds.height);
