@@ -57,6 +57,10 @@ Switching apps hides the result window by default; disable this in Appearance se
 - **Clean up line breaks:** Conservative PDF line-break cleanup runs locally after capture by default. Undo is available when the text changed; this is not grammar correction or arbitrary rewriting.
 - **Read tables and formulas:** Apply a conservative table layout when OCR coordinates support it and compare the original image. Formulas render locally with a plain-source fallback. The optional structure setting asks the model to preserve columns, numbers, units and recognizable formulas; it cannot recover symbols missed by OCR.
 
+### Read source and translation aloud
+
+Use the speaker button at the bottom left of either panel to read with a local system voice, without waiting for dictionary results or vocabulary suggestions. Click again to stop; starting the other panel stops the previous passage. Translation playback uses readable text. Language availability depends on installed macOS voices.
+
 ### Explain context and compose replies
 
 Select a passage to explicitly generate a contextual explanation. To respond, open Compose reply, describe your intent in your own language and choose Generate reply. The reply uses the current service and source language. Its reference back-translation uses the translation language and starts collapsed; it is an auxiliary paraphrase, not an independent verification.
@@ -70,6 +74,8 @@ Explanations and replies can each be stopped, regenerated and revisited in histo
 **Looking up a word?** Set **macOS system dictionary** as the default in Settings → Services to query enabled local dictionaries without an API key. With a model service selected, Yurelay chooses dictionary or passage instructions based on the input.
 
 For a sentence or paragraph, the system dictionary offers configured translation services for the current query. Choose one, then press `D` / `S` or click Translate / Look up to translate; your default service stays the same.
+
+Short words such as `Analytics` may leave automatic language detection uncertain. You can still click for a local dictionary preview. Click Add to save the chosen word even when its language is uncertain or no dictionary definition is available. Lookup alone never collects it.
 
 **Want to remember an expression?** Click or select an English source word for native lemmatization and a dictionary preview, then click **Add**. You can also collect words suggested by the model.
 

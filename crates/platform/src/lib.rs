@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 mod language;
 pub use language::{OcrBlock, OcrLayout, TokenRange, token_ranges};
 mod pronunciation;
+pub mod speech;
 pub use pronunciation::{
     DictionaryDetails, SpeechVoice, lookup_dictionary_details, speak_word, speech_voices,
 };

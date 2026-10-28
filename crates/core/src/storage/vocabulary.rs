@@ -444,6 +444,36 @@ mod tests {
         assert_eq!(reopened.vocabulary().await.unwrap()[0].word, "OAuth2");
     }
     #[tokio::test]
+    async fn explicitly_collected_technical_word_without_definition_survives_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = Storage::open(root.path().into(), system_clock())
+            .await
+            .unwrap();
+        let source = "moka-runtime-analysis";
+        let mut candidate = Candidate {
+            word: "moka".into(),
+            surface: "moka".into(),
+            context_sentence: source.into(),
+            ..Default::default()
+        };
+        candidate.validate_manual_source(source).unwrap();
+        let first = storage.collect_word(candidate.clone()).await.unwrap();
+        let duplicate = storage.collect_word(candidate).await.unwrap();
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(duplicate.review_count, 1);
+        storage.flush().await.unwrap();
+        drop(storage);
+        let reopened = Storage::open(root.path().into(), system_clock())
+            .await
+            .unwrap();
+        let words = reopened.vocabulary().await.unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "moka");
+        assert!(words[0].dict_meaning.is_empty());
+        assert_eq!(words[0].contexts[0].context_sentence, source);
+    }
+
+    #[tokio::test]
     async fn merge_contexts_reopen_update_and_export() {
         let temp = tempfile::tempdir().unwrap();
         let db = Storage::open(temp.path().into(), system_clock())

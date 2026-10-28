@@ -16,7 +16,6 @@
     open,
     onToggle,
     sourceText,
-    sourceLanguage,
     activeWord = "",
   }: {
     candidates: VocabularyCandidate[];
@@ -24,7 +23,6 @@
     open: boolean;
     onToggle: () => void;
     sourceText: string;
-    sourceLanguage: string;
     activeWord?: string;
   } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
@@ -189,7 +187,6 @@
       const item = await invoke<VocabularyItem>("vocabulary_collect", {
         candidate: c,
         sourceText,
-        sourceLanguage: sourceLanguage || null,
       });
       sequence++;
       items = [...items.filter((i) => i.id !== item.id), item];

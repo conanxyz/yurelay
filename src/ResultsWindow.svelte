@@ -224,7 +224,7 @@
     explanationSelection = { start, end };
     const word = draft.slice(start, end).trim();
     if (
-      vocabularyEligible &&
+      previewEligible &&
       word &&
       word.length <= 128 &&
       word.split(/\s+/u).length <= 3
@@ -242,6 +242,7 @@
       requestPreview(request, true);
     }
   }
+  import ReadAloud from "./ReadAloud.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import VocabularySidebar from "./VocabularySidebar.svelte";
   import TranslationContent from "./TranslationContent.svelte";
@@ -358,17 +359,19 @@
       !(localDictionary && (dictionaryPending || dictionaryGuidance?.issue)),
   );
   // UI affordance only; preview and collection are validated again in core.
-  let vocabularyEligible = $derived(
-    (
-      sourceLanguage ||
+  const resolvedSourceLanguage = $derived(
+    sourceLanguage ||
       detected ||
       (draft === (current?.edited_text ?? current?.original_text)
         ? current?.detected_language
         : "") ||
-      ""
-    )
-      .toLowerCase()
-      .split(/[-_]/)[0] === "en",
+      "",
+  );
+  const vocabularyEligible = $derived(
+    resolvedSourceLanguage.toLowerCase().split(/[-_]/)[0] === "en",
+  );
+  const previewEligible = $derived(
+    vocabularyEligible || !resolvedSourceLanguage,
   );
   let sourceProcessing = $derived(
     !!current &&
@@ -551,9 +554,9 @@
   );
   const previewCache = new Map<string, VocabularyPreview>();
   const visibleCandidates = $derived.by(() => {
-    if (!vocabularyEligible) return [];
+    if (!previewEligible) return [];
     const automatic =
-      showResult && current?.status === "completed"
+      vocabularyEligible && showResult && current?.status === "completed"
         ? (current.vocabulary ?? [])
         : [];
     const seen = new Set<string>();
@@ -578,7 +581,7 @@
       : [],
   );
   $effect(() => {
-    const scope = `${current?.id ?? "draft"}:${current?.attempt ?? 0}:${draft}:${sourceLanguage}:${vocabularyEligible}`;
+    const scope = `${current?.id ?? "draft"}:${current?.attempt ?? 0}:${draft}:${sourceLanguage}:${resolvedSourceLanguage}`;
     untrack(() => {
       if (scope !== selectionScope) {
         selectionScope = scope;
@@ -754,7 +757,7 @@
       : null;
     explanationSelection = explicitRange;
     if (
-      !vocabularyEligible ||
+      !previewEligible ||
       !word ||
       word.length > 128 ||
       word.split(/\s+/u).length > 3 ||
@@ -848,7 +851,7 @@
     }
   }
   function selectWordAtCaret(event: MouseEvent) {
-    if (event.button !== 0 || !vocabularyEligible) return;
+    if (event.button !== 0 || !previewEligible) return;
     const el = event.currentTarget as HTMLTextAreaElement;
     if (el.selectionStart === el.selectionEnd) {
       const caret = el.selectionStart;
@@ -1216,7 +1219,6 @@
         {activeWord}
         {locale}
         sourceText={draft}
-        {sourceLanguage}
         open={sidebarWidth > 40}
         onToggle={() => {
           vocabularyOpen = !vocabularyOpen;
@@ -1495,6 +1497,14 @@
                     </div>{/if}
                 </div>{/if}
             </ResizableReading>
+            <ReadAloud
+              text={draft}
+              language={resolvedSourceLanguage || null}
+              {locale}
+              kind="source"
+              identity={`${current?.id ?? "draft"}:${current?.attempt ?? 0}:${draft}:${sourceLanguage}`}
+              disabled={sourceProcessing}
+            />
           {/if}
           {#if current?.image_error}<p class="inline-feedback">
               {errorText(current.image_error, locale)}
@@ -1752,6 +1762,17 @@
                       : t("尚无译文，可重试", "No translation yet. Try again.")}
                   </p>{/if}
               </ResizableReading>
+              <ReadAloud
+                text={current?.translation ?? ""}
+                markdown={!localDictionary}
+                language={localDictionary
+                  ? null
+                  : (current?.target_language ?? targetLanguage)}
+                {locale}
+                kind="translation"
+                identity={`${current?.id}:${current?.attempt}:${current?.source_revision ?? 0}`}
+                disabled={submitting}
+              />
             </section>{/if}
           {#if !showResult}<div class="reading-empty">
               <span class="empty-reading-mark" aria-hidden="true"

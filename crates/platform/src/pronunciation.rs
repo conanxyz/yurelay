@@ -51,9 +51,9 @@ fn dictionary_pronunciation(definition: &str) -> Option<String> {
 }
 
 #[derive(Debug)]
-struct InstalledVoice {
-    name: String,
-    locale: String,
+pub(super) struct InstalledVoice {
+    pub(super) name: String,
+    pub(super) locale: String,
 }
 
 fn parse_installed_voices(output: &str) -> Vec<InstalledVoice> {
@@ -63,11 +63,11 @@ fn parse_installed_voices(output: &str) -> Vec<InstalledVoice> {
             let (description, _) = line.split_once('#')?;
             let (name, locale) = description.trim().rsplit_once(char::is_whitespace)?;
             let name = name.trim();
-            let locale = match locale.trim() {
-                "en_GB" => "en-GB",
-                "en_US" => "en-US",
-                _ => return None,
-            };
+            let locale = locale.trim().replace('_', "-");
+            if !locale.contains('-') || !locale.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+            {
+                return None;
+            }
             if name.is_empty() || name.chars().any(char::is_control) {
                 return None;
             }
@@ -79,7 +79,10 @@ fn parse_installed_voices(output: &str) -> Vec<InstalledVoice> {
         .collect()
 }
 
-fn preferred_voice<'a>(voices: &'a [InstalledVoice], locale: &str) -> Option<&'a InstalledVoice> {
+pub(super) fn preferred_voice<'a>(
+    voices: &'a [InstalledVoice],
+    locale: &str,
+) -> Option<&'a InstalledVoice> {
     let preferences: &[&str] = match locale {
         "en-GB" => &["Daniel", "Serena", "Oliver", "Stephanie", "Eddy"],
         "en-US" => &["Samantha", "Alex", "Ava", "Allison", "Eddy"],
@@ -103,7 +106,7 @@ fn preferred_voice<'a>(voices: &'a [InstalledVoice], locale: &str) -> Option<&'a
 }
 
 #[cfg(target_os = "macos")]
-fn installed_voices() -> Result<Vec<InstalledVoice>, String> {
+pub(super) fn installed_voices() -> Result<Vec<InstalledVoice>, String> {
     let output = std::process::Command::new("/usr/bin/say")
         .args(["-v", "?"])
         .stdin(std::process::Stdio::null())
@@ -252,7 +255,7 @@ mod tests {
         let voices = parse_installed_voices(
             "Albert en_US # Hello\nDaniel en_GB # Hello\nSamantha (English (US)) en_US # Hello\nSamantha (English (US)) en_US # duplicate\nAlice it_IT # Ciao\nBroken data\n",
         );
-        assert_eq!(voices.len(), 4);
+        assert_eq!(voices.len(), 5);
         assert_eq!(
             preferred_voice(&voices, "en-US").map(|voice| voice.name.as_str()),
             Some("Samantha (English (US))")

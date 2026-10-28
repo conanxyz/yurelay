@@ -738,14 +738,8 @@ pub async fn vocabulary_collect(
     app: AppHandle,
     mut candidate: yurelay_core::vocabulary::Candidate,
     source_text: String,
-    source_language: Option<String>,
 ) -> Result<yurelay_core::vocabulary::VocabularyItem, String> {
-    let detected = detect_text_language(source_text.clone()).await?;
-    candidate.validate_source(
-        &source_text,
-        source_language.as_deref(),
-        detected.as_deref(),
-    )?;
+    candidate.validate_manual_source(&source_text)?;
     let item = state::engine(&app)
         .await?
         .storage
@@ -768,7 +762,7 @@ pub async fn vocabulary_preview(
     use yurelay_core::vocabulary::selection::{DictionaryEntry, Selection};
     let selection = Selection::new(&source_text, selection_start, selection_end)?;
     let detected = detect_text_language(source_text.clone()).await?;
-    yurelay_core::vocabulary::require_english_source(
+    yurelay_core::vocabulary::require_preview_source(
         source_language.as_deref(),
         detected.as_deref(),
     )?;
@@ -815,7 +809,7 @@ pub async fn vocabulary_manual(
         source_language.clone(),
     )
     .await?;
-    vocabulary_collect(app, preview.candidate, source_text, source_language).await
+    vocabulary_collect(app, preview.candidate, source_text).await
 }
 
 #[tauri::command]
@@ -867,6 +861,46 @@ pub async fn speech_voices() -> Result<Vec<yurelay_platform::SpeechVoice>, Strin
     tokio::task::spawn_blocking(yurelay_platform::speech_voices)
         .await
         .map_err(|_| "无法读取系统朗读声音。".into())
+}
+
+#[tauri::command]
+pub async fn speak_text(
+    request_id: String,
+    text: String,
+    language: Option<String>,
+) -> Result<(), String> {
+    if request_id.len() > 128
+        || request_id.is_empty()
+        || language.as_ref().is_some_and(|l| {
+            l.len() > 32
+                || !l
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+    {
+        return Err("朗读内容无效。".into());
+    }
+    let text = yurelay_core::speech::prepare(&text)?;
+    yurelay_platform::speech::SPEECH.reserve(&request_id)?;
+    tokio::task::spawn_blocking(move || {
+        let result = yurelay_platform::speech::SPEECH.start(&request_id, text, language.as_deref());
+        if result.is_err() {
+            yurelay_platform::speech::SPEECH.stop(Some(&request_id));
+        }
+        result
+    })
+    .await
+    .map_err(|_| "系统朗读失败。")?
+}
+
+#[tauri::command]
+pub fn speech_status(request_id: String) -> Result<bool, String> {
+    yurelay_platform::speech::SPEECH.is_playing(&request_id)
+}
+
+#[tauri::command]
+pub fn stop_speech(request_id: String) {
+    yurelay_platform::speech::SPEECH.stop(Some(&request_id));
 }
 
 #[tauri::command]

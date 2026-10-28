@@ -416,6 +416,7 @@ fn dismiss_result_window(app: &AppHandle, blur: Option<crate::window_lifecycle::
             if !should_hide {
                 return;
             }
+            yurelay_platform::speech::SPEECH.stop(None);
             release_temporary_top(&app);
             #[cfg(target_os = "macos")]
             if let Ok(pointer) = handle.ns_window() {

@@ -5,7 +5,7 @@ pub mod selection;
 mod unmarked;
 
 /// An explicit source selection takes precedence over local language detection.
-/// Unknown languages are not eligible for the English vocabulary notebook.
+/// Automatic vocabulary extraction requires a confirmed English source.
 pub fn english_source(source: Option<&str>, detected: Option<&str>) -> bool {
     source
         .filter(|language| !language.trim().is_empty())
@@ -21,6 +21,19 @@ pub fn english_source(source: Option<&str>, detected: Option<&str>) -> bool {
 
 pub fn require_english_source(source: Option<&str>, detected: Option<&str>) -> Result<(), String> {
     if english_source(source, detected) {
+        Ok(())
+    } else {
+        Err("生词本仅支持英语原文。".into())
+    }
+}
+
+/// Manual dictionary previews may look up uncertain text without classifying it
+/// as English. Explicit collection validates the chosen source independently.
+pub fn require_preview_source(source: Option<&str>, detected: Option<&str>) -> Result<(), String> {
+    let language = source
+        .filter(|s| !s.trim().is_empty())
+        .or(detected.filter(|s| !s.trim().is_empty()));
+    if language.is_none() || english_source(source, detected) {
         Ok(())
     } else {
         Err("生词本仅支持英语原文。".into())
@@ -94,20 +107,19 @@ fn term_display(word: &str, surface: &str) -> String {
     }
 }
 impl Candidate {
-    pub fn validate_source(
-        &mut self,
-        source_text: &str,
-        source_language: Option<&str>,
-        detected_language: Option<&str>,
-    ) -> Result<(), String> {
+    /// Explicit collection is the user's decision. Language detection and
+    /// dictionary availability must not veto it; source binding and safety do.
+    pub fn validate_manual_source(&mut self, source_text: &str) -> Result<(), String> {
+        if source_text.chars().count() > crate::MAX_INPUT_CHARACTERS {
+            return Err("原文过长。".into());
+        }
         self.validate()?;
-        require_english_source(source_language, detected_language)?;
         let sentence = context::normalize_whitespace(&self.context_sentence);
         if sentence.is_empty()
             || !context::normalize_whitespace(source_text).contains(&sentence)
             || context::bind(&self.context_sentence, &self.surface, "").is_none()
         {
-            return Err("请从英语原文中选择生词。".into());
+            return Err("请从原文中选择生词。".into());
         }
         Ok(())
     }
@@ -720,9 +732,30 @@ mod tests {
     }
 
     #[test]
-    fn collection_rejects_non_english_sources_and_translation_candidates() {
-        for term in ["OAuth2", "CI/CD", "C++", "foo::bar", "café"] {
-            assert!(vocabulary_word(term));
+    fn manual_collection_validates_source_binding_without_language_detection() {
+        for term in ["OAuth2", "CI/CD", "C++", "foo::bar", "café", "moka"] {
+            let source = format!("{term}-runtime-analysis");
+            let mut chosen = Candidate {
+                word: term.into(),
+                surface: term.into(),
+                context_sentence: source.clone(),
+                ..Default::default()
+            };
+            chosen.validate_manual_source(&source).unwrap();
+            assert!(chosen.dict_meaning.is_empty());
+            assert!(
+                chosen
+                    .validate_manual_source(&format!(
+                        "{source}{}",
+                        "x".repeat(crate::MAX_INPUT_CHARACTERS)
+                    ))
+                    .is_err()
+            );
+            assert!(
+                chosen
+                    .validate_manual_source("A different source.")
+                    .is_err()
+            );
         }
         let mut candidate = Candidate {
             word: "chip away".into(),
@@ -730,22 +763,10 @@ mod tests {
             context_sentence: "Chipping away".into(),
             ..Default::default()
         };
-        candidate
-            .validate_source("Chipping away", None, Some("en"))
-            .unwrap();
+        candidate.validate_manual_source("Chipping away").unwrap();
         assert!(
             candidate
-                .validate_source("Chipping away", Some("fr"), Some("en"))
-                .is_err()
-        );
-        assert!(
-            candidate
-                .validate_source("Chipping away", None, None)
-                .is_err()
-        );
-        assert!(
-            candidate
-                .validate_source("A different source.", Some("en"), None)
+                .validate_manual_source("A different source.")
                 .is_err()
         );
         candidate.word = "逐渐侵蚀".into();
@@ -1012,5 +1033,22 @@ mod tests {
         ] {
             assert!(!short_query(sentence));
         }
+    }
+}
+
+#[cfg(test)]
+mod preview_language_tests {
+    use super::*;
+    #[test]
+    fn uncertain_manual_lookup_does_not_enable_automatic_english_extraction() {
+        assert!(require_preview_source(None, None).is_ok());
+        assert!(require_preview_source(Some("en"), Some("fr")).is_ok());
+        assert!(require_preview_source(None, Some("en-US")).is_ok());
+        assert!(require_preview_source(None, Some("fr")).is_err());
+        assert!(require_preview_source(Some("fr"), None).is_err());
+        assert!(require_preview_source(Some("fr"), Some("en")).is_err());
+        assert!(require_english_source(None, None).is_err());
+        assert!(selection::Selection::new("Analytics", 0, 9).is_ok());
+        assert!(selection::Selection::new("分析", 0, 2).is_err());
     }
 }
