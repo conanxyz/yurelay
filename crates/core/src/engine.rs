@@ -2480,6 +2480,18 @@ mod tests {
         })
         .await;
         assert_eq!(first.translation, "后台译文");
+        // This tests persisted-cache reuse, not the opportunistic lookup deadline.
+        // The controlled pending-cache test covers the production 15ms fallback.
+        assert_eq!(engine.cache_lookup_budget_ms.load(Ordering::Relaxed), 15);
+        engine.cache_lookup_budget_ms.store(2000, Ordering::Relaxed);
+        assert!(
+            engine
+                .storage
+                .cached(storage::cache_key(&first).unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        );
         let repeated = engine.manual("hello".into()).await.unwrap();
         let second = until(&engine, &repeated, |t| {
             t.status == Status::Completed && t.save_state == SaveState::Saved
@@ -3034,6 +3046,9 @@ mod tests {
         assert_eq!(collected.contexts[0].context_meaning, "坚韧的");
         assert!(!first.translation.contains("VOCAB"));
         server.await.unwrap();
+        // Cache-content assertions must not depend on storage-worker scheduling.
+        assert_eq!(engine.cache_lookup_budget_ms.load(Ordering::Relaxed), 15);
+        engine.cache_lookup_budget_ms.store(2000, Ordering::Relaxed);
         let next = engine.manual("A resilient team.".into()).await.unwrap();
         let second = until(&engine, &next, |t| t.status == Status::Completed).await;
         assert!(second.cache_hit);
@@ -3121,6 +3136,9 @@ mod tests {
         let saved = engine.storage.task(id).await.unwrap().unwrap();
         assert_eq!(saved.translation, finished.translation);
         assert_eq!(saved.vocabulary, finished.vocabulary);
+        // Cache-content assertions must not depend on storage-worker scheduling.
+        assert_eq!(engine.cache_lookup_budget_ms.load(Ordering::Relaxed), 15);
+        engine.cache_lookup_budget_ms.store(2000, Ordering::Relaxed);
         let cached = engine.manual(source.into()).await.unwrap();
         let cached = until(&engine, &cached, |task| task.status == Status::Completed).await;
         assert!(cached.cache_hit);
