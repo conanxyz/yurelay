@@ -5,6 +5,43 @@
 #import "ocr_pipeline_cases.m"
 
 
+static int ADSelectionFixtureMode;
+static int ADRangeCalls;
+static AXError ADSelectionAttribute(AXUIElementRef element, CFStringRef name, CFTypeRef *out) {
+    (void)element;
+    if (CFEqual(name, kAXSelectedTextAttribute)) {
+        if (ADSelectionFixtureMode == 0 || ADSelectionFixtureMode == 6) { *out = CFRetain(ADSelectionFixtureMode == 0 ? CFSTR("Direct selection") : CFSTR("")); return kAXErrorSuccess; }
+        return kAXErrorAttributeUnsupported;
+    }
+    if (!CFEqual(name, kAXSelectedTextRangeAttribute)) return kAXErrorAttributeUnsupported;
+    if (ADSelectionFixtureMode == 3) return kAXErrorAttributeUnsupported;
+    if (ADSelectionFixtureMode == 4) { *out = CFRetain(CFSTR("invalid range")); return kAXErrorSuccess; }
+    CFRange range = CFRangeMake(7, ADSelectionFixtureMode == 2 ? 0 : 18);
+    *out = AXValueCreate(kAXValueCFRangeType, &range);
+    return kAXErrorSuccess;
+}
+static AXError ADSelectionParameter(AXUIElementRef element, CFStringRef name, CFTypeRef parameter, CFTypeRef *out) {
+    (void)element;
+    ADRangeCalls++;
+    if (ADSelectionFixtureMode == 5) return kAXErrorParameterizedAttributeUnsupported;
+    CFRange range;
+    if (!CFEqual(name,kAXStringForRangeParameterizedAttribute) ||
+        !AXValueGetValue((AXValueRef)parameter,kAXValueCFRangeType,&range) || range.location != 7 || range.length != 18) return kAXErrorIllegalArgument;
+    *out = CFRetain(CFSTR("Range-selected text"));
+    return kAXErrorSuccess;
+}
+static BOOL ADTestDirectSelection(void) {
+    for (int mode = 0; mode < 7; mode++) {
+        ADSelectionFixtureMode = mode; ADRangeCalls = 0;
+        NSString *text = ADReadSelectedText(NULL, ADSelectionAttribute, ADSelectionParameter);
+        BOOL passed = mode == 0 ? [text isEqualToString:@"Direct selection"] && ADRangeCalls == 0 :
+            (mode == 1 || mode == 6) ? [text isEqualToString:@"Range-selected text"] && ADRangeCalls == 1 : !text.length && ADRangeCalls == (mode == 5 ? 1 : 0);
+        printf("Direct selection mode=%d passed=%s\n",mode,passed ? "true" : "false");
+        if (!passed) return NO;
+    }
+    return YES;
+}
+
 @interface ADPinTestWindow : NSObject
 @property(nonatomic) NSWindowLevel level;
 @end
@@ -362,6 +399,7 @@ int main(void) {
             printf("Lemma %s -> %s passed=%s\n",[fixture[0] UTF8String],lemma.UTF8String,passed?"true":"false");
             if(!passed)return 1;
         }
+        if (!ADTestDirectSelection()) return 1;
         if (!ADTestWindowPin()) return 1;
         if (!ADTestWindowDismissal()) return 1;
         [NSApplication sharedApplication];

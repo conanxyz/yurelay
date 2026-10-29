@@ -235,3 +235,13 @@
     display: none;
   }
 }
+
+.translation-prose pre[data-indented-code] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}

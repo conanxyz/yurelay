@@ -23,6 +23,10 @@ const md = new MarkdownIt({
   typographer: false,
 });
 installMath(md);
+// Indentation alone is common in translated prose. Keep its literal whitespace,
+// but do not force it into a non-wrapping code panel. Fenced code is unchanged.
+md.renderer.rules.code_block = (tokens, index) =>
+  `<pre data-indented-code="true">${md.utils.escapeHtml(tokens[index].content)}</pre>\n`;
 md.validateLink = (value) => externalLink(value) !== null;
 md.renderer.rules.image = (tokens, index) =>
   md.utils.escapeHtml(tokens[index].content || "");
@@ -58,7 +62,7 @@ export function readingBlocks(text: string, enhance = true): string[] {
   const env = { formulas: [] };
   const clean = DOMPurify.sanitize(md.render(text, env), {
     ALLOWED_TAGS: tags,
-    ALLOWED_ATTR: ["href", "title", "start", "data-local-math"],
+    ALLOWED_ATTR: ["href", "title", "start", "data-local-math", "data-indented-code"],
     ALLOW_DATA_ATTR: false,
   });
   const template = document.createElement("template");
