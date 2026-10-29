@@ -5,6 +5,43 @@
 #import "ocr_pipeline_cases.m"
 
 
+static int ADSelectionFixtureMode;
+static int ADRangeCalls;
+static AXError ADSelectionAttribute(AXUIElementRef element, CFStringRef name, CFTypeRef *out) {
+    (void)element;
+    if (CFEqual(name, kAXSelectedTextAttribute)) {
+        if (ADSelectionFixtureMode == 0 || ADSelectionFixtureMode == 6) { *out = CFRetain(ADSelectionFixtureMode == 0 ? CFSTR("Direct selection") : CFSTR("")); return kAXErrorSuccess; }
+        return kAXErrorAttributeUnsupported;
+    }
+    if (!CFEqual(name, kAXSelectedTextRangeAttribute)) return kAXErrorAttributeUnsupported;
+    if (ADSelectionFixtureMode == 3) return kAXErrorAttributeUnsupported;
+    if (ADSelectionFixtureMode == 4) { *out = CFRetain(CFSTR("invalid range")); return kAXErrorSuccess; }
+    CFRange range = CFRangeMake(7, ADSelectionFixtureMode == 2 ? 0 : 18);
+    *out = AXValueCreate(kAXValueCFRangeType, &range);
+    return kAXErrorSuccess;
+}
+static AXError ADSelectionParameter(AXUIElementRef element, CFStringRef name, CFTypeRef parameter, CFTypeRef *out) {
+    (void)element;
+    ADRangeCalls++;
+    if (ADSelectionFixtureMode == 5) return kAXErrorParameterizedAttributeUnsupported;
+    CFRange range;
+    if (!CFEqual(name,kAXStringForRangeParameterizedAttribute) ||
+        !AXValueGetValue((AXValueRef)parameter,kAXValueCFRangeType,&range) || range.location != 7 || range.length != 18) return kAXErrorIllegalArgument;
+    *out = CFRetain(CFSTR("Range-selected text"));
+    return kAXErrorSuccess;
+}
+static BOOL ADTestDirectSelection(void) {
+    for (int mode = 0; mode < 7; mode++) {
+        ADSelectionFixtureMode = mode; ADRangeCalls = 0;
+        NSString *text = ADReadSelectedText(NULL, ADSelectionAttribute, ADSelectionParameter);
+        BOOL passed = mode == 0 ? [text isEqualToString:@"Direct selection"] && ADRangeCalls == 0 :
+            (mode == 1 || mode == 6) ? [text isEqualToString:@"Range-selected text"] && ADRangeCalls == 1 : !text.length && ADRangeCalls == (mode == 5 ? 1 : 0);
+        printf("Direct selection mode=%d passed=%s\n",mode,passed ? "true" : "false");
+        if (!passed) return NO;
+    }
+    return YES;
+}
+
 @interface ADPinTestWindow : NSObject
 @property(nonatomic) NSWindowLevel level;
 @end
@@ -247,13 +284,20 @@ static BOOL ADTestPasteboardBackup(void) {
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
     ADBackupCheck("zero-byte-format", error == nil && ADBackupMatches(backup, @[@{firstType: emptyData}]), &passed);
 
-    const NSUInteger limit = 8 * 1024 * 1024;
-    NSString *sizeError = @"剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。";
+    // A previous screenshot must not prevent copying a short new selection.
+    NSData *previousImage = [NSMutableData dataWithLength:12 * 1024 * 1024];
+    item = ADBackupFakeItem(@[NSPasteboardTypeTIFF], @{NSPasteboardTypeTIFF: previousImage});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("previous-image-over-eight-MiB", error == nil && ADBackupMatches(backup, @[@{NSPasteboardTypeTIFF: previousImage}]), &passed);
+
+    const NSUInteger limit = 64 * 1024 * 1024;
+    NSString *sizeError = @"已有剪贴板内容超过 64 MiB 备份上限，与本次选中文字长度无关。原内容未改动；请使用截图翻译。";
     NSData *oversized = [NSMutableData dataWithLength:limit + 1];
     item = ADBackupFakeItem(@[firstType], @{firstType: oversized});
     board = ADBackupFakeBoard(@[item]);
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
-    ADBackupCheck("over-eight-MiB", backup == nil && [error isEqualToString:sizeError], &passed);
+    ADBackupCheck("over-backup-limit", backup == nil && [error isEqualToString:sizeError], &passed);
 
     NSData *halfPlusOne = [NSMutableData dataWithLength:limit / 2 + 1];
     item = ADBackupFakeItem(@[firstType, secondType], @{firstType: halfPlusOne, secondType: halfPlusOne});
@@ -280,7 +324,7 @@ static BOOL ADTestPasteboardBackup(void) {
     item = ADBackupFakeItem(@[firstType], @{firstType: exactLimit});
     board = ADBackupFakeBoard(@[item]);
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
-    ADBackupCheck("exactly-eight-MiB", error == nil && ADBackupMatches(backup, @[@{firstType: exactLimit}]), &passed);
+    ADBackupCheck("exactly-backup-limit", error == nil && ADBackupMatches(backup, @[@{firstType: exactLimit}]), &passed);
 
     // Exercise AppKit serialization and restoration only on a uniquely named board.
     NSPasteboard *named = [NSPasteboard pasteboardWithUniqueName];
@@ -315,6 +359,30 @@ static BOOL ADTestPasteboardBackup(void) {
         [named clearContents];
         BOOL restored = backup != nil && [named writeObjects:backup];
         ADBackupCheck("named-multi-format-restored", restored && ADBackupMatches(named.pasteboardItems, formats), &passed);
+        NSPasteboardItem *largeItem = [NSPasteboardItem new];
+        [largeItem setData:previousImage forType:NSPasteboardTypeTIFF];
+        [largeItem setString:@"Synthetic previous clipboard" forType:NSPasteboardTypeString];
+        [named clearContents];
+        BOOL largeWritten = [named writeObjects:@[largeItem]];
+        NSInteger largeCount = named.changeCount;
+        backup = ADBackupPasteboard(named, largeCount, &error);
+        BOOL largeBackedUp = largeWritten && backup != nil && error == nil && named.changeCount == largeCount;
+        // Exercise the same backup/copy/restore sequence without touching the user's clipboard.
+        NSString *selection = @"First selected sentence. Second selected sentence. Third selected sentence. Fourth selected sentence.";
+        if (largeBackedUp) {
+            [named clearContents];
+            [named setString:selection forType:NSPasteboardTypeString];
+        }
+        BOOL selectionRead = largeBackedUp && [[named stringForType:NSPasteboardTypeString] isEqualToString:selection];
+        BOOL largeRestored = NO;
+        if (selectionRead) {
+            [named clearContents];
+            largeRestored = [named writeObjects:backup];
+        }
+        ADBackupCheck("named-short-selection-after-large-image", selectionRead && largeRestored &&
+            [[named dataForType:NSPasteboardTypeTIFF] isEqualToData:previousImage] &&
+            [[named stringForType:NSPasteboardTypeString] isEqualToString:@"Synthetic previous clipboard"], &passed);
+
     } @finally {
         [named releaseGlobally];
     }
@@ -331,6 +399,7 @@ int main(void) {
             printf("Lemma %s -> %s passed=%s\n",[fixture[0] UTF8String],lemma.UTF8String,passed?"true":"false");
             if(!passed)return 1;
         }
+        if (!ADTestDirectSelection()) return 1;
         if (!ADTestWindowPin()) return 1;
         if (!ADTestWindowDismissal()) return 1;
         [NSApplication sharedApplication];

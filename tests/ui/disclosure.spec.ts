@@ -1697,3 +1697,26 @@ test('explicit collection saves an uncertain technical word without a dictionary
   expect(await page.evaluate(()=>(window as any).words[0])).toMatchObject({word:'moka',dict_meaning:'',review_count:1});
   expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_collect'))).toHaveLength(1);
 });
+
+test('reading wraps indented prose while preserving fenced code',async({page},testInfo)=>{
+ await fixture(page);
+ await page.evaluate(()=>{const w=window as any;Object.assign(w.task,{status:'completed',translation:'一个普通段落。\n\n    '+ '这是带有四个空格缩进的普通说明，不应被迫横向滚动。'.repeat(12)+'\n\n```js\nconst example = "'+ 'x'.repeat(180)+'";\n```',revision:2});w.wire({type:'snapshot',snapshot:{tasks:[w.task],revision:2},selected:w.task.id});});
+ await page.locator('.disclosure-control').click();
+ const blocks=page.locator('.translation-prose pre');
+ await expect(blocks).toHaveCount(2);
+ expect(await blocks.first().evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ await expect(blocks.nth(1)).toContainText('const example');
+ expect(await blocks.nth(1).evaluate(el=>getComputedStyle(el).whiteSpace)).toBe('pre');
+ for(const [width,theme] of [[360,'light'],[1100,'dark']] as const) {
+  await page.setViewportSize({width,height:800});
+  await page.evaluate(theme=>{const w=window as any;w.settings.theme=theme;w.emit('configuration-changed',w.settings);},theme);
+  await expect(page.locator('html')).toHaveAttribute('data-theme',theme);
+  expect(await blocks.first().evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+  await expect(blocks.first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+  await page.locator('#translation-body').screenshot({path:testInfo.outputPath(`indented-reading-${theme}.png`)});
+ }
+ await page.getByRole('button',{name:'Copy translation',exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toContain('这是带有四个空格缩进的普通说明，不应被迫横向滚动。'.repeat(12));
+ await page.getByRole('button',{name:'Plain text',exact:true}).click();
+ await expect(page.locator('.translation-prose')).toContainText('    这是');
+});

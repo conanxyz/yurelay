@@ -166,7 +166,9 @@ static NSArray<NSPasteboardItem *> *ADBackupPasteboard(NSPasteboard *pb, NSInteg
     // nil means retrieval failed. Only an actual empty array is an empty backup.
     if (!items) { if (error) *error = @"无法读取当前剪贴板，已保留原内容。请重试或使用截图翻译。"; return nil; }
     NSMutableArray<NSPasteboardItem *> *backup = [NSMutableArray new];
-    const NSUInteger limit = 8 * 1024 * 1024;
+    // This bounds the OLD clipboard, not the selected text. Retina screenshots
+    // and their TIFF/PNG representations routinely exceed the former 8 MiB cap.
+    const NSUInteger limit = 64 * 1024 * 1024;
     NSUInteger bytes = 0;
     for (NSPasteboardItem *item in items) {
         NSPasteboardItem *copy = [NSPasteboardItem new];
@@ -179,7 +181,7 @@ static NSArray<NSPasteboardItem *> *ADBackupPasteboard(NSPasteboard *pb, NSInteg
             // Report that race before classifying a representation as unreadable.
             if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
             if (!data) { if (error) *error = @"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"; return nil; }
-            if (data.length > limit - bytes) { if (error) *error = @"剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。"; return nil; }
+            if (data.length > limit - bytes) { if (error) *error = @"已有剪贴板内容超过 64 MiB 备份上限，与本次选中文字长度无关。原内容未改动；请使用截图翻译。"; return nil; }
             bytes += data.length;
             if (![copy setData:data forType:type]) { if (error) *error = @"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"; return nil; }
         }
@@ -257,6 +259,35 @@ int ad_selection_target_pid(void) {
     return pid;
 }
 
+// Read only the focused selection, never the complete document. Some apps
+// expose a selected range but not AXSelectedText. Injectable AX calls let native
+// tests exercise the same path without accessing the user's foreground app.
+static NSString *ADReadSelectedText(AXUIElementRef element,
+    AXError (*attribute)(AXUIElementRef, CFStringRef, CFTypeRef *),
+    AXError (*parameter)(AXUIElementRef, CFStringRef, CFTypeRef, CFTypeRef *)) {
+    CFTypeRef value = NULL;
+    NSString *text = nil;
+    if (attribute(element, kAXSelectedTextAttribute, &value) == kAXErrorSuccess && value) {
+        if (CFGetTypeID(value) == CFStringGetTypeID()) text = [(__bridge NSString *)value copy];
+        CFRelease(value);
+    }
+    if (text.length) return text;
+    CFTypeRef selectedRange = NULL;
+    if (attribute(element, kAXSelectedTextRangeAttribute, &selectedRange) != kAXErrorSuccess || !selectedRange) return nil;
+    CFRange range;
+    BOOL valid = CFGetTypeID(selectedRange) == AXValueGetTypeID() &&
+        AXValueGetType((AXValueRef)selectedRange) == kAXValueCFRangeType &&
+        AXValueGetValue((AXValueRef)selectedRange, kAXValueCFRangeType, &range) &&
+        range.location >= 0 && range.length > 0;
+    value = NULL;
+    if (valid && parameter(element, kAXStringForRangeParameterizedAttribute, selectedRange, &value) == kAXErrorSuccess && value) {
+        if (CFGetTypeID(value) == CFStringGetTypeID()) text = [(__bridge NSString *)value copy];
+        CFRelease(value);
+    }
+    CFRelease(selectedRange);
+    return text;
+}
+
 void ad_select_text_for_pid(int target_pid, void *context, ADCallback callback) {
     ADSession *s = ADMakeSession(context, callback);
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -281,11 +312,7 @@ void ad_select_text_for_pid(int target_pid, void *context, ADCallback callback) 
                     if (AXUIElementCopyAttributeValue(element, kAXSubroleAttribute, &subrole) == kAXErrorSuccess && subrole) {
                         secure = CFEqual(subrole, kAXSecureTextFieldSubrole); CFRelease(subrole);
                     }
-                    CFTypeRef selected = NULL;
-                    if (!secure && AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute, &selected) == kAXErrorSuccess && selected) {
-                        if (CFGetTypeID(selected) == CFStringGetTypeID()) text = [(__bridge NSString *)selected copy];
-                        CFRelease(selected);
-                    }
+                    if (!secure) text = ADReadSelectedText(element, AXUIElementCopyAttributeValue, AXUIElementCopyParameterizedAttributeValue);
                 }
                 if (focused) CFRelease(focused); CFRelease(app);
                 dispatch_async(dispatch_get_main_queue(), ^{
