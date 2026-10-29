@@ -77,6 +77,8 @@ For a sentence or paragraph, the system dictionary offers configured translation
 
 Short words such as `Analytics` may leave automatic language detection uncertain. You can still click for a local dictionary preview. Click Add to save the chosen word even when its language is uncertain or no dictionary definition is available. Lookup alone never collects it.
 
+The sidebar and notebook prioritize concise meanings in the current target language, with the original local dictionary entry collapsed. Matching saved meanings are reused. With a model service, opening a word can asynchronously add its meaning using only the word and its source sentence, without delaying the main translation. You can save immediately while this runs; later enrichment preserves counts, learning status and personal notes. Local dictionary mode stays offline. Exports use saved meanings in the current target language.
+
 **Want to remember an expression?** Click or select an English source word for native lemmatization and a dictionary preview, then click **Add**. You can also collect words suggested by the model.
 
 - Keep multiple source sentences and available meanings under one word; adding the same sentence again does not increase its count.

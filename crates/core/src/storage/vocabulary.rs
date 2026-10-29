@@ -115,6 +115,9 @@ impl Storage {
             });
             let new_context = !normalized.is_empty() && existing.is_none();
             if let Some(context) = existing {
+                for (language, meaning) in c.meanings {
+                    context.meanings.entry(language).or_default().merge(meaning);
+                }
                 if context.surface.trim().is_empty() {
                     context.surface = c.surface.clone();
                 }
@@ -128,6 +131,7 @@ impl Storage {
                 item.contexts.insert(
                     0,
                     Context {
+                        meanings: c.meanings,
                         id: uuid::Uuid::new_v4().to_string(),
                         surface: c.surface,
                         context_meaning: c.context_meaning,
@@ -145,6 +149,38 @@ impl Storage {
         })
         .await
     }
+    /// Enrichment never creates a word, counts another encounter, or changes notes/status.
+    pub async fn enrich_collected_word(&self, mut candidate: Candidate) -> Result<(), String> {
+        candidate.validate()?;
+        self.call(move |db| {
+            let old: Option<String> = db
+                .connection
+                .query_row(
+                    "SELECT data FROM vocabulary WHERE word=?1",
+                    [crate::vocabulary::word_key(&candidate.word)],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_error)?;
+            if let Some(data) = old {
+                let mut item: VocabularyItem = serde_json::from_str(&data).map_err(db_error)?;
+                if let Some(context) = item.contexts.iter_mut().find(|c| {
+                    crate::vocabulary::context::normalize_whitespace(&c.context_sentence)
+                        == crate::vocabulary::context::normalize_whitespace(
+                            &candidate.context_sentence,
+                        )
+                }) {
+                    for (language, meaning) in candidate.meanings {
+                        context.meanings.entry(language).or_default().merge(meaning);
+                    }
+                    db.write_word(&item)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn update_word(
         &self,
         id: String,
@@ -225,6 +261,35 @@ fn html(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+pub fn export_in_language(
+    items: &[VocabularyItem],
+    format: &str,
+    language: &str,
+) -> Result<String, String> {
+    let mut localized = items.to_vec();
+    for item in &mut localized {
+        if let Some(meaning) = item
+            .contexts
+            .iter()
+            .find_map(|c| c.meanings.get(language))
+            .filter(|m| !m.general.is_empty() || !m.contextual.is_empty())
+        {
+            item.dict_meaning = if meaning.general.is_empty() {
+                meaning.contextual.clone()
+            } else {
+                meaning.general.clone()
+            };
+        }
+        for context in &mut item.contexts {
+            if let Some(meaning) = context.meanings.get(language) {
+                context.context_meaning = meaning.contextual.clone();
+                context.sentence_trans = meaning.sentence_translation.clone();
+            }
+        }
+    }
+    export(&localized, format)
+}
+
 pub fn export(items: &[VocabularyItem], format: &str) -> Result<String, String> {
     match format {
         "csv" => {

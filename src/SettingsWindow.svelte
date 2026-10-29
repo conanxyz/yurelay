@@ -1654,7 +1654,16 @@
                 replyError={replyPromptError}
               />
             {:else if nav === "vocabulary"}
-              <VocabularyPanel {locale} />
+              <VocabularyPanel
+                {locale}
+                language={settings.target_language}
+                profileId={settings.active_profile}
+                allowModel={!["system_dictionary", "youdao"].includes(
+                  settings.profiles.find(
+                    (p) => p.id === settings.active_profile,
+                  )?.provider ?? "system_dictionary",
+                )}
+              />
             {:else if nav === "history"}
               {#key historyVersion}<HistoryPanel {locale} />{/key}
               <fieldset class="form-section retention-section" disabled={busy}>

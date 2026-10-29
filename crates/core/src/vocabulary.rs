@@ -74,7 +74,29 @@ pub fn extraction_enabled(enabled: bool, text: &str) -> bool {
 pub const MARKER: &str = "---VOCAB_JSON---";
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+pub struct LocalizedMeaning {
+    pub general: String,
+    pub contextual: String,
+    pub sentence_translation: String,
+}
+impl LocalizedMeaning {
+    pub fn merge(&mut self, other: Self) {
+        if !other.general.is_empty() {
+            self.general = other.general;
+        }
+        if !other.contextual.is_empty() {
+            self.contextual = other.contextual;
+        }
+        if !other.sentence_translation.is_empty() {
+            self.sentence_translation = other.sentence_translation;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct Candidate {
+    pub meanings: std::collections::BTreeMap<String, LocalizedMeaning>,
     pub word: String,
     pub surface: String,
     pub phonetic: String,
@@ -107,6 +129,18 @@ fn term_display(word: &str, surface: &str) -> String {
     }
 }
 impl Candidate {
+    pub fn record_meaning_language(&mut self, language: &str) {
+        if !self.context_meaning.is_empty() || !self.sentence_trans.is_empty() {
+            self.meanings
+                .entry(language.to_owned())
+                .or_insert_with(|| LocalizedMeaning {
+                    contextual: self.context_meaning.clone(),
+                    sentence_translation: self.sentence_trans.clone(),
+                    ..Default::default()
+                });
+        }
+    }
+
     /// Explicit collection is the user's decision. Language detection and
     /// dictionary availability must not veto it; source binding and safety do.
     pub fn validate_manual_source(&mut self, source_text: &str) -> Result<(), String> {
@@ -125,6 +159,17 @@ impl Candidate {
     }
 
     pub fn validate(&mut self) -> Result<(), String> {
+        if self.meanings.len() > 16
+            || self.meanings.iter().any(|(language, meaning)| {
+                !crate::operations::explicit_language(language)
+                    || meaning.general.len() > 2000
+                    || meaning.contextual.len() > 2000
+                    || meaning.sentence_translation.len() > 16000
+            })
+        {
+            return Err("生词释义字段无效。".into());
+        }
+
         if !vocabulary_word(&self.word)
             || (!self.surface.is_empty() && !vocabulary_word(&self.surface))
         {
@@ -161,6 +206,8 @@ impl Candidate {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
+    #[serde(default)]
+    pub meanings: std::collections::BTreeMap<String, LocalizedMeaning>,
     pub id: String,
     pub surface: String,
     pub context_meaning: String,
@@ -462,6 +509,7 @@ impl StreamParser {
                         return None;
                     }
                     let mut candidate = Candidate {
+                        meanings: Default::default(),
                         word: wire.word,
                         surface,
                         phonetic: wire.phonetic,

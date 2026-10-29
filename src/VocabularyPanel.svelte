@@ -4,8 +4,19 @@
   import { listen } from "@tauri-apps/api/event";
   import type { VocabularyItem } from "./types";
   import type { Locale } from "./locale";
+  import WordMeaning from "./WordMeaning.svelte";
   import Icon from "./Icons.svelte";
-  let { locale }: { locale: Locale } = $props();
+  let {
+    locale,
+    language,
+    profileId,
+    allowModel,
+  }: {
+    locale: Locale;
+    language: string;
+    profileId: string | null;
+    allowModel: boolean;
+  } = $props();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   let items = $state<VocabularyItem[]>([]),
     selected = $state(""),
@@ -24,7 +35,7 @@
       .filter(
         (i) =>
           (status === "all" || i.status === status) &&
-          `${i.word} ${i.dict_meaning} ${i.note} ${i.contexts.map((c) => `${c.context_sentence} ${c.context_meaning}`).join(" ")}`
+          `${i.word} ${i.dict_meaning} ${i.note} ${i.contexts.map((c) => `${c.context_sentence} ${c.context_meaning} ${JSON.stringify(c.meanings ?? {})}`).join(" ")}`
             .toLowerCase()
             .includes(query.trim().toLowerCase()),
       )
@@ -131,7 +142,10 @@
     notice = "";
     try {
       await saveQueue;
-      const saved = await invoke<boolean>("vocabulary_export", { format });
+      const saved = await invoke<boolean>("vocabulary_export", {
+        format,
+        language,
+      });
       if (saved) notice = t("生词本已导出", "Vocabulary exported");
     } catch (e) {
       error = String(e);
@@ -205,8 +219,8 @@
             ><span class="word-list-copy"
               ><strong>{item.word}</strong><small
                 >{item.pos}
-                {item.contexts[0]?.context_meaning ||
-                  item.dict_meaning ||
+                {item.contexts[0]?.meanings?.[language]?.contextual ||
+                  item.contexts[0]?.meanings?.[language]?.general ||
                   t("待补充释义", "Add a meaning")}</small
               ><span class="count-tag"
                 >{t(
@@ -264,21 +278,28 @@
           >
         </header>
         <div class="word-meanings">
-          {#if current.contexts[0]?.context_meaning}<section>
-              <h3>
-                {current.dict_meaning
-                  ? t("语境释义", "Meaning in context")
-                  : t("释义", "Meaning")}
-              </h3>
-              <p>{current.contexts[0].context_meaning}</p>
-            </section>{/if}
-          {#if current.dict_meaning}<section>
-              <h3>{t("通用释义", "Dictionary meaning")}</h3>
-              <p>{current.dict_meaning}</p>
-            </section>
-          {:else if !current.contexts[0]?.context_meaning}<p>
-              {t("可在个人笔记中补充释义", "Add a meaning in your notes")}
-            </p>{/if}
+          {#if current.contexts[0]}{@const context = current.contexts[0]}
+            <WordMeaning
+              candidate={{ ...current, ...context }}
+              sourceText={context.context_sentence}
+              {language}
+              {profileId}
+              {allowModel}
+              {locale}
+            />
+          {:else}<p>
+              {t(
+                "目标语言释义暂缺",
+                "Meaning unavailable in the target language",
+              )}
+            </p>
+            {#if current.dict_meaning}<details>
+                <summary
+                  >{t("本地词典原文", "Original dictionary entry")}</summary
+                >
+                <p>{current.dict_meaning}</p>
+              </details>{/if}
+          {/if}
         </div>
         <label class="word-note"
           >{t("个人笔记", "Personal note")}<textarea
@@ -324,13 +345,24 @@
                 {parts.before}{#if parts.match}<mark>{parts.match}</mark
                   >{/if}{parts.after}
               </p>
-              {#if context.context_meaning}<p class="context-meaning">
-                  {context.context_meaning}
-                </p>{/if}{#if context.sentence_trans}<p
+              {#if context.meanings?.[language]?.contextual}<p
+                  class="context-meaning"
+                >
+                  {context.meanings[language].contextual}
+                </p>{/if}
+              {#if context.meanings?.[language]?.sentence_translation}<p
                   class="context-translation"
                 >
-                  {context.sentence_trans}
+                  {context.meanings[language].sentence_translation}
                 </p>{/if}
+              {#if !context.meanings?.[language] && (context.context_meaning || context.sentence_trans)}<details
+                >
+                  <summary
+                    >{t("原有语境记录", "Original saved context")}</summary
+                  >
+                  <p>{context.context_meaning}</p>
+                  <p>{context.sentence_trans}</p>
+                </details>{/if}
             </article>{/each}
         </section>
         <button class="word-delete" onclick={() => askDelete(current!.id)}

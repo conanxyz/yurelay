@@ -656,6 +656,9 @@ impl TaskBook {
             } else {
                 VocabularyState::Complete
             };
+            for item in &mut items {
+                item.record_meaning_language(&t.target_language);
+            }
             t.vocabulary = items;
             t.vocabulary_notice = notice;
             true

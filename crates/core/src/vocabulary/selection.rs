@@ -102,6 +102,9 @@ impl Selection {
         if !dictionary.pos.trim().is_empty() {
             candidate.pos = dictionary.pos;
         }
+        if let Some(task) = task {
+            candidate.record_meaning_language(&task.target_language);
+        }
         candidate.validate()?;
         let mut translation_highlights = self.highlights_for_meaning(
             &candidate.context_meaning,

@@ -9,9 +9,13 @@
   } from "./types";
   import type { Locale } from "./locale";
   import { errorText } from "./locale";
+  import WordMeaning from "./WordMeaning.svelte";
   import Icon from "./Icons.svelte";
   let {
-    candidates,
+    candidates: incomingCandidates,
+    language,
+    profileId,
+    allowModel,
     locale,
     open,
     onToggle,
@@ -19,12 +23,35 @@
     activeWord = "",
   }: {
     candidates: VocabularyCandidate[];
+    language: string;
+    profileId: string | null;
+    allowModel: boolean;
     locale: Locale;
     open: boolean;
     onToggle: () => void;
     sourceText: string;
     activeWord?: string;
   } = $props();
+  let enriched = $state<Record<string, VocabularyCandidate>>({});
+  const candidates = $derived(
+    incomingCandidates.map((c) => {
+      const context = items
+        .find((item) => item.word.toLowerCase() === c.word.toLowerCase())
+        ?.contexts.find(
+          (context) =>
+            normalize(context.context_sentence) ===
+            normalize(c.context_sentence),
+        );
+      return {
+        ...c,
+        meanings: {
+          ...context?.meanings,
+          ...enriched[`${c.word}:${c.context_sentence}`]?.meanings,
+          ...c.meanings,
+        },
+      };
+    }),
+  );
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
   const normalize = (text: string) => text.trim().replace(/\s+/gu, " ");
   const wordKey = (c: VocabularyCandidate) => c.word.trim().toLowerCase();
@@ -89,7 +116,7 @@
     const seq = ++sequence;
     try {
       const result = await invoke<VocabularyItem[]>("vocabulary_lookup", {
-        words: candidates.map((c) => c.word),
+        words: incomingCandidates.map((c) => c.word),
       });
       if (seq === sequence) {
         items = result ?? [];
@@ -100,7 +127,7 @@
     }
   }
   $effect(() => {
-    const words = candidates.map((c) => c.word).join("\n");
+    const words = incomingCandidates.map((c) => c.word).join("\n");
     if (words && isTauri()) refresh();
   });
   onMount(() => {
@@ -163,6 +190,7 @@
     );
     if (!context) return true;
     return (
+      Object.keys(c.meanings ?? {}).some((lang) => !context.meanings?.[lang]) ||
       (!!phonetic(c) && !item.phonetic) ||
       (!!c.pos && !item.pos) ||
       (!!c.dict_meaning && !item.dict_meaning) ||
@@ -185,9 +213,15 @@
     error = "";
     try {
       const item = await invoke<VocabularyItem>("vocabulary_collect", {
-        candidate: c,
+        candidate: $state.snapshot(c),
         sourceText,
       });
+      const latest = enriched[`${c.word}:${c.context_sentence}`];
+      if (latest)
+        await invoke("vocabulary_enrich_existing", {
+          candidate: $state.snapshot(latest),
+          sourceText,
+        });
       sequence++;
       items = [...items.filter((i) => i.id !== item.id), item];
     } catch (e) {
@@ -267,9 +301,12 @@
           >
             <strong>{candidate.word}</strong><span
               class="vocabulary-row-meaning"
-              >{candidate.context_meaning ||
-                candidate.dict_meaning ||
-                t("本地词典暂无释义", "No local definition available")}</span
+              >{candidate.meanings?.[language]?.contextual ||
+                candidate.meanings?.[language]?.general ||
+                t(
+                  "目标语言释义暂缺",
+                  "Meaning not available in the target language",
+                )}</span
             >
           </button>
           {#if phonetic(candidate)}<div class="vocabulary-pronunciation">
@@ -335,15 +372,25 @@
             >
           </div>
           {#if expanded === candidate.word}<div class="vocabulary-row-detail">
-              {#if candidate.dict_meaning && candidate.dict_meaning !== candidate.context_meaning}<p
-                >
-                  {candidate.dict_meaning}
-                </p>{/if}
+              <WordMeaning
+                {candidate}
+                {sourceText}
+                {language}
+                {profileId}
+                {allowModel}
+                {locale}
+                onUpdate={(value) => {
+                  enriched = {
+                    ...enriched,
+                    [`${value.word}:${value.context_sentence}`]: value,
+                  };
+                }}
+              />
               {#if candidate.context_sentence}<blockquote>
                   {candidate.context_sentence}
                 </blockquote>{/if}
-              {#if candidate.sentence_trans}<p>
-                  {candidate.sentence_trans}
+              {#if candidate.meanings?.[language]?.sentence_translation}<p>
+                  {candidate.meanings[language].sentence_translation}
                 </p>{/if}
               {#if saved(candidate)}{@const item = saved(candidate)!}
                 <details class="saved-word-contexts">
