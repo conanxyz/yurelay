@@ -301,6 +301,8 @@ fn main() {
             commands::vocabulary_collect,
             commands::vocabulary_manual,
             commands::vocabulary_preview,
+            commands::vocabulary_meaning,
+            commands::vocabulary_enrich_existing,
             commands::speech_voices,
             commands::vocabulary_update,
             commands::vocabulary_remove,

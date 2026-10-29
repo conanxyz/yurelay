@@ -750,6 +750,39 @@ pub async fn vocabulary_collect(
     Ok(item)
 }
 #[tauri::command]
+pub async fn vocabulary_meaning(
+    app: AppHandle,
+    candidate: yurelay_core::vocabulary::Candidate,
+    source_text: String,
+    language: String,
+    profile_id: Option<String>,
+) -> Result<yurelay_core::vocabulary::Candidate, String> {
+    let result = state::engine(&app)
+        .await?
+        .vocabulary_meaning(candidate, source_text, language, profile_id)
+        .await?;
+    use tauri::Emitter;
+    let _ = app.emit("vocabulary-changed", ());
+    Ok(result)
+}
+#[tauri::command]
+pub async fn vocabulary_enrich_existing(
+    app: AppHandle,
+    mut candidate: yurelay_core::vocabulary::Candidate,
+    source_text: String,
+) -> Result<(), String> {
+    candidate.validate_manual_source(&source_text)?;
+    state::engine(&app)
+        .await?
+        .storage
+        .enrich_collected_word(candidate)
+        .await?;
+    use tauri::Emitter;
+    let _ = app.emit("vocabulary-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn vocabulary_preview(
     app: AppHandle,
     source_text: String,
@@ -786,7 +819,9 @@ pub async fn vocabulary_preview(
     .map_err(|_| "本地词形解析失败。")?;
     let engine = state::engine(&app).await?;
     let task = task_id.as_deref().and_then(|id| engine.book.get(id));
-    selection.preview(entry, task.as_ref().zip(attempt))
+    let mut preview = selection.preview(entry, task.as_ref().zip(attempt))?;
+    preview.candidate = engine.vocabulary_cached_meanings(preview.candidate).await?;
+    Ok(preview)
 }
 
 #[tauri::command]
@@ -837,9 +872,21 @@ pub async fn vocabulary_remove(app: AppHandle, id: String) -> Result<(), String>
     Ok(())
 }
 #[tauri::command]
-pub async fn vocabulary_export(app: AppHandle, format: String) -> Result<bool, String> {
+pub async fn vocabulary_export(
+    app: AppHandle,
+    format: String,
+    language: Option<String>,
+) -> Result<bool, String> {
     let items = state::engine(&app).await?.storage.vocabulary().await?;
-    let data = yurelay_core::storage::vocabulary::export(&items, &format)?;
+    let language = language.unwrap_or(
+        state::engine(&app)
+            .await?
+            .configuration()
+            .await
+            .settings
+            .target_language,
+    );
+    let data = yurelay_core::storage::vocabulary::export_in_language(&items, &format, &language)?;
     let extension = match format.as_str() {
         "csv" => "csv",
         "markdown" => "md",

@@ -195,7 +195,13 @@ export const statusNames: Record<string, string> = {
 export const active = (task: Task) =>
   ["capturing", "recognizing", "queued", "translating"].includes(task.status);
 
+export type LocalizedMeaning = {
+  general: string;
+  contextual: string;
+  sentence_translation: string;
+};
 export type VocabularyCandidate = {
+  meanings?: Record<string, LocalizedMeaning>;
   word: string;
   surface: string;
   phonetic: string;
@@ -208,7 +214,11 @@ export type VocabularyCandidate = {
 };
 export type VocabularyContext = Pick<
   VocabularyCandidate,
-  "surface" | "context_meaning" | "context_sentence" | "sentence_trans"
+  | "surface"
+  | "context_meaning"
+  | "context_sentence"
+  | "sentence_trans"
+  | "meanings"
 > & { id: string; created_at: number };
 export type VocabularyItem = Pick<
   VocabularyCandidate,

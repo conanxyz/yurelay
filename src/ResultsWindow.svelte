@@ -1216,6 +1216,11 @@
 >
   {#if hasVocabulary && sidebarWidth > 0}{#key `${current?.id ?? "draft"}:${current?.attempt ?? 0}`}<VocabularySidebar
         candidates={visibleCandidates}
+        language={targetLanguage}
+        profileId={service?.id ?? null}
+        allowModel={!!service &&
+          (!current || !active(current)) &&
+          !["system_dictionary", "youdao"].includes(service.provider)}
         {activeWord}
         {locale}
         sourceText={draft}

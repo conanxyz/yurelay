@@ -881,3 +881,31 @@ test('revert during delayed recorder cleanup preserves restored shortcuts and fo
  await expect(selection).not.toHaveClass(/recording/);await expect(selection.locator('kbd')).toHaveText(['⌥','⇧','D']);
  await expect(language).toBeFocused();await expect(page.getByRole('button',{name:'Save changes',exact:true})).toBeDisabled();
 });
+
+
+test('notebook prioritizes saved target-language meanings and folds the original dictionary entry',async({page},testInfo)=>{
+ await settingsFixture(page);
+ await page.evaluate(()=>{const w=window as any;w.vocabulary[0].contexts[0].meanings={
+  'zh-Hans':{general:'有韧性的',contextual:'能适应变化并恢复的',sentence_translation:'坚韧的团队能够适应变化。'},
+  'fr':{general:'résilient',contextual:'capable de se rétablir',sentence_translation:'Une équipe résiliente.'}
+ };});
+ await page.getByRole('button',{name:'Vocabulary',exact:true}).click();
+ await expect(page.locator('.word-list-copy')).toContainText('能适应变化并恢复的');
+ await page.locator('.vocabulary-item').click();
+ await expect(page.locator('.word-meanings')).toContainText('有韧性的');
+ await expect(page.locator('.word-meanings')).not.toContainText('capable de se rétablir');
+ const original=page.locator('.word-meanings details');
+ await expect(original).not.toHaveAttribute('open','');
+ await expect(original.locator('p')).not.toBeVisible();
+ await original.locator('summary').click();await expect(original.locator('p')).toHaveText('able to recover quickly');
+ await page.evaluate(()=>{const w=window as any;const second=structuredClone(w.vocabulary[0]);second.id='word-2';second.word='credential';second.dict_meaning='An identity document';second.contexts[0].surface='credential';second.contexts[0].context_sentence='Use a credential.';second.contexts[0].meanings={'zh-Hans':{general:'凭据',contextual:'认证凭据',sentence_translation:'使用凭据。'}};w.vocabulary.push(second);w.emit('vocabulary-changed',null);});
+ await page.locator('.vocabulary-item').filter({hasText:'credential'}).click();
+ await expect(page.locator('.word-meanings details')).not.toHaveAttribute('open','');
+ await page.locator('.vocabulary-item').filter({hasText:'resilient'}).click();
+ await expect(page.locator('.word-meanings details')).not.toHaveAttribute('open','');
+
+ await page.locator('.vocabulary-workspace').screenshot({path:testInfo.outputPath('target-language-notebook.png')});
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_meaning'))).toEqual([]);
+ await page.getByRole('searchbox',{name:'Search vocabulary'}).fill('有韧性的');
+ await expect(page.locator('.vocabulary-item')).toHaveCount(1);
+});

@@ -2,6 +2,7 @@
 mod credential_tests;
 mod operations;
 mod source_workflow;
+mod vocabulary_meanings;
 
 use crate::{
     config::{Profile, Retention, Settings},

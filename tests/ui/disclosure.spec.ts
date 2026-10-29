@@ -87,9 +87,17 @@ async function fixture(page: Page, initiallySelected=true, initialSourceLanguage
         if(cmd==='vocabulary_preview'){
           const word=args.sourceText.slice(args.selectionStart,args.selectionEnd).trim();
           const result=w.previewResults[word] ?? {candidate:{word:word.toLowerCase(),surface:word,phonetic:'',pos:'n.',dict_meaning:'Synthetic local definition',context_meaning:'',context_sentence:args.sourceText,sentence_trans:'',difficulty:''},translation_highlights:[]};
+          if(result.candidate.context_meaning) result.candidate.meanings ??= {[w.task.target_language]:{general:'',contextual:result.candidate.context_meaning,sentence_translation:result.candidate.sentence_trans}};
           if(w.deferredPreviewWords.includes(word))return new Promise(resolve=>w.previewResolvers.push({word,resolve}));
           return structuredClone(result);
         }
+        if(cmd==='vocabulary_meaning' && w.deferMeanings) return new Promise(resolve=>w.finishMeaning=()=>{
+          const candidate={...args.candidate,meanings:{[args.language]:args.language==='fr'?{general:'équipe',contextual:'une équipe qui collabore',sentence_translation:'Une équipe s’adapte.'}:{general:'团队',contextual:'协作完成任务的团队',sentence_translation:'团队适应变化。'}}};
+          const item=w.words.find((i:any)=>i.word===candidate.word);if(item){const context=item.contexts.find((c:any)=>c.context_sentence===candidate.context_sentence);if(context)context.meanings=candidate.meanings;}
+          w.emit("vocabulary-changed",null);
+          resolve(candidate);
+        });
+        if(cmd==='vocabulary_enrich_existing') {const item=w.words.find((i:any)=>i.word===args.candidate.word);if(item){const context=item.contexts.find((c:any)=>c.context_sentence===args.candidate.context_sentence);if(context)context.meanings=args.candidate.meanings;}return null;}
         if(cmd==='vocabulary_collect'){
           const c=args.candidate;let item=w.words.find((i:any)=>i.word===c.word);const norm=(s:string)=>s.trim().replace(/\s+/g,' ');
           if(!item){item={...c,id:'word-'+w.words.length,review_count:0,status:'learning',contexts:[]};w.words.push(item)}
@@ -1117,7 +1125,7 @@ test('late vocabulary metadata refreshes the selected meaning and highlight with
   });
   await selectSourceWord(page,'team');
   await expect.poll(()=>cardWords(page)).toEqual(['team']);
-  await expect(page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-row-meaning')).toHaveText('A group of people');
+  await expect(page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-row-meaning')).toHaveText('Meaning not available in the target language');
   await expect(page.locator('.translation-word-highlight')).toHaveCount(0);
   await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();
   await page.evaluate(()=>{
@@ -1719,4 +1727,69 @@ test('reading wraps indented prose while preserving fenced code',async({page},te
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='copy_text').at(-1).args.text)).toContain('这是带有四个空格缩进的普通说明，不应被迫横向滚动。'.repeat(12));
  await page.getByRole('button',{name:'Plain text',exact:true}).click();
  await expect(page.locator('.translation-prose')).toContainText('    这是');
+});
+
+
+test('target-language meaning arrives after collection without reopening a collapsed sidebar',async({page},testInfo)=>{
+ await selectionFixture(page);
+ await page.evaluate(()=>{const w=window as any;w.deferMeanings=true;w.previewResults.team.candidate.context_meaning='';w.previewResults.team.candidate.dict_meaning='English dictionary original with a long explanation.';});
+ await selectSourceWord(page,'team');
+ const card=page.locator('.vocabulary-side-card[data-word="team"]');
+ await expect(card.getByText('Preparing meaning in the target language…')).toBeVisible();
+ await expect(card.getByText('English dictionary original with a long explanation.',{exact:true})).not.toBeVisible();
+ await expect(card.getByRole('button',{name:'Add',exact:true})).toBeEnabled();
+ await card.getByRole('button',{name:'Add',exact:true}).click();
+ await page.getByRole('button',{name:'Collapse vocabulary',exact:true}).click();
+ await page.evaluate(()=>(window as any).finishMeaning());
+ await expect(page.getByRole('button',{name:'Expand vocabulary',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Expand vocabulary',exact:true}).click();
+ await expect(card.locator('.vocabulary-row-meaning')).toHaveText('协作完成任务的团队');
+ await card.screenshot({path:testInfo.outputPath('target-language-sidebar.png')});
+ await expect(card.getByRole('button',{name:'Saved (×1)',exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>(window as any).words.find((i:any)=>i.word==='team').review_count)).toBe(1);
+ expect(await page.evaluate(()=>(window as any).words.find((i:any)=>i.word==='team').contexts[0].meanings['zh-Hans'].general)).toBe('团队');
+ expect(await requests(page)).toBe(0);
+});
+
+
+test('changing meaning language ignores a late result in the previous language',async({page})=>{
+ await selectionFixture(page);
+ await page.evaluate(()=>{const w=window as any;w.deferMeanings=true;w.previewResults.team.candidate.context_meaning='';});
+ await selectSourceWord(page,'team');
+ await expect.poll(()=>page.evaluate(()=>typeof (window as any).finishMeaning)).toBe('function');
+ await page.evaluate(()=>{const w=window as any;w.finishChinese=w.finishMeaning;});
+ await page.getByRole('combobox',{name:'Translation language',exact:true}).selectOption('fr');
+ await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_meaning'&&c.args.language==='fr').length)).toBe(1);
+ await page.evaluate(()=>(window as any).finishChinese());
+ const summary=page.locator('.vocabulary-side-card[data-word="team"] .vocabulary-row-meaning');
+ await expect(summary).not.toContainText('协作完成任务的团队');
+ await page.evaluate(()=>(window as any).finishMeaning());
+ await expect(summary).toHaveText('une équipe qui collabore');
+ expect(await requests(page)).toBe(0);
+});
+
+test('local dictionary mode keeps original entry collapsed and never generates meanings',async({page})=>{
+ await fixture(page);
+ await page.evaluate(()=>{const w=window as any;w.settings.profiles[0].provider='system_dictionary';w.emit('configuration-changed',w.settings);});
+ await selectSourceWord(page,'model');
+ const card=page.locator('.vocabulary-side-card[data-word="model"]');
+ await expect(card.getByRole('button',{name:'Add',exact:true})).toBeEnabled();
+ const original=card.locator('.localized-word-meaning details');
+ await expect(original).not.toHaveAttribute('open','');
+ await expect(original.locator('p')).not.toBeVisible();
+ await original.locator('summary').click();await expect(original.locator('p')).toHaveText('Synthetic local definition');
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_meaning'))).toEqual([]);
+});
+
+
+test('new model meanings wait until the main translation is complete',async({page})=>{
+ await fixture(page);
+ await page.evaluate(()=>{const w=window as any;w.deferMeanings=true;w.task.status='translating';w.task.revision++;w.wire({type:'snapshot',snapshot:{tasks:[structuredClone(w.task)],revision:w.task.revision},selected:w.task.id});});
+ await page.getByRole('textbox',{name:'Source reading',exact:true}).evaluate(el=>{const walker=document.createTreeWalker(el,NodeFilter.SHOW_TEXT);let node=walker.nextNode();while(node&&!node.textContent?.includes('Selected'))node=walker.nextNode();if(!node)throw new Error('Synthetic source text missing');const start=node.textContent!.indexOf('Selected');const range=document.createRange();range.setStart(node,start);range.setEnd(node,start+8);const selection=window.getSelection()!;selection.removeAllRanges();selection.addRange(range);el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));});
+ const card=page.locator('.vocabulary-side-card[data-word="selected"]');
+ await expect(card.getByRole('button',{name:'Add',exact:true})).toBeEnabled();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_meaning'))).toEqual([]);
+ await complete(page);
+ await expect.poll(()=>page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_meaning').length)).toBe(1);
+ await expect(card.getByRole('button',{name:'Add',exact:true})).toBeEnabled();
 });
