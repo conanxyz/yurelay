@@ -112,10 +112,10 @@
   {#if allowModel && !busy && !meaning?.contextual}<button onclick={enrich}
       >{t("补充释义", "Get meaning")}</button
     >{/if}
-  {#if candidate.dict_meaning}<details>
-      <summary>{t("本地词典原文", "Original dictionary entry")}</summary>
-      <p>{candidate.dict_meaning}</p>
-    </details>{/if}
+  {#if candidate.dict_meaning}{#key candidate.word}<details>
+        <summary>{t("本地词典原文", "Original dictionary entry")}</summary>
+        <p>{candidate.dict_meaning}</p>
+      </details>{/key}{/if}
 </div>
 
 <style>

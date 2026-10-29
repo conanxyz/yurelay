@@ -130,7 +130,9 @@ fn term_display(word: &str, surface: &str) -> String {
 }
 impl Candidate {
     pub fn record_meaning_language(&mut self, language: &str) {
-        if !self.context_meaning.is_empty() || !self.sentence_trans.is_empty() {
+        if crate::operations::explicit_language(language)
+            && (!self.context_meaning.is_empty() || !self.sentence_trans.is_empty())
+        {
             self.meanings
                 .entry(language.to_owned())
                 .or_insert_with(|| LocalizedMeaning {

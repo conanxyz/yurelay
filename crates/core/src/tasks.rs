@@ -1050,6 +1050,9 @@ impl TaskBook {
             if task.expired(now) || inner.tasks.contains_key(&task.id) {
                 continue;
             }
+            for candidate in &mut task.vocabulary {
+                candidate.record_meaning_language(&task.target_language);
+            }
             task.vocabulary
                 .retain_mut(|candidate| candidate.validate().is_ok());
             if task.vocabulary_state == VocabularyState::Extracting {
@@ -1211,6 +1214,25 @@ mod tests {
             restored.get(&legacy.id).unwrap().original_text,
             legacy.original_text
         );
+    }
+
+    #[test]
+    fn restored_context_meanings_keep_the_original_tasks_target_language() {
+        let book = TaskBook::new(Retention::Days(7), 12);
+        let mut task = queued(&book, 1);
+        task.target_language = "fr".into();
+        task.vocabulary = vec![crate::vocabulary::Candidate {
+            word: "team".into(),
+            surface: "team".into(),
+            context_sentence: "A team.".into(),
+            context_meaning: "équipe".into(),
+            ..Default::default()
+        }];
+        let restored = TaskBook::new(Retention::Days(7), 12);
+        restored.restore(vec![task.clone()], 3);
+        let current = restored.get(&task.id).unwrap();
+        assert_eq!(current.vocabulary[0].meanings["fr"].contextual, "équipe");
+        assert!(!current.vocabulary[0].meanings.contains_key("zh-Hans"));
     }
 
     #[tokio::test]

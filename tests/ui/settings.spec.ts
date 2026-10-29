@@ -898,7 +898,12 @@ test('notebook prioritizes saved target-language meanings and folds the original
  await expect(original).not.toHaveAttribute('open','');
  await expect(original.locator('p')).not.toBeVisible();
  await original.locator('summary').click();await expect(original.locator('p')).toHaveText('able to recover quickly');
- await original.locator('summary').click();
+ await page.evaluate(()=>{const w=window as any;const second=structuredClone(w.vocabulary[0]);second.id='word-2';second.word='credential';second.dict_meaning='An identity document';second.contexts[0].surface='credential';second.contexts[0].context_sentence='Use a credential.';second.contexts[0].meanings={'zh-Hans':{general:'凭据',contextual:'认证凭据',sentence_translation:'使用凭据。'}};w.vocabulary.push(second);w.emit('vocabulary-changed',null);});
+ await page.locator('.vocabulary-item').filter({hasText:'credential'}).click();
+ await expect(page.locator('.word-meanings details')).not.toHaveAttribute('open','');
+ await page.locator('.vocabulary-item').filter({hasText:'resilient'}).click();
+ await expect(page.locator('.word-meanings details')).not.toHaveAttribute('open','');
+
  await page.locator('.vocabulary-workspace').screenshot({path:testInfo.outputPath('target-language-notebook.png')});
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.cmd==='vocabulary_meaning'))).toEqual([]);
  await page.getByRole('searchbox',{name:'Search vocabulary'}).fill('有韧性的');
