@@ -288,6 +288,8 @@ Object.assign(errors, {
     "Some clipboard formats could not be read. The clipboard was preserved. Use screenshot translation.",
   "剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。":
     "The clipboard exceeds the 8 MiB backup limit and was preserved. Use screenshot translation.",
+  "已有剪贴板内容超过 64 MiB 备份上限，与本次选中文字长度无关。原内容未改动；请使用截图翻译。":
+    "The existing clipboard exceeds the 64 MiB backup limit; this is unrelated to the selected text length. Its contents were preserved. Use screenshot translation.",
   "截图编码失败。": "Screenshot encoding failed.",
   "无法发送复制快捷键，请使用截图。":
     "Could not send the copy shortcut. Use a screenshot.",

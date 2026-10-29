@@ -247,13 +247,20 @@ static BOOL ADTestPasteboardBackup(void) {
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
     ADBackupCheck("zero-byte-format", error == nil && ADBackupMatches(backup, @[@{firstType: emptyData}]), &passed);
 
-    const NSUInteger limit = 8 * 1024 * 1024;
-    NSString *sizeError = @"剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。";
+    // A previous screenshot must not prevent copying a short new selection.
+    NSData *previousImage = [NSMutableData dataWithLength:12 * 1024 * 1024];
+    item = ADBackupFakeItem(@[NSPasteboardTypeTIFF], @{NSPasteboardTypeTIFF: previousImage});
+    board = ADBackupFakeBoard(@[item]);
+    backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
+    ADBackupCheck("previous-image-over-eight-MiB", error == nil && ADBackupMatches(backup, @[@{NSPasteboardTypeTIFF: previousImage}]), &passed);
+
+    const NSUInteger limit = 64 * 1024 * 1024;
+    NSString *sizeError = @"已有剪贴板内容超过 64 MiB 备份上限，与本次选中文字长度无关。原内容未改动；请使用截图翻译。";
     NSData *oversized = [NSMutableData dataWithLength:limit + 1];
     item = ADBackupFakeItem(@[firstType], @{firstType: oversized});
     board = ADBackupFakeBoard(@[item]);
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
-    ADBackupCheck("over-eight-MiB", backup == nil && [error isEqualToString:sizeError], &passed);
+    ADBackupCheck("over-backup-limit", backup == nil && [error isEqualToString:sizeError], &passed);
 
     NSData *halfPlusOne = [NSMutableData dataWithLength:limit / 2 + 1];
     item = ADBackupFakeItem(@[firstType, secondType], @{firstType: halfPlusOne, secondType: halfPlusOne});
@@ -280,7 +287,7 @@ static BOOL ADTestPasteboardBackup(void) {
     item = ADBackupFakeItem(@[firstType], @{firstType: exactLimit});
     board = ADBackupFakeBoard(@[item]);
     backup = ADBackupPasteboard((NSPasteboard *)board, board.changeCount, &error);
-    ADBackupCheck("exactly-eight-MiB", error == nil && ADBackupMatches(backup, @[@{firstType: exactLimit}]), &passed);
+    ADBackupCheck("exactly-backup-limit", error == nil && ADBackupMatches(backup, @[@{firstType: exactLimit}]), &passed);
 
     // Exercise AppKit serialization and restoration only on a uniquely named board.
     NSPasteboard *named = [NSPasteboard pasteboardWithUniqueName];
@@ -315,6 +322,30 @@ static BOOL ADTestPasteboardBackup(void) {
         [named clearContents];
         BOOL restored = backup != nil && [named writeObjects:backup];
         ADBackupCheck("named-multi-format-restored", restored && ADBackupMatches(named.pasteboardItems, formats), &passed);
+        NSPasteboardItem *largeItem = [NSPasteboardItem new];
+        [largeItem setData:previousImage forType:NSPasteboardTypeTIFF];
+        [largeItem setString:@"Synthetic previous clipboard" forType:NSPasteboardTypeString];
+        [named clearContents];
+        BOOL largeWritten = [named writeObjects:@[largeItem]];
+        NSInteger largeCount = named.changeCount;
+        backup = ADBackupPasteboard(named, largeCount, &error);
+        BOOL largeBackedUp = largeWritten && backup != nil && error == nil && named.changeCount == largeCount;
+        // Exercise the same backup/copy/restore sequence without touching the user's clipboard.
+        NSString *selection = @"First selected sentence. Second selected sentence. Third selected sentence. Fourth selected sentence.";
+        if (largeBackedUp) {
+            [named clearContents];
+            [named setString:selection forType:NSPasteboardTypeString];
+        }
+        BOOL selectionRead = largeBackedUp && [[named stringForType:NSPasteboardTypeString] isEqualToString:selection];
+        BOOL largeRestored = NO;
+        if (selectionRead) {
+            [named clearContents];
+            largeRestored = [named writeObjects:backup];
+        }
+        ADBackupCheck("named-short-selection-after-large-image", selectionRead && largeRestored &&
+            [[named dataForType:NSPasteboardTypeTIFF] isEqualToData:previousImage] &&
+            [[named stringForType:NSPasteboardTypeString] isEqualToString:@"Synthetic previous clipboard"], &passed);
+
     } @finally {
         [named releaseGlobally];
     }

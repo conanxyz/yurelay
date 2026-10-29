@@ -166,7 +166,9 @@ static NSArray<NSPasteboardItem *> *ADBackupPasteboard(NSPasteboard *pb, NSInteg
     // nil means retrieval failed. Only an actual empty array is an empty backup.
     if (!items) { if (error) *error = @"无法读取当前剪贴板，已保留原内容。请重试或使用截图翻译。"; return nil; }
     NSMutableArray<NSPasteboardItem *> *backup = [NSMutableArray new];
-    const NSUInteger limit = 8 * 1024 * 1024;
+    // This bounds the OLD clipboard, not the selected text. Retina screenshots
+    // and their TIFF/PNG representations routinely exceed the former 8 MiB cap.
+    const NSUInteger limit = 64 * 1024 * 1024;
     NSUInteger bytes = 0;
     for (NSPasteboardItem *item in items) {
         NSPasteboardItem *copy = [NSPasteboardItem new];
@@ -179,7 +181,7 @@ static NSArray<NSPasteboardItem *> *ADBackupPasteboard(NSPasteboard *pb, NSInteg
             // Report that race before classifying a representation as unreadable.
             if (pb.changeCount != expectedCount) { if (error) *error = changedError; return nil; }
             if (!data) { if (error) *error = @"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"; return nil; }
-            if (data.length > limit - bytes) { if (error) *error = @"剪贴板内容超过 8 MiB，已保留原内容。请使用截图翻译。"; return nil; }
+            if (data.length > limit - bytes) { if (error) *error = @"已有剪贴板内容超过 64 MiB 备份上限，与本次选中文字长度无关。原内容未改动；请使用截图翻译。"; return nil; }
             bytes += data.length;
             if (![copy setData:data forType:type]) { if (error) *error = @"剪贴板部分格式无法读取，已保留原内容。请使用截图翻译。"; return nil; }
         }
